@@ -271,43 +271,82 @@ class SessionPool:
     async def execute_checkin(
         self, user_id: int, account_ids: list[int], data: CheckInRequest
     ) -> dict[int, CheckInResult | None]:
-        """批量签到入口。"""
+        """批量签到入口。
+
+        保证每个 account_id 都返回有意义的 CheckInResult（非 None），
+        即使账号无可用会话也会尝试按需创建。
+        """
+        logger.info(
+            "Starting check-in for user=%s course=%s ticket=%s accounts=%s",
+            user_id, data.courseid, data.ticketid, account_ids,
+        )
+
         # ── 快照阶段 ──
         with self.lock:
             self._cleanup_expired()
-            snapshot = {aid: self.clients.get(aid) for aid in account_ids}
+            snapshot = {
+                aid: self.clients.get(aid) for aid in account_ids
+            }
 
         # ── 执行阶段 ──
         async with self.exec_lock:
             results: dict[int, CheckInResult | None] = {}
             with get_session() as db:
                 r = get_redis_client()
-                valid = r.get(
+
+                # 检查缓存的「该 ticket 全局无效」标记
+                invalid_key = (
                     f"checkin:{data.courseid}:invalid:{data.ticketid}"
                 )
-                if not valid:
-                    return {aid: None for aid in account_ids}
+                if r.get(invalid_key):
+                    logger.info(
+                        "Ticket %s for course %s is cached as invalid — "
+                        "skipping all accounts",
+                        data.ticketid, data.courseid,
+                    )
+                    # 为每个账号生成有意义的"跳过"结果
+                    cached = self._build_skip_results(
+                        account_ids, "已跳过（该签到二维码已失效）"
+                    )
+                    for aid, cr in cached.items():
+                        self._record(
+                            db, r, user_id, aid, data.courseid,
+                            cr.client_email, cr,
+                        )
+                    try:
+                        db.commit()
+                    except Exception as e:
+                        logger.error("Failed to commit: %s", e)
+                        db.rollback()
+                    return cached
 
-                # ----- Canary -----
-                first_aid: int | None = None
-                first_client: KetangPaiAPI | None = None
-                first_idx = -1
-                for i, aid in enumerate(account_ids):
-                    entry = snapshot.get(aid)
-                    if entry is not None:
-                        first_aid = aid
-                        first_client = entry[0]
-                        first_idx = i
-                        break
+                # ----- Canary：先试第一个可用账号 -----
+                canary = self._pick_canary(snapshot, account_ids)
+                if canary is None:
+                    logger.warning(
+                        "No session available for any account in %s",
+                        account_ids,
+                    )
+                    # 尝试为每个无会话的账号按需创建并执行
+                    return await self._checkin_all_ensure(
+                        snapshot, db, r, user_id, account_ids, data,
+                    )
 
-                if first_client is None:
-                    return {aid: None for aid in account_ids}
+                first_aid, first_client = canary
 
+                logger.debug(
+                    "Canary check-in: account %s (%s)",
+                    first_aid, first_client.email,
+                )
                 try:
                     first_result = await asyncio.to_thread(
                         first_client.check_in, data
                     )
                 except Exception as e:
+                    logger.warning(
+                        "Canary check-in exception for account %s: %s",
+                        first_aid, e,
+                    )
                     first_result = CheckInResult(
                         email=first_client.email,
                         success=False,
@@ -321,39 +360,75 @@ class SessionPool:
                 self._touch(first_aid)
                 results[first_aid] = first_result
 
+                logger.info(
+                    "Canary result for account %s: success=%s message=%s",
+                    first_aid, first_result.success, first_result.message,
+                )
+
                 if not first_result.success:
+                    # 缓存全局性失败标记（任意失败 hint 即认为整批次均不可用）
                     if (
-                        first_result.message == "二维码已过期"
-                        or first_result.message == "考勤已结束"
+                        "已过期" in first_result.message
+                        or "已结束" in first_result.message
                     ):
-                        r.set(
-                            f"checkin:{data.courseid}:invalid:{data.ticketid}",
-                            "1", 3600,
+                        r.set(invalid_key, "1", 3600)
+                        logger.info(
+                            "Ticket %s marked as globally invalid "
+                            "(reason: %s)",
+                            data.ticketid, first_result.message,
                         )
+
+                    # 其余账号标记为"跳过"，但仍写入日志
+                    for aid in account_ids:
+                        if aid == first_aid:
+                            continue
+                        skip_email = self._resolve_client_email(
+                            snapshot, aid,
+                        )
+                        results[aid] = CheckInResult(
+                            email=skip_email or f"account:{aid}",
+                            success=False,
+                            message=f"已跳过（{first_result.message}）",
+                        )
+                        self._record(
+                            db, r, user_id, aid, data.courseid,
+                            skip_email, results[aid],
+                        )
+
                     try:
                         db.commit()
                     except Exception as e:
                         logger.error("Failed to commit: %s", e)
                         db.rollback()
-                    for i, aid in enumerate(account_ids):
-                        if i == first_idx:
-                            continue
-                        results[aid] = None
+
+                    logger.info(
+                        "Check-in aborted after canary failure — "
+                        "%s succeeded, %s skipped",
+                        0, len(account_ids) - 1,
+                    )
                     return results
 
                 # ----- 并发处理剩余账号 -----
-                remaining = account_ids[first_idx + 1:]
-                if remaining:
+                if len(account_ids) > 1:
                     tasks = [
                         asyncio.create_task(
-                            self._checkin_one(
+                            self._checkin_one_ensure(
                                 snapshot, db, r, user_id, aid, data,
                             )
                         )
-                        for aid in remaining
+                        for aid in account_ids
+                        # skip canary
+                        if aid != first_aid
                     ]
-                    remaining_results = await asyncio.gather(*tasks)
-                    results.update(remaining_results)
+                    gathered = await asyncio.gather(*tasks)
+                    for aid, cr in gathered:
+                        results[aid] = cr
+                        logger.debug(
+                            "Account %s check-in result: success=%s %s",
+                            aid,
+                            cr.success if cr else 'N/A',
+                            cr.message if cr else '',
+                        )
 
                 try:
                     db.commit()
@@ -361,26 +436,67 @@ class SessionPool:
                     logger.error("Failed to commit: %s", e)
                     db.rollback()
 
+            succeeded = sum(
+                1 for r in results.values()
+                if r is not None and r.success
+            )
+            logger.info(
+                "Check-in completed for user=%s: %s/%s succeeded",
+                user_id, succeeded, len(account_ids),
+            )
             return results
 
-    async def _checkin_one(
+    # ------------------------------------------------------------------
+    # execute_checkin 内部辅助
+    # ------------------------------------------------------------------
+
+    @staticmethod
+    def _pick_canary(
+        snapshot: dict[int, tuple[KetangPaiAPI, float] | None],
+        account_ids: list[int],
+    ) -> tuple[int, KetangPaiAPI] | None:
+        """从快照中找到第一个有可用客户端的账号。"""
+        for aid in account_ids:
+            entry = snapshot.get(aid)
+            if entry is not None:
+                return (aid, entry[0])
+        return None
+
+    async def _checkin_one_ensure(
         self,
         snapshot: dict[int, tuple[KetangPaiAPI, float] | None],
         db, r,
         user_id: int, account_id: int, data: CheckInRequest,
     ) -> tuple[int, CheckInResult | None]:
-        """签到单个账号，受 semaphore 限流。"""
+        """签到单个账号（受 semaphore 限流），无会话时按需创建。"""
         async with self.semaphore:
             entry = snapshot.get(account_id)
-            if entry is None:
-                return (account_id, None)
-            client = entry[0]
+            if entry is not None:
+                client = entry[0]
+            else:
+                # 快照中无会话，尝试按需创建
+                logger.info(
+                    "Account %s not in session pool, creating on demand",
+                    account_id,
+                )
+                client = self._ensure_client(account_id)
+                if client is None:
+                    email = self._resolve_client_email(snapshot, account_id)
+                    return (
+                        account_id,
+                        CheckInResult(
+                            email=email or f"account:{account_id}",
+                            success=False,
+                            message="签到失败：无法创建会话（账号不存在或登录失败）",
+                        ),
+                    )
+
             try:
                 result = await asyncio.to_thread(client.check_in, data)
             except Exception as e:
                 logger.error(
-                    "Check-in failed for account %s (id=%s): %s",
-                    client.email, account_id, e,
+                    "Check-in failed for account %s (%s): %s",
+                    account_id, client.email, e,
                 )
                 return (
                     account_id,
@@ -396,12 +512,75 @@ class SessionPool:
             )
             return (account_id, result)
 
+    async def _checkin_all_ensure(
+        self,
+        snapshot: dict[int, tuple[KetangPaiAPI, float] | None],
+        db, r,
+        user_id: int, account_ids: list[int], data: CheckInRequest,
+    ) -> dict[int, CheckInResult | None]:
+        """所有账号无会话时的兜底：逐个尝试按需创建。"""
+        logger.info("Falling back to per-account ensure for all %s accounts",
+                     len(account_ids))
+        tasks = [
+            asyncio.create_task(
+                self._checkin_one_ensure(
+                    snapshot, db, r, user_id, aid, data,
+                )
+            )
+            for aid in account_ids
+        ]
+        gathered = await asyncio.gather(*tasks)
+        results = {aid: cr for aid, cr in gathered}
+        try:
+            db.commit()
+        except Exception as e:
+            logger.error("Failed to commit: %s", e)
+            db.rollback()
+        return results
+
+    @staticmethod
+    def _resolve_client_email(
+        snapshot: dict[int, tuple[KetangPaiAPI, float] | None],
+        account_id: int,
+    ) -> str | None:
+        """从快照中提取账号邮箱，无客户端时返回 None。"""
+        entry = snapshot.get(account_id)
+        if entry is not None:
+            return entry[0].email
+        return None
+
+    @staticmethod
+    def _build_skip_results(
+        account_ids: list[int],
+        message: str,
+    ) -> dict[int, CheckInResult]:
+        """为所有账号构建统一的"跳过"结果。"""
+        return {
+            aid: CheckInResult(
+                email=f"account:{aid}",
+                success=False,
+                message=message,
+            )
+            for aid in account_ids
+        }
+
     # ------------------------------------------------------------------
     # 辅助方法
     # ------------------------------------------------------------------
 
-    def _record(self, db, r, user_id, account_id, course_id, client, result):
-        """记录签到日志并刷新 token 缓存（失败不抛异常）。"""
+    def _record(
+        self, db, r, user_id, account_id, course_id,
+        client_or_email, result,
+    ):
+        """记录签到日志并刷新 token 缓存（失败不抛异常）。
+
+        *client_or_email* 可以是 KetangPaiAPI 实例（有 token）或纯邮箱字符串。
+        """
+        email = (
+            client_or_email.email
+            if hasattr(client_or_email, 'email')
+            else client_or_email
+        )
         try:
             db.add(
                 CheckInLog(
@@ -413,14 +592,15 @@ class SessionPool:
             )
         except Exception as e:
             logger.error("Failed to write CheckInLog: %s", e)
-        try:
-            r.set(
-                f"account:{account_id}:token",
-                client.token,
-                TOKEN_EXPIRE_TIME,
-            )
-        except Exception:
-            pass
+        if hasattr(client_or_email, 'token') and client_or_email.token:
+            try:
+                r.set(
+                    f"account:{account_id}:token",
+                    client_or_email.token,
+                    TOKEN_EXPIRE_TIME,
+                )
+            except Exception:
+                pass
 
 
 # 创建会话池（模块级单例）
