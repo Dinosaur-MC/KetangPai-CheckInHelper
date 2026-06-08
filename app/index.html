@@ -4,6 +4,7 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
   <title>课堂派签到助手</title>
+  <link rel="icon" href="/favicon.ico">
   <!-- MDUI 2 CSS -->
   <link rel="stylesheet" href="https://unpkg.com/mdui@2/mdui.css">
   <style>
@@ -500,10 +501,11 @@
             </div>
             <div class="table-wrap" v-if="bindings.length">
               <table>
-                <thead><tr><th>课程名称</th><th>课堂派账号</th><th>学期</th><th>启用</th><th class="actions">操作</th></tr></thead>
+                <thead><tr><th>课程代码</th><th>课程名称</th><th>课堂派账号</th><th>学期</th><th>启用</th><th class="actions">操作</th></tr></thead>
                 <tbody>
                   <tr v-for="b in bindings" :key="b.id">
-                    <td>{{ getCourseName(b.course_id) }}</td>
+                    <td><code style="font-size:12px;background:#f1f5f9;padding:2px 6px;border-radius:4px;">{{ getCourseCode(b.course_id) }}</code></td>
+                    <td title="ID: {{ b.course_id }}">{{ getCourseName(b.course_id) }}</td>
                     <td>{{ getAccountEmail(b.account_id) }}</td>
                     <td>{{ getCourseSemester(b.course_id) }}</td>
                     <td><mdui-switch :checked="b.is_active" @change="toggleBinding(b, $event)"></mdui-switch></td>
@@ -859,8 +861,14 @@ createApp({
       return c ? `${c.semester}·${c.term==='1'?'上学期':c.term==='2'?'下学期':c.term}` : '';
     }
 
+    function getCourseCode(courseId) {
+      const c = courses.value.find(c => c.id === courseId);
+      return c ? c.code : '';
+    }
+
     // ---- 导航 ----
     function navigate(to) {
+      if (route.value === to) return;
       route.value = to;
       window.location.hash = '#' + to;
       if (isMobile()) sidebarOpen.value = false;
@@ -1144,7 +1152,7 @@ createApp({
       modals, editingAccount, editingUser,
       checkinLoading, checkinResults,
       pageTitle, pageSubtitle, filteredLogs, stats, checkinSuccessCount,
-      formatTime, getAccountEmail, getCourseName, getCourseSemester, showToast,
+      formatTime, getAccountEmail, getCourseName, getCourseSemester, getCourseCode, showToast,
       navigate, login, register, logout,
       loadAccounts, openAccountModal, saveAccount, deleteAccount,
       loadBindings, openBindingModal, saveBinding, deleteBinding, toggleBinding,
