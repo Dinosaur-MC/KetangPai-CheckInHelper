@@ -103,8 +103,9 @@
     @media (max-width: 768px) { .sidebar-overlay { display:block; } }
 
     /* ── 主内容 ── */
-    .main-content { flex:1; display:flex; flex-direction:column; overflow:hidden; min-width:0; 
-      background: #e8eaed url("https://blog.dmcstudio.top/assets/image/img/img(32).webp") no-repeat fixed center; background-size: cover; }
+    .main-content { flex:1; display:flex; flex-direction:column; overflow:hidden; min-width:0;
+      background: #e8eaed url("https://blog.dmcstudio.top/assets/image/img/img(32).webp") no-repeat center;
+      background-size: cover; }
     .main-header {
       background: rgba(255,255,255,.99);
       padding: 12px 24px;
@@ -121,14 +122,14 @@
       border-radius: 8px; transition: background .15s;
     }
     .main-header .menu-btn:hover { background: #f3f4f6; }
-    .main-body { flex:1; overflow-y:auto; padding: 24px; }
+    .main-body { flex:1; overflow-y:auto; padding: 24px; overscroll-behavior:contain; }
 
     /* ============================================================
        登录页
        ============================================================ */
     .login-page {
       min-height:100vh; display:flex; align-items:center; justify-content:center;
-      background: #e8eaed url("https://blog.dmcstudio.top/assets/image/img/img(64).webp") no-repeat fixed center;
+      background: #e8eaed url("https://blog.dmcstudio.top/assets/image/img/img(64).webp") no-repeat center;
       background-size: cover;
       padding: 16px;
     }
@@ -326,6 +327,40 @@
     .result-item.fail { border-left-color: #ef4444; background: #fef2f2; }
     .result-item .email { font-weight:600; margin-bottom:3px; }
     .result-item .msg { color: #6b7280; font-size:12px; }
+
+    /* ============================================================
+       扫码弹窗
+       ============================================================ */
+    .scan-dialog-body {
+      display:flex; flex-direction:column; align-items:center; gap:12px;
+    }
+    .scan-stage {
+      position:relative; width:100%; max-width:300px;
+      border-radius:16px; overflow:hidden;
+      aspect-ratio:1; background:#f3f4f6;
+    }
+    .scan-stage.is-live { background:#000; }
+    .scan-stage video, .scan-stage img {
+      width:100%; height:100%; object-fit:cover; display:block;
+    }
+    .scan-stage .overlay {
+      position:absolute; inset:0;
+      display:flex; align-items:center; justify-content:center; pointer-events:none;
+    }
+    .scan-stage .frame {
+      width:70%; height:70%;
+      border:3px solid rgba(255,255,255,.85);
+      border-radius:24px;
+      box-shadow:0 0 0 9999px rgba(0,0,0,.5);
+    }
+    .scan-stage .empty-icon {
+      display:flex; align-items:center; justify-content:center;
+      width:100%; height:100%;
+    }
+    .scan-hint { font-size:13px; color:#6b7280; text-align:center; margin:0; line-height:1.4; }
+    mdui-dialog::part(headline) { text-align:center; }
+    .scan-actions { display:flex; gap:8px; justify-content:center; align-items:center; min-height:36px; }
+    .scan-actions .hidden-btn { visibility:hidden; pointer-events:none; }
 
     /* ============================================================
        响应式
@@ -554,9 +589,12 @@
 
               <!-- URL 快速解析 -->
               <div class="field-wrap">
-                <label class="field-label">签到链接 <span style="color:#6b7280;font-weight:400;">（粘贴完整 URL 自动解析）</span></label>
-                <input class="field-input" :value="checkinUrl" @input="parseCheckinUrl($event.target.value)"
-                  placeholder="https://w.ketangpai.com/checkIn/checkinCodeResult?ticketid=...&expire=...&sign=...&courseid=...&randNum=...">
+                <label class="field-label">签到链接 <span style="color:#6b7280;font-weight:400;">（粘贴 URL 或扫码自动解析）</span></label>
+                <div style="display:flex; gap:8px;">
+                  <input class="field-input" style="flex:1;" :value="checkinUrl" @input="parseCheckinUrl($event.target.value)"
+                    placeholder="https://w.ketangpai.com/checkIn/checkinCodeResult?ticketid=...&expire=...&sign=...&courseid=...&randNum=...">
+                  <mdui-button-icon icon="qr_code_scanner" @click="startScanner" title="扫码识别签到二维码" style="flex-shrink:0;"></mdui-button-icon>
+                </div>
               </div>
 
               <!-- 手动输入参数 -->
@@ -752,10 +790,42 @@
     <mdui-button slot="action" variant="filled" @click="saveUser">{{ editingUser ? '保存' : '创建' }}</mdui-button>
   </mdui-dialog>
 
+  <!-- ============================================================
+       弹窗: 扫码识别
+       ============================================================ -->
+  <mdui-dialog :open="modals.scanner" @closed="stopScanner" close-on-esc close-on-overlay-click
+    headline="扫描签到二维码">
+    <div class="scan-dialog-body">
+      <div class="scan-stage" :class="{ 'is-live': scanOpening || scanLiveMode }">
+        <video ref="scanVideo" autoplay playsinline muted
+          :style="{ display: scanLiveMode ? 'block' : 'none' }"></video>
+        <div class="overlay" v-if="scanLiveMode"><div class="frame"></div></div>
+        <img v-if="!scanLiveMode && scanPhotoSrc" :src="scanPhotoSrc">
+        <div class="empty-icon" v-else-if="!scanLiveMode && !scanPhotoSrc">
+          <mdui-icon name="qr_code_scanner"></mdui-icon>
+        </div>
+      </div>
+      <canvas ref="scanCanvas" style="display:none;"></canvas>
+      <p class="scan-hint" v-if="scanOpening">正在打开摄像头…</p>
+      <p class="scan-hint" v-else-if="scanLiveMode && !scanFail">将签到二维码对准框内自动识别</p>
+      <p class="scan-hint" v-else-if="scanFail" style="color:#dc2626;">{{ scanFail }}</p>
+      <p class="scan-hint" v-else>将签到二维码对准框内自动识别</p>
+      <div class="scan-actions">
+        <mdui-button variant="filled" @click="capturePhoto"
+          :disabled="scanOpening"
+          :class="{ 'hidden-btn': scanOpening }">拍照扫描</mdui-button>
+        <mdui-button variant="outlined" @click="stopScanner">关闭</mdui-button>
+      </div>
+      <input type="file" ref="scanPhotoInput" accept="image/*" capture="environment" style="display:none;" @change="onScanPhoto">
+    </div>
+  </mdui-dialog>
+
 </div><!-- /#app -->
 
 <!-- MDUI 2 JS (先加载使组件就绪) -->
 <script src="/static/mdui.global.js"></script>
+<!-- jsQR 二维码识别 -->
+<script src="/static/jsqr.min.js"></script>
 <!-- Vue 3 -->
 <script src="/static/vue.global.prod.js"></script>
 
@@ -815,13 +885,26 @@ createApp({
     const recentLogs = computed(() => logs.value.slice(-10).reverse());
 
     // 弹窗
-    const modals = reactive({ account: false, binding: false, user: false });
+    const modals = reactive({ account: false, binding: false, user: false, scanner: false });
     const editingAccount = ref(null);
     const editingUser = ref(null);
 
     // 签到
     const checkinLoading = ref(false);
     const checkinResults = ref([]);
+
+    // 扫码
+    const scanOpening = ref(false);
+    const scanLiveMode = ref(false);
+    const scanFail = ref('');
+    const scanPhotoSrc = ref(null);
+    const scanVideo = ref(null);
+    const scanCanvas = ref(null);
+    const scanPhotoInput = ref(null);
+    let scanStream = null;
+    let scanTimer = null;
+    let lastScannedText = '';
+    let lastScannedTime = 0;
 
     // ---- 计算属性 ----
     const pageTitle = computed(() => ({
@@ -896,6 +979,7 @@ createApp({
     // ---- 导航 ----
     function navigate(to) {
       if (route.value === to) return;
+      if (modals.scanner) stopScanner();
       route.value = to;
       window.location.hash = '#' + to;
       if (isMobile()) sidebarOpen.value = false;
@@ -1064,6 +1148,205 @@ createApp({
       }
     }
 
+    // 验证签到 URL 并自动执行
+    function validateAndExecuteQR(text) {
+      try {
+        const url = new URL(text);
+        // 校验域名和路径
+        if (url.hostname.indexOf('ketangpai.com') === -1 ||
+            url.pathname.indexOf('checkIn') === -1) {
+          showToast('无效二维码');
+          return false;
+        }
+        const p = url.searchParams;
+        const type = p.get('type');
+        const ticketid = p.get('ticketid');
+        const expire = p.get('expire');
+        const sign = p.get('sign');
+        const courseid = p.get('courseid');
+        const randNum = p.get('randNum');
+        if (!ticketid || !expire || !sign || !courseid || !randNum || !type) {
+          showToast('无效二维码');
+          return false;
+        }
+        // 自动填充
+        checkinForm.courseid = courseid;
+        checkinForm.ticketid = ticketid;
+        checkinForm.expire = expire;
+        checkinForm.sign = sign;
+        checkinForm.randNum = randNum;
+        checkinUrl.value = text;
+        // 切到签到页并执行
+        if (route.value !== 'checkin') navigate('checkin');
+        // 延迟等页面切换完成再执行签到
+        Vue.nextTick().then(() => executeCheckin());
+        return true;
+      } catch {
+        showToast('无效二维码');
+        return false;
+      }
+    }
+
+    // ---- 扫码识别 (jsQR 实时视频 + 拍照降级) ----
+    function startScanner() {
+      scanPhotoSrc.value = null;
+      scanFail.value = '';
+      scanOpening.value = false;
+      scanLiveMode.value = false;
+      modals.scanner = true;
+      Vue.nextTick().then(() => new Promise(r => setTimeout(r, 300))).then(() => {
+        if (modals.scanner) tryOpenCamera();
+      });
+    }
+
+    async function tryOpenCamera() {
+      if (scanStream || scanLiveMode.value) return;
+      if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
+        scanFail.value = '当前浏览器不支持摄像头';
+        return;
+      }
+      scanOpening.value = true;
+      await Vue.nextTick();
+      const tries = [
+        { video: true },
+        { video: { width: { ideal: 640 }, height: { ideal: 480 } } },
+        { video: { facingMode: 'user' } },
+      ];
+      for (const c of tries) {
+        try {
+          scanStream = await navigator.mediaDevices.getUserMedia(c);
+          if (scanStream) break;
+        } catch (e) {
+          if (e.name === 'NotAllowedError' || e.name === 'NotFoundError') break;
+        }
+      }
+      // 用户可能在 getUserMedia 期间关闭了对话框
+      if (!modals.scanner) {
+        if (scanStream) { scanStream.getTracks().forEach(t => t.stop()); scanStream = null; }
+        return;
+      }
+      if (!scanStream) {
+        scanOpening.value = false;
+        scanFail.value = '无法打开摄像头，可使用拍照扫描';
+        return;
+      }
+      const video = scanVideo.value;
+      if (!video) { stopStream(); return; }
+      video.srcObject = scanStream;
+      try { await video.play(); } catch (e) {
+        scanOpening.value = false;
+        scanFail.value = '摄像头启动失败，可使用拍照扫描';
+        stopStream();
+        return;
+      }
+      // play 过程中也可能已关闭
+      if (!modals.scanner) { stopStream(); return; }
+      scanOpening.value = false;
+      scanLiveMode.value = true;
+      liveLoop();
+    }
+
+    function liveLoop() {
+      if (!modals.scanner || !scanLiveMode.value || !scanVideo.value) return;
+      const video = scanVideo.value;
+      const canvas = scanCanvas.value;
+      if (!canvas || video.readyState < 2) {
+        scanTimer = setTimeout(liveLoop, 200);
+        return;
+      }
+      const w = Math.min(video.videoWidth || 640, 560);
+      const h = Math.min(video.videoHeight || 480, 420);
+      if (canvas.width !== w || canvas.height !== h) { canvas.width = w; canvas.height = h; }
+      const ctx = canvas.getContext('2d', { willReadFrequently: true });
+      ctx.drawImage(video, 0, 0, w, h);
+      const imageData = ctx.getImageData(0, 0, w, h);
+      try {
+        // 先尝试不反转，失败再尝试两种反转模式（提高多码场景检出率）
+        let code = jsQR(imageData.data, w, h, { inversionAttempts: 'dontInvert' });
+        if (!code) {
+          code = jsQR(imageData.data, w, h, { inversionAttempts: 'attemptBoth' });
+        }
+        if (code && code.data) {
+          const text = code.data;
+          const now = Date.now();
+          // 同一二维码 2 秒内不重复提示
+          if (text === lastScannedText && now - lastScannedTime < 2000) {
+            scanTimer = setTimeout(liveLoop, 100);
+            return;
+          }
+          lastScannedText = text;
+          lastScannedTime = now;
+          if (validateAndExecuteQR(text)) {
+            stopScanner();
+            showToast('二维码识别成功 ✓');
+            return;
+          }
+          // 无效二维码 → 短暂提示后继续扫描
+          mdui.snackbar({ message: '无效二维码', timeout: 800 });
+        }
+      } catch (e) { console.log('[liveLoop] jsQR error:', e); }
+      scanTimer = setTimeout(liveLoop, 100);
+    }
+
+    // ---- 拍照扫描 ----
+    function capturePhoto() {
+      const input = scanPhotoInput.value;
+      if (!input) return;
+      input.value = '';
+      input.click();
+    }
+
+    function onScanPhoto(event) {
+      const files = event.target && event.target.files;
+      const file = files && files[0];
+      if (!file) return;
+      let url;
+      try { url = URL.createObjectURL(file); } catch { url = null; }
+      if (url) scanPhotoSrc.value = url;
+      const img = new Image();
+      img.onload = function() {
+        const canvas = scanCanvas.value;
+        if (!canvas) { if (url) URL.revokeObjectURL(url); return; }
+        const w = Math.min(img.naturalWidth || 800, 800);
+        const h = Math.min(img.naturalHeight || 800, 800);
+        if (w === 0 || h === 0) { showToast('图片无效，请重试'); if (url) URL.revokeObjectURL(url); return; }
+        canvas.width = w; canvas.height = h;
+        const ctx = canvas.getContext('2d', { willReadFrequently: true });
+        ctx.drawImage(img, 0, 0, w, h);
+        let imageData;
+        try { imageData = ctx.getImageData(0, 0, w, h); } catch { imageData = null; }
+        if (!imageData) { showToast('图片解析失败，请重试'); if (url) URL.revokeObjectURL(url); return; }
+        try {
+          const code = jsQR(imageData.data, w, h, { inversionAttempts: 'dontInvert' });
+          if (code && code.data) {
+            const text = code.data;
+            stopScanner();
+            if (validateAndExecuteQR(text)) showToast('二维码识别成功 ✓');
+            if (url) URL.revokeObjectURL(url);
+            return;
+          }
+          showToast('未识别到签到二维码，请重新拍照');
+        } catch { showToast('图片解析失败，请重试'); }
+        if (url) URL.revokeObjectURL(url);
+      };
+      img.onerror = function() { showToast('图片加载失败，请重试'); if (url) URL.revokeObjectURL(url); };
+      img.src = url || '';
+    }
+
+    function stopStream() {
+      if (scanStream) { scanStream.getTracks().forEach(t => t.stop()); scanStream = null; }
+      if (scanVideo.value) { scanVideo.value.srcObject = null; }
+      if (scanTimer) { clearTimeout(scanTimer); scanTimer = null; }
+    }
+
+    function stopScanner() {
+      stopStream();
+      modals.scanner = false;
+      scanOpening.value = false;
+      scanLiveMode.value = false;
+      scanPhotoSrc.value = null;
+    }
+
     async function executeCheckin() {
       if (!checkinForm.courseid || !checkinForm.ticketid || !checkinForm.expire || !checkinForm.sign || !checkinForm.randNum) {
         showToast('所有参数均为必填项');
@@ -1178,6 +1461,9 @@ createApp({
       loadBindings, openBindingModal, saveBinding, deleteBinding, toggleBinding,
       executeCheckin, parseCheckinUrl, checkinUrl, loadLogs,
       loadUsers, openUserModal, saveUser, deleteUser,
+      startScanner, stopScanner, tryOpenCamera, capturePhoto, onScanPhoto,
+      scanOpening, scanLiveMode, scanFail,
+      scanPhotoSrc, scanVideo, scanCanvas, scanPhotoInput,
     };
   }
 }).mount('#app');
