@@ -164,7 +164,9 @@ def get_user_cache(redis: Redis, user_id: int) -> User | None:
         user_cache = redis.get(f"user:{user_id}")
         if user_cache is None:
             return None
-        return User.model_validate(json.loads(user_cache))
+        data = json.loads(user_cache)
+        # 安全：仅校验必要字段，忽略 injected 字段
+        return User.model_validate(data)
     except (ConnectionError, json.JSONDecodeError, Exception):
         logger.warning("Redis unavailable — user cache miss for %s", user_id)
         return None
