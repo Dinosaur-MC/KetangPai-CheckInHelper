@@ -1,6 +1,7 @@
 import os
 import re
 import json
+import time
 import secrets
 from contextlib import asynccontextmanager
 from pathlib import Path
@@ -19,6 +20,7 @@ from app.security import (
     verify_password,
     validate_password_strength,
     is_token_blacklisted,
+    encrypt_credential,
 )
 from app.db import Session, Redis, ConnectionError, get_session_with, get_redis
 from sqlmodel import select
@@ -42,13 +44,19 @@ configure_jwt(
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    """启动时清空 user 缓存，关闭时无操作。"""
-    from app.db import get_redis_client
+    """启动时初始化数据库并清空 user 缓存。"""
+    from app.db import init_db, get_redis_client
 
-    # startup
+    init_db()
     r = get_redis_client()
     try:
-        keys = r.keys("user:*")
+        keys: list[bytes] = []
+        cursor = "0"
+        while True:
+            cursor, batch = r.scan(cursor=cursor, match="user:*", count=100)
+            keys.extend(batch)
+            if cursor == 0:
+                break
         if keys:
             r.delete(*keys)
             logger.info("已清除 %s 条 user 缓存", len(keys))
@@ -321,8 +329,7 @@ async def logout(
         if payload and payload.get("jti"):
             jti = payload["jti"]
             exp = payload.get("exp", 0)
-            iat = payload.get("iat", 0)
-            ttl = max(exp - iat, 60)  # 至少保存 60 秒
+            ttl = max(int(exp - time.time()), 60)  # 剩余有效期，至少 60 秒
             from app.security import blacklist_token
 
             blacklist_token(jti, redis, ttl=ttl)
@@ -507,7 +514,7 @@ async def list_accounts(
 
     account_ids = [ua.account_id for ua in user_accounts]
     if not account_ids:
-        return []
+        return BaseResponse(message="success", data=[])
 
     accounts = session.exec(select(Account).where(Account.id.in_(account_ids))).all()
 
@@ -578,7 +585,7 @@ async def create_account(
     # 3. 验证通过再入库
     account = Account(
         email=email,
-        password=password,
+        password=encrypt_credential(password),
         uid=uid,
         status=1,
     )
@@ -678,7 +685,7 @@ async def update_account(
         account.email = email
 
     if password is not None:
-        account.password = password  # 课堂派 API 凭据，不哈希
+        account.password = encrypt_credential(password)  # 课堂派 API 凭据加密存储
 
     if status is not None:
         account.status = status
@@ -716,7 +723,8 @@ async def delete_account(
         relation = len(user_accounts)
 
         # 先删除关联关系
-        session.delete(user_accounts)
+        for ua in user_accounts:
+            session.delete(ua)
         # 再删除账号
         session.delete(account)
         session.flush()
@@ -771,7 +779,7 @@ async def list_course_bindings(
 
     account_ids = [ua.account_id for ua in user_accounts]
     if not account_ids:
-        return []
+        return BaseResponse(message="success", data=[])
 
     # 查询这些账号的课程绑定
     bindings = session.exec(
@@ -979,7 +987,7 @@ async def list_checkin_logs(
 
     account_ids = [ua.account_id for ua in user_accounts]
     if not account_ids:
-        return []
+        return BaseResponse(message="success", data=[])
 
     query = select(CheckInLog).where(CheckInLog.account_id.in_(account_ids))
 
