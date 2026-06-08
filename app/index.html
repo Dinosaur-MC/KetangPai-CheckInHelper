@@ -30,7 +30,7 @@
 
     /* ── 侧边栏 ── */
     .sidebar {
-      width: 250px; min-width: 250px;
+      width: 280px; min-width: 280px;
       background: linear-gradient(135deg, #2d3340, #1e293b);
       display:flex; flex-direction:column; overflow-y:auto;
     }
@@ -56,13 +56,17 @@
       color:#fff; display:flex; align-items:center; justify-content:center;
       font-size: 15px; font-weight: 600; flex-shrink: 0;
     }
+    .sidebar-user .info {
+      flex:1; min-width:0; display:flex; flex-direction:column; gap:3px;
+    }
     .sidebar-user .name {
       font-size: 13px; font-weight: 500; color: #e2e8f0;
       overflow:hidden; text-overflow:ellipsis; white-space:nowrap;
     }
     .sidebar-user .role-badge {
-      font-size: 10px; background: rgba(129,140,248,.25); color: #c7d2fe;
-      padding: 2px 8px; border-radius: 6px; flex-shrink:0;
+      align-self:flex-start; font-size: 10px; text-align:center;
+      background: rgba(129,140,248,.25); color: #c7d2fe;
+      padding: 2px 8px; border-radius: 6px;
     }
     /* MDUI list items — 必须用 ::part() 穿透 shadow DOM */
     .sidebar mdui-list { padding: 4px 12px; }
@@ -128,7 +132,7 @@
        登录页
        ============================================================ */
     .login-page {
-      min-height:100vh; display:flex; align-items:center; justify-content:center;
+      min-height:100dvh; display:flex; align-items:center; justify-content:center;
       background: #e8eaed url("https://blog.dmcstudio.top/assets/image/img/img(64).webp") no-repeat center;
       background-size: cover;
       padding: 16px;
@@ -437,8 +441,10 @@
         </div>
         <div class="sidebar-user">
           <div class="avatar">{{ state.currentUser?.email?.charAt(0).toUpperCase() }}</div>
-          <div class="name">{{ state.currentUser?.email }}</div>
-          <span class="role-badge" v-if="state.currentUser?.role === 'admin'">管理员</span>
+          <div class="info">
+            <div class="name" :title="state.currentUser?.email">{{ state.currentUser?.email }}</div>
+            <span class="role-badge">{{ state.currentUser?.role === 'admin' ? '管理员' : '用户' }}</span>
+          </div>
         </div>
         <mdui-list>
           <mdui-list-item :active="route==='dashboard'" @click="navigate('dashboard')">
@@ -942,8 +948,8 @@ createApp({
     );
 
     // ---- Toast (MDUI 2 snackbar) ----
-    function showToast(msg) {
-      try { mdui.snackbar({ message: msg }); } catch { /* fallback */ }
+    function showToast(msg, delay) {
+      try { mdui.snackbar({ message: msg, autoCloseDelay: delay || 1500 }); } catch { /* fallback */ }
     }
 
     // ---- 工具 ----
@@ -1027,6 +1033,7 @@ createApp({
       state.currentUser = null;
       localStorage.removeItem('token');
       localStorage.removeItem('user');
+      window.location.reload();
     }
 
     // ---- 账号 ----
@@ -1148,14 +1155,12 @@ createApp({
       }
     }
 
-    // 验证签到 URL 并自动执行
+    // 验证签到 URL 并自动执行（不处理 UI 提示，由调用方负责）
     function validateAndExecuteQR(text) {
       try {
         const url = new URL(text);
-        // 校验域名和路径
         if (url.hostname.indexOf('ketangpai.com') === -1 ||
             url.pathname.indexOf('checkIn') === -1) {
-          showToast('无效二维码');
           return false;
         }
         const p = url.searchParams;
@@ -1166,23 +1171,18 @@ createApp({
         const courseid = p.get('courseid');
         const randNum = p.get('randNum');
         if (!ticketid || !expire || !sign || !courseid || !randNum || !type) {
-          showToast('无效二维码');
           return false;
         }
-        // 自动填充
         checkinForm.courseid = courseid;
         checkinForm.ticketid = ticketid;
         checkinForm.expire = expire;
         checkinForm.sign = sign;
         checkinForm.randNum = randNum;
         checkinUrl.value = text;
-        // 切到签到页并执行
         if (route.value !== 'checkin') navigate('checkin');
-        // 延迟等页面切换完成再执行签到
         Vue.nextTick().then(() => executeCheckin());
         return true;
       } catch {
-        showToast('无效二维码');
         return false;
       }
     }
@@ -1208,9 +1208,9 @@ createApp({
       scanOpening.value = true;
       await Vue.nextTick();
       const tries = [
-        { video: true },
-        { video: { width: { ideal: 640 }, height: { ideal: 480 } } },
+        { video: { facingMode: { ideal: 'environment' } } },
         { video: { facingMode: 'user' } },
+        { video: true },
       ];
       for (const c of tries) {
         try {
@@ -1282,7 +1282,7 @@ createApp({
             return;
           }
           // 无效二维码 → 短暂提示后继续扫描
-          mdui.snackbar({ message: '无效二维码', timeout: 800 });
+          showToast('无效二维码');
         }
       } catch (e) { console.log('[liveLoop] jsQR error:', e); }
       scanTimer = setTimeout(liveLoop, 100);
@@ -1322,6 +1322,7 @@ createApp({
             const text = code.data;
             stopScanner();
             if (validateAndExecuteQR(text)) showToast('二维码识别成功 ✓');
+            else showToast('无效二维码');
             if (url) URL.revokeObjectURL(url);
             return;
           }
