@@ -215,6 +215,24 @@
       text-align:center; padding: 64px 16px; color:#6b7280; background: rgba(255,255,255,.8); border-radius: 20px;
     }
     .empty-icon { font-size: 56px; margin-bottom: 14px; opacity: .4; color: #6b7280; }
+
+    /* 首页直达签到 FAB — 固定底部居中 */
+    .dash-fab-wrap {
+      position:fixed; bottom:28px; left:50%; transform:translateX(-50%);
+      display:flex; flex-direction:column; align-items:center; gap:6px;
+      cursor:pointer; user-select:none; z-index:50;
+    }
+    .dash-fab-wrap mdui-fab {
+      box-shadow: 0 8px 24px rgba(99,102,241,.35);
+      transition: transform .2s, box-shadow .2s;
+    }
+    .dash-fab-wrap mdui-fab::part(icon) {
+      display:flex; align-items:center; justify-content:center;
+    }
+    .dash-fab-wrap mdui-fab:hover {
+      transform: scale(1.1);
+      box-shadow: 0 12px 32px rgba(99,102,241,.5);
+    }
     .empty-state p { margin:0; font-size: 15px; }
 
     /* ============================================================
@@ -658,6 +676,10 @@
           </div>
 
         </div><!-- /main-body -->
+
+        <div class="dash-fab-wrap" v-if="route==='dashboard'" @click="navigate('checkin')" title="直达签到">
+          <mdui-fab icon="how_to_reg" size="large"></mdui-fab>
+        </div>
       </div><!-- /main-content -->
     </div><!-- /app-layout -->
   </template>
@@ -790,7 +812,7 @@ createApp({
     const courses = ref([]);  // Course 表缓存
     const logs = ref([]);
     const users = ref([]);
-    const recentLogs = ref([]);
+    const recentLogs = computed(() => logs.value.slice(-10).reverse());
 
     // 弹窗
     const modals = reactive({ account: false, binding: false, user: false });
@@ -892,7 +914,7 @@ createApp({
         localStorage.setItem('user', JSON.stringify(res.data.user));
         route.value = 'dashboard';
         showToast('登录成功');
-        loadRecentLogs();
+        loadPageData('dashboard');
       } catch (e) {
         showToast(e.message || '登录失败');
       } finally { loading.value = false; }
@@ -909,7 +931,7 @@ createApp({
         localStorage.setItem('user', JSON.stringify(res.data.user));
         route.value = 'dashboard';
         showToast('注册成功');
-        loadRecentLogs();
+        loadPageData('dashboard');
       } catch (e) {
         showToast(e.message || '注册失败');
       } finally { loading.value = false; }
@@ -1071,13 +1093,6 @@ createApp({
       catch (e) { showToast(e.message); }
     }
 
-    async function loadRecentLogs() {
-      try {
-        const res = await api('GET', '/api/checkin/logs');
-        recentLogs.value = (res.data || []).slice(-10).reverse();
-      } catch {}
-    }
-
     // ---- 用户管理 ----
     async function loadUsers() {
       if (state.currentUser?.role !== 'admin') return;
@@ -1161,7 +1176,7 @@ createApp({
       navigate, login, register, logout,
       loadAccounts, openAccountModal, saveAccount, deleteAccount,
       loadBindings, openBindingModal, saveBinding, deleteBinding, toggleBinding,
-      executeCheckin, parseCheckinUrl, checkinUrl, loadLogs, loadRecentLogs,
+      executeCheckin, parseCheckinUrl, checkinUrl, loadLogs,
       loadUsers, openUserModal, saveUser, deleteUser,
     };
   }
