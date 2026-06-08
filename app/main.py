@@ -221,7 +221,7 @@ async def root_head():
 @app.get("/favicon.ico")
 async def favicon():
     path = Path(__file__).parent.parent / "favicon.ico"
-    return FileResponse(path)
+    return FileResponse(path, headers={"Cache-Control": "public, max-age=604800"})
 
 
 @app.post("/api/register")
