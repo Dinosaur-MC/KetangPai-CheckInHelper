@@ -1,5 +1,6 @@
 import os
 import re
+import json
 import secrets
 from pathlib import Path
 from datetime import datetime, timezone
@@ -130,8 +131,8 @@ def get_user_cache(redis: Redis, user_id: int) -> User | None:
         user_cache = redis.get(f"user:{user_id}")
         if user_cache is None:
             return None
-        return User.model_validate(user_cache)
-    except ConnectionError:
+        return User.model_validate(json.loads(user_cache))
+    except (ConnectionError, json.JSONDecodeError, Exception):
         logger.warning("Redis unavailable — user cache miss for %s", user_id)
         return None
 
@@ -173,7 +174,7 @@ def get_current_user(
     if not user.is_active:
         raise HTTPException(status_code=403, detail="账号已被禁用")
 
-    redis.set(f"user:{user_id}", user.model_dump(exclude_none=True), 86400)
+    redis.set(f"user:{user_id}", json.dumps(user.model_dump(exclude_none=True, mode="json")), 86400)
     return user
 
 
@@ -837,34 +838,34 @@ async def get_checkin_log(
     return BaseResponse(message="success", data=log.model_dump())
 
 
-@app.put("/api/checkin/logs/{log_id}", response_model=CheckInLog)
-async def update_checkin_log(
-    log_id: int,
-    status: int = Body(...),
-    current_user: User = Depends(get_current_user),
-    session: Session = Depends(get_session_with),
-):
-    """更新签到日志状态"""
-    log = session.get(CheckInLog, log_id)
-    if log is None:
-        raise HTTPException(status_code=404, detail="签到日志不存在")
+# @app.put("/api/checkin/logs/{log_id}", response_model=CheckInLog)
+# async def update_checkin_log(
+#     log_id: int,
+#     status: int = Body(...),
+#     current_user: User = Depends(get_current_user),
+#     session: Session = Depends(get_session_with),
+# ):
+#     """更新签到日志状态"""
+#     log = session.get(CheckInLog, log_id)
+#     if log is None:
+#         raise HTTPException(status_code=404, detail="签到日志不存在")
 
-    # 验证权限
-    user_account = session.exec(
-        select(UserAccount).where(
-            UserAccount.user_id == current_user.id,
-            UserAccount.account_id == log.account_id,
-        )
-    ).first()
+#     # 验证权限
+#     user_account = session.exec(
+#         select(UserAccount).where(
+#             UserAccount.user_id == current_user.id,
+#             UserAccount.account_id == log.account_id,
+#         )
+#     ).first()
 
-    if user_account is None:
-        raise HTTPException(status_code=403, detail="无权限修改此日志")
+#     if user_account is None:
+#         raise HTTPException(status_code=403, detail="无权限修改此日志")
 
-    log.status = status
-    session.add(log)
-    session.flush()
+#     log.status = status
+#     session.add(log)
+#     session.flush()
 
-    return BaseResponse(message="success", data=log.model_dump())
+#     return BaseResponse(message="success", data=log.model_dump())
 
 
 @app.delete("/api/checkin/logs/{log_id}")

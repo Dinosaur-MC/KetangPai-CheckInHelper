@@ -9,13 +9,13 @@ from pydantic import BaseModel
 class BaseResponse(BaseModel):
     code: int = 200
     message: str
-    data: Optional[dict | list]
+    data: Optional[dict | list] = None
 
 
 class ErrorResponse(BaseModel):
     code: int
     message: str
-    detail: Optional[dict | list]
+    detail: Optional[dict | list] = None
 
 
 class Role(StrEnum):
