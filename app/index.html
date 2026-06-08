@@ -1,11 +1,1012 @@
 <!DOCTYPE html>
-<html lang="en">
+<html lang="zh-CN">
 <head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Document</title>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+  <title>课堂派签到助手</title>
+  <!-- MDUI 2 CSS -->
+  <link rel="stylesheet" href="https://unpkg.com/mdui@2/mdui.css">
+  <style>
+    /* ============================================================
+       全局重置
+       ============================================================ */
+    * { box-sizing: border-box; }
+    html, body {
+      margin: 0;
+      padding: 0;
+      height: 100%;
+      background: #f0f2f5;
+      font-family: "Roboto", "Noto Sans SC", -apple-system, BlinkMacSystemFont, sans-serif;
+      -webkit-font-smoothing: antialiased;
+    }
+    [v-cloak] { display: none; }
+    #app { height: 100%; }
+
+    /* ---- 主布局 (flexbox) ---- */
+    .app-layout { display:flex; height:100vh; overflow:hidden; }
+    .sidebar {
+      width:240px; min-width:240px;
+      background:#fff;
+      border-right:1px solid #e8e8e8;
+      display:flex; flex-direction:column;
+      overflow-y:auto;
+    }
+    /* 移动端：侧栏 fixed + transform */
+    @media (max-width: 768px) {
+      .sidebar {
+        position:fixed; top:0; left:0; bottom:0;
+        z-index:200;
+        transform:translateX(-100%);
+        transition:transform .25s ease;
+        box-shadow:2px 0 12px rgba(0,0,0,.15);
+      }
+      .sidebar.open { transform:translateX(0); }
+    }
+    /* 遮罩（仅移动端） */
+    .sidebar-overlay {
+      display:none;
+      position:fixed; inset:0;
+      background:rgba(0,0,0,.3);
+      z-index:199;
+    }
+    @media (max-width: 768px) {
+      .sidebar-overlay { display:block; }
+    }
+
+    /* 侧边栏内部 */
+    .sidebar-header {
+      padding:20px 16px 12px;
+      border-bottom:1px solid rgba(0,0,0,.08);
+    }
+    .sidebar-header h1 { margin:0; font-size:18px; font-weight:600; color:#333; }
+    .sidebar-header small { color:#999; font-size:12px; }
+    .sidebar-user {
+      padding:12px 16px;
+      border-bottom:1px solid rgba(0,0,0,.08);
+      display:flex; align-items:center; gap:10px;
+    }
+    .sidebar-user .avatar {
+      width:36px; height:36px; border-radius:50%;
+      background:linear-gradient(135deg,#667eea,#764ba2);
+      color:#fff; display:flex; align-items:center; justify-content:center;
+      font-size:14px; flex-shrink:0;
+    }
+    .sidebar-user .name { font-size:14px; font-weight:500; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+    .sidebar-user .role-badge {
+      font-size:11px; background:#e8eaf6; color:#3f51b5;
+      padding:1px 8px; border-radius:10px; flex-shrink:0;
+    }
+    .sidebar-footer { border-top:1px solid rgba(0,0,0,.08); margin-top:auto; }
+    .sidebar-footer mdui-list-item { color:#e53935; }
+
+    /* 主内容 */
+    .main-content { flex:1; display:flex; flex-direction:column; overflow:hidden; min-width:0; }
+    .main-header {
+      background:#fff; padding:10px 24px;
+      border-bottom:1px solid #e8e8e8;
+      display:flex; align-items:center; gap:12px;
+      min-height:56px; flex-shrink:0;
+    }
+    .main-header h2 { margin:0; font-size:18px; font-weight:500; }
+    .main-header .breadcrumb { color:#999; font-size:13px; }
+    .main-header .menu-btn {
+      display:none; background:none; border:none;
+      font-size:24px; cursor:pointer; padding:4px; color:#555;
+    }
+    .main-body { flex:1; overflow-y:auto; padding:20px 24px; }
+
+    /* ---- 登录页 ---- */
+    .login-page {
+      min-height:100vh; display:flex; align-items:center; justify-content:center;
+      background:linear-gradient(135deg,#667eea 0%,#764ba2 100%); padding:16px;
+    }
+    .login-card {
+      width:100%; max-width:400px; padding:36px 28px 28px;
+      border-radius:16px; background:#fff;
+    }
+    .login-card h2 { margin:0 0 8px; font-size:24px; font-weight:500; text-align:center; }
+    .login-card .subtitle { color:#666; text-align:center; margin-bottom:28px; font-size:14px; }
+    .login-card .field { margin-bottom:16px; }
+    .login-card .form-footer { margin-top:20px; display:flex; justify-content:space-between; align-items:center; }
+    .login-card .form-footer a { color:#667eea; cursor:pointer; font-size:14px; }
+    .login-card mdui-button { width:100%; margin-top:8px; }
+
+    @media (max-width: 768px) {
+      .main-header .menu-btn { display:block; }
+      .main-header h2 { font-size:16px; }
+      .main-body { padding:14px 16px; }
+    }
+
+    /* ---- 统计卡片 ---- */
+    .stat-cards {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+      gap: 16px;
+      margin-bottom: 24px;
+    }
+    .stat-card {
+      background: #fff;
+      border-radius: 12px;
+      padding: 20px;
+      box-shadow: 0 1px 3px rgba(0,0,0,.08);
+    }
+    .stat-card .num {
+      font-size: 32px;
+      font-weight: 600;
+      color: #3f51b5;
+    }
+    .stat-card .label {
+      font-size: 13px;
+      color: #888;
+      margin-top: 4px;
+    }
+
+    /* ---- 表格 ---- */
+    .table-wrap {
+      background: #fff;
+      border-radius: 12px;
+      box-shadow: 0 1px 3px rgba(0,0,0,.08);
+      overflow-x: auto;
+    }
+    .table-wrap table {
+      width: 100%;
+      border-collapse: collapse;
+    }
+    .table-wrap th, .table-wrap td {
+      padding: 12px 16px;
+      text-align: left;
+      font-size: 14px;
+      border-bottom: 1px solid #f0f0f0;
+      white-space: nowrap;
+    }
+    .table-wrap th {
+      background: #fafafa;
+      font-weight: 600;
+      color: #555;
+      font-size: 13px;
+    }
+    .table-wrap tr:hover td { background: #fafafa; }
+    .table-wrap .actions { text-align: right; white-space: nowrap; }
+
+    /* ---- toolbar ---- */
+    .toolbar {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      flex-wrap: wrap;
+      gap: 12px;
+      margin-bottom: 16px;
+    }
+    .toolbar .left { display: flex; gap: 8px; align-items: center; font-size: 13px; color: #888; }
+    .toolbar .right { display: flex; gap: 8px; }
+
+    /* ---- 状态标签 (chip 替代) ---- */
+    .status-chip {
+      display: inline-block;
+      padding: 2px 12px;
+      border-radius: 14px;
+      font-size: 12px;
+      line-height: 22px;
+    }
+    .status-chip.green { background: #e8f5e9; color: #2e7d32; }
+    .status-chip.red { background: #ffebee; color: #c62828; }
+    .status-chip.orange { background: #fff3e0; color: #e65100; }
+    .status-chip.blue { background: #e8eaf6; color: #3f51b5; }
+
+    /* ---- 空状态 ---- */
+    .empty-state {
+      text-align: center;
+      padding: 48px 16px;
+      color: #999;
+    }
+    .empty-state .icon { font-size: 48px; margin-bottom: 12px; }
+    .empty-state p { margin: 0; font-size: 14px; }
+
+    /* ---- 签到表单 ---- */
+    .checkin-form {
+      max-width: 600px;
+    }
+    .checkin-form .field { margin-bottom: 16px; }
+    .checkin-form .hint {
+      font-size: 12px;
+      color: #999;
+      margin-top: 4px;
+    }
+
+    /* ---- 签到结果 ---- */
+    .result-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fill, minmax(250px, 1fr));
+      gap: 12px;
+      margin-top: 16px;
+    }
+    .result-item {
+      background: #fff;
+      border-radius: 8px;
+      padding: 14px;
+      box-shadow: 0 1px 3px rgba(0,0,0,.06);
+      border-left: 4px solid #ddd;
+      font-size: 13px;
+    }
+    .result-item.success { border-left-color: #4caf50; }
+    .result-item.fail { border-left-color: #f44336; }
+    .result-item .email { font-weight: 500; margin-bottom: 4px; }
+    .result-item .msg { color: #888; }
+
+    /* ---- 弹窗内表单 ---- */
+    .dialog-field { margin-bottom: 16px; }
+
+    /* ---- 加载中 ---- */
+    .loading { text-align: center; padding: 48px; color: #999; }
+  </style>
 </head>
 <body>
-    Hello
+<div id="app" v-cloak>
+
+  <!-- ============================================================
+       登录 / 注册 页面
+       ============================================================ -->
+  <template v-if="!state.token">
+    <div class="login-page">
+      <div class="login-card">
+        <template v-if="loginView === 'login'">
+          <h2>签到助手</h2>
+          <p class="subtitle">登录以管理课堂派签到</p>
+          <form @submit.prevent="login">
+            <div class="field">
+              <mdui-text-field label="邮箱" type="email"
+                :value="form.email" @input="form.email = $event.target.value"
+                placeholder="your@email.com"></mdui-text-field>
+            </div>
+            <div class="field">
+              <mdui-text-field label="密码" type="password"
+                :value="form.password" @input="form.password = $event.target.value"
+                placeholder="至少 8 位"></mdui-text-field>
+            </div>
+            <mdui-button variant="filled" color="primary"
+              @click="login" :disabled="loading">{{ loading ? '登录中…' : '登 录' }}</mdui-button>
+          </form>
+          <div class="form-footer">
+            <a @click="loginView='register'">没有账号？去注册</a>
+          </div>
+        </template>
+        <template v-else>
+          <h2>注册账号</h2>
+          <p class="subtitle">创建签到助手账号</p>
+          <form @submit.prevent="register">
+            <div class="field">
+              <mdui-text-field label="邮箱" type="email"
+                :value="form.email" @input="form.email = $event.target.value"
+                placeholder="your@email.com"></mdui-text-field>
+            </div>
+            <div class="field">
+              <mdui-text-field label="密码" type="password"
+                :value="form.password" @input="form.password = $event.target.value"
+                placeholder="至少 8 位"></mdui-text-field>
+            </div>
+            <mdui-button variant="filled" color="primary"
+              @click="register" :disabled="loading">{{ loading ? '注册中…' : '注 册' }}</mdui-button>
+          </form>
+          <div class="form-footer">
+            <a @click="loginView='login'">已有账号？去登录</a>
+          </div>
+        </template>
+      </div>
+    </div>
+  </template>
+
+  <!-- ============================================================
+       主布局 (已登录)
+       ============================================================ -->
+  <template v-else>
+    <div class="app-layout">
+      <!-- 侧边栏 (纯 CSS flexbox) -->
+      <aside class="sidebar" :class="{ open: sidebarOpen }">
+        <div class="sidebar-header">
+          <h1>签到助手</h1>
+          <small>课堂派 CheckInHelper</small>
+        </div>
+        <div class="sidebar-user">
+          <div class="avatar">{{ state.currentUser?.email?.charAt(0).toUpperCase() }}</div>
+          <div class="name">{{ state.currentUser?.email }}</div>
+          <span class="role-badge" v-if="state.currentUser?.role === 'admin'">管理员</span>
+        </div>
+        <mdui-list>
+          <mdui-list-item :active="route==='dashboard'" @click="navigate('dashboard')">
+            📊&nbsp; 首页
+          </mdui-list-item>
+          <mdui-list-item :active="route==='accounts'" @click="navigate('accounts')">
+            🔑&nbsp; 账号
+          </mdui-list-item>
+          <mdui-list-item :active="route==='courses'" @click="navigate('courses')">
+            📚&nbsp; 课程
+          </mdui-list-item>
+          <mdui-list-item :active="route==='checkin'" @click="navigate('checkin')">
+            ✅&nbsp; 签到
+          </mdui-list-item>
+          <mdui-list-item :active="route==='logs'" @click="navigate('logs')">
+            📋&nbsp; 日志
+          </mdui-list-item>
+          <mdui-list-item :active="route==='users'" @click="navigate('users')"
+            v-if="state.currentUser?.role === 'admin'">
+            👥&nbsp; 用户管理
+          </mdui-list-item>
+        </mdui-list>
+        <div class="sidebar-footer">
+          <mdui-list-item @click="logout">🚪&nbsp; 退出登录</mdui-list-item>
+        </div>
+      </aside>
+
+      <!-- 遮罩 (移动端侧栏打开时) -->
+      <div class="sidebar-overlay" v-if="sidebarOpen" @click="sidebarOpen=false"></div>
+
+      <!-- 主内容 -->
+      <div class="main-content">
+        <div class="main-header">
+          <button class="menu-btn" @click="sidebarOpen=!sidebarOpen">☰</button>
+          <h2>{{ pageTitle }}</h2>
+          <span class="breadcrumb">{{ pageSubtitle }}</span>
+        </div>
+        <div class="main-body">
+
+          <!-- ==========================================================
+               首页
+               ========================================================== -->
+          <div v-if="route === 'dashboard'">
+            <div class="stat-cards">
+              <div class="stat-card">
+                <div class="num">{{ stats.accountCount }}</div>
+                <div class="label">课堂派账号</div>
+              </div>
+              <div class="stat-card">
+                <div class="num">{{ stats.bindingCount }}</div>
+                <div class="label">课程绑定</div>
+              </div>
+              <div class="stat-card">
+                <div class="num">{{ stats.todayCheckins }}</div>
+                <div class="label">今日签到</div>
+              </div>
+              <div class="stat-card">
+                <div class="num">{{ stats.totalLogs }}</div>
+                <div class="label">累计记录</div>
+              </div>
+            </div>
+
+            <h3 style="margin:24px 0 12px;font-size:15px;font-weight:500;">最近签到</h3>
+            <div class="table-wrap" v-if="recentLogs.length">
+              <table>
+                <thead><tr><th>课程</th><th>账号 ID</th><th>状态</th><th>时间</th></tr></thead>
+                <tbody>
+                  <tr v-for="log in recentLogs" :key="log.id">
+                    <td>{{ log.course_id }}</td>
+                    <td>{{ log.account_id }}</td>
+                    <td><span class="status-chip" :class="log.status===1?'green':'red'">{{ log.status===1?'成功':'失败' }}</span></td>
+                    <td>{{ formatTime(log.created_at) }}</td>
+                  </tr>
+                </tbody>
+              </table>
+            </div>
+            <div class="empty-state" v-else><p>暂无签到记录</p></div>
+          </div>
+
+          <!-- ==========================================================
+               账号管理
+               ========================================================== -->
+          <div v-if="route === 'accounts'">
+            <div class="toolbar">
+              <div class="left">共 {{ accounts.length }} 个账号</div>
+              <div class="right">
+                <mdui-button variant="filled" color="primary" @click="openAccountModal()">+ 添加账号</mdui-button>
+              </div>
+            </div>
+            <div class="table-wrap" v-if="accounts.length">
+              <table>
+                <thead><tr><th>邮箱</th><th>状态</th><th>创建时间</th><th class="actions">操作</th></tr></thead>
+                <tbody>
+                  <tr v-for="acct in accounts" :key="acct.id">
+                    <td>{{ acct.email }}</td>
+                    <td><span class="status-chip" :class="acct.is_active===false?'orange':'green'">{{ acct.is_active===false?'已禁用':'正常' }}</span></td>
+                    <td>{{ formatTime(acct.created_at) }}</td>
+                    <td class="actions">
+                      <mdui-button variant="icon" @click="openAccountModal(acct)" title="编辑">✏️</mdui-button>
+                      <mdui-button variant="icon" @click="deleteAccount(acct)" title="删除" style="color:#c62828;">🗑️</mdui-button>
+                    </td>
+                  </tr>
+                </tbody>
+              </table>
+            </div>
+            <div class="empty-state" v-else><div class="icon">🔑</div><p>还没有课堂派账号，点击右上角添加</p></div>
+          </div>
+
+          <!-- ==========================================================
+               课程绑定
+               ========================================================== -->
+          <div v-if="route === 'courses'">
+            <div class="toolbar">
+              <div class="left">共 {{ bindings.length }} 条绑定</div>
+              <div class="right">
+                <mdui-button variant="filled" color="primary" @click="openBindingModal()">+ 绑定课程</mdui-button>
+              </div>
+            </div>
+            <div class="table-wrap" v-if="bindings.length">
+              <table>
+                <thead><tr><th>课程 ID</th><th>课堂派账号</th><th>启用</th><th class="actions">操作</th></tr></thead>
+                <tbody>
+                  <tr v-for="b in bindings" :key="b.id">
+                    <td>{{ b.course_id }}</td>
+                    <td>{{ getAccountEmail(b.account_id) }}</td>
+                    <td><span class="status-chip" :class="b.is_active?'green':'orange'">{{ b.is_active?'启用':'禁用' }}</span></td>
+                    <td class="actions">
+                      <mdui-button variant="icon" @click="deleteBinding(b)" title="解绑" style="color:#c62828;">🗑️</mdui-button>
+                    </td>
+                  </tr>
+                </tbody>
+              </table>
+            </div>
+            <div class="empty-state" v-else><div class="icon">📚</div><p>还没有绑定课程</p></div>
+          </div>
+
+          <!-- ==========================================================
+               签到执行
+               ========================================================== -->
+          <div v-if="route === 'checkin'">
+            <mdui-card style="padding:24px;max-width:600px;">
+              <div style="font-size:16px;font-weight:500;margin-bottom:4px;">批量签到</div>
+              <div class="page-desc" style="color:#888;font-size:13px;margin-bottom:20px;">填写签到二维码中的参数，将对绑定了该课程的所有账号执行签到</div>
+
+              <div class="field">
+                <mdui-text-field label="CourseID *" required
+                  :value="checkinForm.courseid" @input="checkinForm.courseid = $event.target.value"
+                  placeholder="课程 ID"></mdui-text-field>
+              </div>
+              <div class="field">
+                <mdui-text-field label="TicketID *" required
+                  :value="checkinForm.ticketid" @input="checkinForm.ticketid = $event.target.value"
+                  placeholder="二维码中的 ticketid"></mdui-text-field>
+              </div>
+              <div class="field">
+                <mdui-text-field label="Expire"
+                  :value="checkinForm.expire" @input="checkinForm.expire = $event.target.value"
+                  placeholder="过期时间戳">
+                  <span slot="helper">留空自动填充</span>
+                </mdui-text-field>
+              </div>
+              <div class="field">
+                <mdui-text-field label="Sign"
+                  :value="checkinForm.sign" @input="checkinForm.sign = $event.target.value"
+                  placeholder="签名">
+                  <span slot="helper">留空自动填充</span>
+                </mdui-text-field>
+              </div>
+              <div class="field">
+                <mdui-text-field label="RandNum"
+                  :value="checkinForm.randNum" @input="checkinForm.randNum = $event.target.value"
+                  placeholder="随机数">
+                  <span slot="helper">留空自动填充</span>
+                </mdui-text-field>
+              </div>
+
+              <mdui-button variant="filled" color="success" @click="executeCheckin"
+                :disabled="checkinLoading" style="width:100%;">
+                {{ checkinLoading ? '签到中…' : '执行签到' }}
+              </mdui-button>
+
+              <div v-if="checkinResults.length" style="margin-top:24px;">
+                <div style="font-size:14px;font-weight:500;margin-bottom:8px;">签到结果 ({{ checkinSuccessCount }}/{{ checkinResults.length }} 成功)</div>
+                <div class="result-grid">
+                  <div v-for="r in checkinResults" :key="r.email"
+                    class="result-item" :class="r.success?'success':'fail'">
+                    <div class="email">{{ r.email }}</div>
+                    <div class="msg">{{ r.message }}</div>
+                  </div>
+                </div>
+              </div>
+            </mdui-card>
+          </div>
+
+          <!-- ==========================================================
+               签到日志
+               ========================================================== -->
+          <div v-if="route === 'logs'">
+            <div class="toolbar">
+              <div class="left">
+                <mdui-text-field label="课程 ID 筛选" style="width:160px;"
+                  :value="logFilter.course_id" @input="logFilter.course_id = $event.target.value">
+                </mdui-text-field>
+                <mdui-button variant="icon" @click="loadLogs">🔄</mdui-button>
+              </div>
+            </div>
+            <div class="table-wrap" v-if="logs.length">
+              <table>
+                <thead><tr><th>ID</th><th>账号</th><th>课程</th><th>状态</th><th>时间</th></tr></thead>
+                <tbody>
+                  <tr v-for="log in filteredLogs" :key="log.id">
+                    <td>{{ log.id }}</td>
+                    <td>{{ getAccountEmail(log.account_id) }}</td>
+                    <td>{{ log.course_id }}</td>
+                    <td><span class="status-chip" :class="log.status===1?'green':'red'">{{ log.status===1?'成功':'失败' }}</span></td>
+                    <td>{{ formatTime(log.created_at) }}</td>
+                  </tr>
+                </tbody>
+              </table>
+            </div>
+            <div class="empty-state" v-else><div class="icon">📋</div><p>暂无签到记录</p></div>
+          </div>
+
+          <!-- ==========================================================
+               用户管理 (admin)
+               ========================================================== -->
+          <div v-if="route === 'users'">
+            <div class="toolbar">
+              <div class="left">共 {{ users.length }} 个用户</div>
+              <div class="right">
+                <mdui-button variant="filled" color="primary" @click="openUserModal()">+ 新建用户</mdui-button>
+              </div>
+            </div>
+            <div class="table-wrap" v-if="users.length">
+              <table>
+                <thead><tr><th>ID</th><th>邮箱</th><th>角色</th><th>状态</th><th>最后登录</th><th>创建时间</th><th class="actions">操作</th></tr></thead>
+                <tbody>
+                  <tr v-for="u in users" :key="u.id">
+                    <td>{{ u.id }}</td>
+                    <td>{{ u.email }}</td>
+                    <td><span class="status-chip" :class="u.role==='admin'?'blue':'green'">{{ u.role }}</span></td>
+                    <td><span class="status-chip" :class="u.is_active===false?'orange':'green'">{{ u.is_active===false?'已禁用':'正常' }}</span></td>
+                    <td>{{ u.last_login_at ? formatTime(u.last_login_at) : '-' }}</td>
+                    <td>{{ formatTime(u.created_at) }}</td>
+                    <td class="actions">
+                      <mdui-button variant="icon" @click="openUserModal(u)" title="编辑">✏️</mdui-button>
+                      <mdui-button variant="icon" @click="deleteUser(u)" v-if="u.id !== state.currentUser?.id" title="删除" style="color:#c62828;">🗑️</mdui-button>
+                    </td>
+                  </tr>
+                </tbody>
+              </table>
+            </div>
+            <div class="empty-state" v-else><div class="icon">👥</div><p>暂无用户数据</p></div>
+          </div>
+
+        </div><!-- /main-body -->
+      </div><!-- /main-content -->
+    </div><!-- /app-layout -->
+  </template>
+
+  <!-- ============================================================
+       弹窗: 添加 / 编辑账号
+       ============================================================ -->
+  <mdui-dialog :open="modals.account" @closed="modals.account=false"
+    :headline="editingAccount ? '编辑账号' : '添加账号'">
+    <div class="dialog-field">
+      <mdui-text-field label="课堂派邮箱" type="email"
+        :value="accountForm.email" @input="accountForm.email = $event.target.value">
+      </mdui-text-field>
+    </div>
+    <div class="dialog-field">
+      <mdui-text-field :label="editingAccount ? '新密码 (留空不修改)' : '密码'" type="password"
+        :value="accountForm.password" @input="accountForm.password = $event.target.value">
+      </mdui-text-field>
+    </div>
+    <div slot="actions">
+      <mdui-button variant="text" @click="modals.account=false">取消</mdui-button>
+      <mdui-button variant="filled" color="primary" @click="saveAccount">{{ editingAccount ? '保存' : '添加' }}</mdui-button>
+    </div>
+  </mdui-dialog>
+
+  <!-- ============================================================
+       弹窗: 绑定课程
+       ============================================================ -->
+  <mdui-dialog :open="modals.binding" @closed="modals.binding=false"
+    headline="绑定课程">
+    <div class="dialog-field">
+      <mdui-text-field label="课程 ID"
+        :value="bindingForm.course_id" @input="bindingForm.course_id = $event.target.value"
+        placeholder="课堂派课程 ID">
+      </mdui-text-field>
+    </div>
+    <div class="dialog-field">
+      <mdui-select label="课堂派账号"
+        :value="bindingForm.account_id" @change="bindingForm.account_id = $event.target.value">
+        <mdui-menu-item value="" disabled>请选择账号</mdui-menu-item>
+        <mdui-menu-item v-for="acct in accounts" :key="acct.id" :value="acct.id">{{ acct.email }}</mdui-menu-item>
+      </mdui-select>
+    </div>
+    <div slot="actions">
+      <mdui-button variant="text" @click="modals.binding=false">取消</mdui-button>
+      <mdui-button variant="filled" color="primary" @click="saveBinding">绑定</mdui-button>
+    </div>
+  </mdui-dialog>
+
+  <!-- ============================================================
+       弹窗: 新建 / 编辑用户 (admin)
+       ============================================================ -->
+  <mdui-dialog :open="modals.user" @closed="modals.user=false"
+    :headline="editingUser ? '编辑用户' : '新建用户'">
+    <div class="dialog-field">
+      <mdui-text-field label="邮箱" type="email"
+        :value="userForm.email" @input="userForm.email = $event.target.value">
+      </mdui-text-field>
+    </div>
+    <div class="dialog-field">
+      <mdui-text-field :label="editingUser ? '新密码 (留空不修改)' : '密码'" type="password"
+        :value="userForm.password" @input="userForm.password = $event.target.value">
+      </mdui-text-field>
+    </div>
+    <div class="dialog-field" v-if="editingUser">
+      <mdui-select label="角色"
+        :value="userForm.role" @change="userForm.role = $event.target.value">
+        <mdui-menu-item value="user">普通用户</mdui-menu-item>
+        <mdui-menu-item value="admin">管理员</mdui-menu-item>
+      </mdui-select>
+    </div>
+    <div class="dialog-field" v-if="editingUser">
+      <mdui-select label="状态"
+        :value="userForm.is_active" @change="userForm.is_active = $event.target.value === 'true'">
+        <mdui-menu-item :value="true">正常</mdui-menu-item>
+        <mdui-menu-item :value="false">已禁用</mdui-menu-item>
+      </mdui-select>
+    </div>
+    <div slot="actions">
+      <mdui-button variant="text" @click="modals.user=false">取消</mdui-button>
+      <mdui-button variant="filled" color="primary" @click="saveUser">{{ editingUser ? '保存' : '创建' }}</mdui-button>
+    </div>
+  </mdui-dialog>
+
+</div><!-- /#app -->
+
+<!-- MDUI 2 JS (先加载使组件就绪) -->
+<script src="https://unpkg.com/mdui@2/mdui.global.js"></script>
+<!-- Vue 3 -->
+<script src="https://unpkg.com/vue@3/dist/vue.global.prod.js"></script>
+
+<script>
+const { createApp, reactive, ref, computed } = Vue;
+
+const API_BASE = ''; // 同域
+
+// ---- HTTP 工具 ----
+async function api(method, path, body) {
+  const headers = { 'Content-Type': 'application/json' };
+  const token = localStorage.getItem('token');
+  if (token) headers['Authorization'] = `Bearer ${token}`;
+  const opts = { method, headers };
+  if (body !== undefined) opts.body = JSON.stringify(body);
+  const res = await fetch(`${API_BASE}${path}`, opts);
+  const data = await res.json();
+  if (!res.ok) throw new Error(data.message || `请求失败 (${res.status})`);
+  return data;
+}
+
+// ---- Vue 应用 ----
+createApp({
+  setup() {
+    const state = reactive({
+      token: localStorage.getItem('token') || null,
+      currentUser: JSON.parse(localStorage.getItem('user') || 'null'),
+    });
+
+    const route = ref('dashboard');
+    const isMobile = () => window.innerWidth <= 768;
+    const sidebarOpen = ref(!isMobile());
+    // 窗口尺寸变化时自动调整侧栏
+    window.addEventListener('resize', () => {
+      sidebarOpen.value = !isMobile();
+    });
+    const loading = ref(false);
+    const loginView = ref('login');
+
+    // 表单
+    const form = reactive({ email: '', password: '' });
+    const accountForm = reactive({ email: '', password: '' });
+    const bindingForm = reactive({ course_id: '', account_id: '' });
+    const userForm = reactive({ email: '', password: '', role: 'user', is_active: true });
+    const checkinForm = reactive({ courseid: '', ticketid: '', expire: '', sign: '', randNum: '' });
+    const logFilter = reactive({ course_id: '' });
+
+    // 列表
+    const accounts = ref([]);
+    const bindings = ref([]);
+    const logs = ref([]);
+    const users = ref([]);
+    const recentLogs = ref([]);
+
+    // 弹窗
+    const modals = reactive({ account: false, binding: false, user: false });
+    const editingAccount = ref(null);
+    const editingUser = ref(null);
+
+    // 签到
+    const checkinLoading = ref(false);
+    const checkinResults = ref([]);
+
+    // ---- 计算属性 ----
+    const pageTitle = computed(() => ({
+      dashboard: '首页', accounts: '账号管理', courses: '课程绑定',
+      checkin: '签到', logs: '签到日志', users: '用户管理',
+    })[route.value] || '');
+
+    const pageSubtitle = computed(() => ({
+      dashboard: '概览', accounts: '管理课堂派账号', courses: '绑定课程与账号',
+      checkin: '执行批量签到', logs: '查看历史记录', users: '管理平台用户',
+    })[route.value] || '');
+
+    const filteredLogs = computed(() =>
+      logFilter.course_id
+        ? logs.value.filter(l => l.course_id.includes(logFilter.course_id))
+        : logs.value
+    );
+
+    const stats = computed(() => {
+      const today = new Date();
+      return {
+        accountCount: accounts.value.length,
+        bindingCount: bindings.value.length,
+        todayCheckins: logs.value.filter(l => {
+          if (!l.created_at) return false;
+          const d = new Date(l.created_at);
+          return d.getDate() === today.getDate() && d.getMonth() === today.getMonth() && d.getFullYear() === today.getFullYear();
+        }).length,
+        totalLogs: logs.value.length,
+      };
+    });
+
+    const checkinSuccessCount = computed(() =>
+      checkinResults.value.filter(r => r.success).length
+    );
+
+    // ---- Toast (MDUI 2 snackbar) ----
+    function showToast(msg) {
+      try { mdui.snackbar({ message: msg }); } catch { /* fallback */ }
+    }
+
+    // ---- 工具 ----
+    function formatTime(ts) {
+      if (!ts) return '-';
+      try {
+        const d = new Date(ts);
+        if (isNaN(d.getTime())) return ts;
+        return d.toLocaleString('zh-CN', { hour12: false });
+      } catch { return ts; }
+    }
+
+    function getAccountEmail(id) {
+      const a = accounts.value.find(a => a.id === id);
+      return a ? a.email : `#${id}`;
+    }
+
+    // ---- 导航 ----
+    function navigate(to) {
+      route.value = to;
+      if (isMobile()) sidebarOpen.value = false;
+      switch (to) {
+        case 'dashboard': loadRecentLogs(); break;
+        case 'accounts': loadAccounts(); break;
+        case 'courses': loadBindings(); break;
+        case 'logs': loadLogs(); break;
+        case 'users': loadUsers(); break;
+      }
+    }
+
+    // ---- 认证 ----
+    async function login() {
+      if (!form.email || !form.password) { showToast('请填写邮箱和密码'); return; }
+      loading.value = true;
+      try {
+        const res = await api('POST', '/api/login', { email: form.email, password: form.password });
+        state.token = res.data.access_token;
+        state.currentUser = res.data.user;
+        localStorage.setItem('token', res.data.access_token);
+        localStorage.setItem('user', JSON.stringify(res.data.user));
+        route.value = 'dashboard';
+        showToast('登录成功');
+        loadRecentLogs();
+      } catch (e) {
+        showToast(e.message || '登录失败');
+      } finally { loading.value = false; }
+    }
+
+    async function register() {
+      if (!form.email || !form.password) { showToast('请填写邮箱和密码'); return; }
+      loading.value = true;
+      try {
+        const res = await api('POST', '/api/register', { email: form.email, password: form.password });
+        state.token = res.data.access_token;
+        state.currentUser = res.data.user;
+        localStorage.setItem('token', res.data.access_token);
+        localStorage.setItem('user', JSON.stringify(res.data.user));
+        route.value = 'dashboard';
+        showToast('注册成功');
+        loadRecentLogs();
+      } catch (e) {
+        showToast(e.message || '注册失败');
+      } finally { loading.value = false; }
+    }
+
+    async function logout() {
+      try { await api('POST', '/api/logout'); } catch {}
+      state.token = null;
+      state.currentUser = null;
+      localStorage.removeItem('token');
+      localStorage.removeItem('user');
+    }
+
+    // ---- 账号 ----
+    async function loadAccounts() {
+      try { const res = await api('GET', '/api/accounts'); accounts.value = res.data || []; }
+      catch (e) { showToast(e.message); }
+    }
+
+    function openAccountModal(acct) {
+      editingAccount.value = acct || null;
+      accountForm.email = acct ? acct.email : '';
+      accountForm.password = '';
+      modals.account = true;
+    }
+
+    async function saveAccount() {
+      if (!accountForm.email) { showToast('请填写邮箱'); return; }
+      try {
+        if (editingAccount.value) {
+          const body = { email: accountForm.email };
+          if (accountForm.password) body.password = accountForm.password;
+          await api('PUT', `/api/accounts/${editingAccount.value.id}`, body);
+          showToast('账号已更新');
+        } else {
+          if (!accountForm.password) { showToast('请填写密码'); return; }
+          await api('POST', '/api/accounts', { email: accountForm.email, password: accountForm.password });
+          showToast('账号已添加');
+        }
+        modals.account = false;
+        loadAccounts();
+      } catch (e) { showToast(e.message); }
+    }
+
+    async function deleteAccount(acct) {
+      if (!confirm(`确定删除账号 ${acct.email}？`)) return;
+      try {
+        await api('DELETE', `/api/accounts/${acct.id}`);
+        showToast('账号已删除');
+        loadAccounts();
+      } catch (e) { showToast(e.message); }
+    }
+
+    // ---- 课程绑定 ----
+    async function loadBindings() {
+      try {
+        if (accounts.value.length === 0) await loadAccounts();
+        const res = await api('GET', '/api/courses/bindings');
+        bindings.value = res.data || [];
+      } catch (e) { showToast(e.message); }
+    }
+
+    function openBindingModal() {
+      if (accounts.value.length === 0) { showToast('请先添加课堂派账号'); return; }
+      bindingForm.course_id = '';
+      bindingForm.account_id = accounts.value[0]?.id || '';
+      modals.binding = true;
+    }
+
+    async function saveBinding() {
+      if (!bindingForm.course_id || !bindingForm.account_id) { showToast('请填写完整信息'); return; }
+      try {
+        await api('POST', '/api/courses/bindings', { course_id: bindingForm.course_id, account_id: bindingForm.account_id });
+        showToast('课程绑定成功');
+        modals.binding = false;
+        loadBindings();
+      } catch (e) { showToast(e.message); }
+    }
+
+    async function deleteBinding(b) {
+      if (!confirm(`确定解绑课程 ${b.course_id}？`)) return;
+      try {
+        await api('DELETE', `/api/courses/bindings/${b.id}`);
+        showToast('课程已解绑');
+        loadBindings();
+      } catch (e) { showToast(e.message); }
+    }
+
+    // ---- 签到 ----
+    async function executeCheckin() {
+      if (!checkinForm.courseid || !checkinForm.ticketid) { showToast('请填写 CourseID 和 TicketID'); return; }
+      checkinLoading.value = true;
+      checkinResults.value = [];
+      try {
+        const res = await api('POST', '/api/checkin', {
+          type: 2,
+          courseid: checkinForm.courseid,
+          ticketid: checkinForm.ticketid,
+          expire: parseInt(checkinForm.expire) || 0,
+          sign: checkinForm.sign || '',
+          randNum: checkinForm.randNum || '',
+        });
+        const data = res.data || {};
+        checkinResults.value = data.results || [];
+        showToast(data.message || `签到完成 (${checkinSuccessCount.value}/${checkinResults.value.length})`);
+      } catch (e) { showToast(e.message || '签到失败'); }
+      finally { checkinLoading.value = false; }
+    }
+
+    // ---- 日志 ----
+    async function loadLogs() {
+      try { const res = await api('GET', '/api/checkin/logs'); logs.value = res.data || []; }
+      catch (e) { showToast(e.message); }
+    }
+
+    async function loadRecentLogs() {
+      try {
+        const res = await api('GET', '/api/checkin/logs');
+        recentLogs.value = (res.data || []).slice(-10).reverse();
+      } catch {}
+    }
+
+    // ---- 用户管理 ----
+    async function loadUsers() {
+      if (state.currentUser?.role !== 'admin') return;
+      try { const res = await api('GET', '/api/users'); users.value = res.data || []; }
+      catch (e) { showToast(e.message); }
+    }
+
+    function openUserModal(u) {
+      editingUser.value = u || null;
+      userForm.email = u ? u.email : '';
+      userForm.password = '';
+      userForm.role = u ? u.role : 'user';
+      userForm.is_active = u ? u.is_active : true;
+      modals.user = true;
+    }
+
+    async function saveUser() {
+      if (!userForm.email) { showToast('请填写邮箱'); return; }
+      try {
+        if (editingUser.value) {
+          const body = { email: userForm.email, role: userForm.role, is_active: userForm.is_active };
+          if (userForm.password) body.password = userForm.password;
+          await api('PUT', `/api/users/${editingUser.value.id}`, body);
+          showToast('用户已更新');
+        } else {
+          if (!userForm.password) { showToast('请填写密码'); return; }
+          await api('POST', '/api/users', { email: userForm.email, password: userForm.password, role: userForm.role });
+          showToast('用户已创建');
+        }
+        modals.user = false;
+        loadUsers();
+      } catch (e) { showToast(e.message); }
+    }
+
+    async function deleteUser(u) {
+      if (!confirm(`确定删除用户 ${u.email}？`)) return;
+      try {
+        await api('DELETE', `/api/users/${u.id}`);
+        showToast('用户已删除');
+        loadUsers();
+      } catch (e) { showToast(e.message); }
+    }
+
+    // ---- 初始化 ----
+    if (state.token) {
+      api('GET', '/api/accounts').then(() => loadRecentLogs())
+        .catch(() => {
+          state.token = null;
+          state.currentUser = null;
+          localStorage.removeItem('token');
+          localStorage.removeItem('user');
+        });
+    }
+
+    return {
+      state, route, sidebarOpen, loading, loginView,
+      form, accountForm, bindingForm, userForm, checkinForm, logFilter,
+      accounts, bindings, logs, users, recentLogs,
+      modals, editingAccount, editingUser,
+      checkinLoading, checkinResults,
+      pageTitle, pageSubtitle, filteredLogs, stats, checkinSuccessCount,
+      formatTime, getAccountEmail, showToast,
+      navigate, login, register, logout,
+      loadAccounts, openAccountModal, saveAccount, deleteAccount,
+      loadBindings, openBindingModal, saveBinding, deleteBinding,
+      executeCheckin, loadLogs, loadRecentLogs,
+      loadUsers, openUserModal, saveUser, deleteUser,
+    };
+  }
+}).mount('#app');
+</script>
 </body>
 </html>
