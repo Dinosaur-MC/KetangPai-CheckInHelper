@@ -300,7 +300,7 @@ class SessionPool:
                 invalid_key = (
                     f"checkin:{data.courseid}:invalid:{data.ticketid}"
                 )
-                if r.get(invalid_key):
+                if r and r.get(invalid_key):
                     logger.info(
                         "Ticket %s for course %s is cached as invalid — "
                         "skipping all accounts",
@@ -373,7 +373,8 @@ class SessionPool:
                         "已过期" in first_result.message
                         or "已结束" in first_result.message
                     ):
-                        r.set(invalid_key, "1", 3600)
+                        if r:
+                            r.set(invalid_key, "1", 3600)
                         logger.info(
                             "Ticket %s marked as globally invalid "
                             "(reason: %s)",

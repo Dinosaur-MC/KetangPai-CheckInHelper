@@ -209,11 +209,12 @@ def get_current_user(
     if not user.is_active:
         raise HTTPException(status_code=403, detail="账号已被禁用")
 
-    redis.set(
-        f"user:{user_id}",
-        json.dumps(user.model_dump(exclude_none=True, mode="json")),
-        86400,
-    )
+    if redis:
+        redis.set(
+            f"user:{user_id}",
+            json.dumps(user.model_dump(exclude_none=True, mode="json")),
+            86400,
+        )
     return user
 
 
@@ -463,7 +464,8 @@ async def update_user(
     session.flush()
 
     # 清除缓存
-    redis.delete(f"user:{user_id}")
+    if redis:
+        redis.delete(f"user:{user_id}")
 
     return BaseResponse(
         message="success",
@@ -493,7 +495,8 @@ async def delete_user(
     session.flush()
 
     # 清除缓存
-    redis.delete(f"user:{user_id}")
+    if redis:
+        redis.delete(f"user:{user_id}")
 
     return BaseResponse(message="删除成功")
 
@@ -593,7 +596,8 @@ async def create_account(
     )
     session.add(account)
     session.flush()
-    redis.set(f"account:{account.id}:token", token)
+    if redis:
+        redis.set(f"account:{account.id}:token", token)
 
     user_account = UserAccount(
         user_id=current_user.id,

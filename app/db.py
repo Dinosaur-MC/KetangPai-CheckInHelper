@@ -23,7 +23,23 @@ engine = create_engine(
     pool_recycle=int(os.getenv("DB_POOL_RECYCLE", "3600")),
 )
 
-redis_pool = ConnectionPool.from_url(REDIS_URL)
+_redis_pool: "ConnectionPool | None" = None
+
+
+def _get_redis_pool() -> "ConnectionPool | None":
+    """懒初始化 Redis 连接池。连接失败返回 None。"""
+    global _redis_pool
+    if _redis_pool is None:
+        try:
+            _redis_pool = ConnectionPool.from_url(REDIS_URL)
+        except Exception:
+            import logging
+            logging.getLogger(__name__).warning(
+                "Redis 连接失败，缓存与速率限制将不可用。请检查 REDIS_URL=%s",
+                REDIS_URL,
+            )
+            return None
+    return _redis_pool
 
 
 def init_db():
@@ -46,13 +62,23 @@ def get_session_with():
 
 
 def get_redis():
-    r = Redis(connection_pool=redis_pool)
+    pool = _get_redis_pool()
+    if pool is None:
+        yield None
+        return
+    r = Redis(connection_pool=pool)
     try:
         yield r
     finally:
         r.close()
 
 
-def get_redis_client() -> Redis:
-    """Return a Redis client directly (non-generator, for use outside FastAPI DI)."""
-    return Redis(connection_pool=redis_pool)
+def get_redis_client() -> "Redis | None":
+    """Return a Redis client directly (non-generator, for use outside FastAPI DI).
+
+    如果 Redis 不可用，返回 None。调用方需自行处理。
+    """
+    pool = _get_redis_pool()
+    if pool is None:
+        return None
+    return Redis(connection_pool=pool)
