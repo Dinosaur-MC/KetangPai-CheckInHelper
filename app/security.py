@@ -11,6 +11,7 @@ from datetime import datetime, timedelta, timezone
 
 import jwt
 from passlib.context import CryptContext
+from redis import Redis
 
 logger = logging.getLogger(__name__)
 
@@ -41,6 +42,7 @@ def verify_password(plain_password: str, hashed_password: str) -> bool:
 # JWT helpers
 # ---------------------------------------------------------------------------
 
+
 def create_access_token(
     user_id: str,
     expires_delta: timedelta | None = None,
@@ -64,6 +66,31 @@ def create_access_token(
         "jti": uuid.uuid4().hex,
     }
     return jwt.encode(payload, _JWT_SECRET, algorithm=_JWT_ALGORITHM)
+
+
+def validate_password_strength(password: str) -> tuple[bool, str]:
+    """Validate password strength. Returns (is_valid, error_message)."""
+    if len(password) < 8:
+        return False, "密码长度至少为 8 个字符"
+    if len(password) > 128:
+        return False, "密码长度不能超过 128 个字符"
+    return True, ""
+
+
+def is_token_blacklisted(jti: str, redis: Redis) -> bool:
+    """Check if a token JTI is blacklisted."""
+    try:
+        return redis.exists(f"blacklist:{jti}")
+    except Exception:
+        return False  # If Redis is down, allow the request
+
+
+def blacklist_token(jti: str, redis: Redis, ttl: int = 604800) -> None:
+    """Add a token JTI to the blacklist."""
+    try:
+        redis.setex(f"blacklist:{jti}", ttl, "1")
+    except Exception:
+        pass
 
 
 def decode_access_token(token: str) -> dict | None:
