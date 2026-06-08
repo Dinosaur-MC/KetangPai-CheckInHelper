@@ -853,6 +853,35 @@ async def delete_course_binding(
     return BaseResponse(code=200, message="删除成功")
 
 
+@app.put("/api/courses/bindings/{binding_id}")
+async def update_course_binding(
+    binding_id: int,
+    is_active: bool = Body(..., embed=True),
+    current_user: User = Depends(get_current_user),
+    session: Session = Depends(get_session_with),
+):
+    """切换课程绑定的启用状态"""
+    binding = session.get(CourseBinding, binding_id)
+    if binding is None:
+        raise HTTPException(status_code=404, detail="课程绑定不存在")
+
+    # 验证权限
+    user_account = session.exec(
+        select(UserAccount).where(
+            UserAccount.user_id == current_user.id,
+            UserAccount.account_id == binding.account_id,
+        )
+    ).first()
+    if user_account is None:
+        raise HTTPException(status_code=403, detail="无权限修改此绑定")
+
+    binding.is_active = is_active
+    session.add(binding)
+    session.flush()
+
+    return BaseResponse(message="success", data=binding.model_dump())
+
+
 # ================================
 #       Course CRUD
 # ================================
