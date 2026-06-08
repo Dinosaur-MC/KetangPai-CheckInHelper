@@ -471,10 +471,11 @@
             </div>
             <div class="table-wrap" v-if="accounts.length">
               <table>
-                <thead><tr><th>账号</th><th>状态</th><th>创建时间</th><th class="actions">操作</th></tr></thead>
+                <thead><tr><th>账号</th><th>学号</th><th>状态</th><th>创建时间</th><th class="actions">操作</th></tr></thead>
                 <tbody>
                   <tr v-for="acct in accounts" :key="acct.id">
                     <td>{{ acct.email }}</td>
+                    <td>{{ acct.sno || '-' }}</td>
                     <td><span class="status-chip" :class="acct.status===1?'green':(acct.status===0?'orange':'red')">{{ acct.status===1?'正常':(acct.status===0?'未知':'不可用') }}</span></td>
                     <td>{{ formatTime(acct.created_at) }}</td>
                     <td class="actions">
@@ -500,11 +501,12 @@
             </div>
             <div class="table-wrap" v-if="bindings.length">
               <table>
-                <thead><tr><th>课程 ID</th><th>课堂派账号</th><th>启用</th><th class="actions">操作</th></tr></thead>
+                <thead><tr><th>课程名称</th><th>课堂派账号</th><th>学期</th><th>启用</th><th class="actions">操作</th></tr></thead>
                 <tbody>
                   <tr v-for="b in bindings" :key="b.id">
-                    <td>{{ b.course_id }}</td>
+                    <td>{{ getCourseName(b.course_id) }}</td>
                     <td>{{ getAccountEmail(b.account_id) }}</td>
+                    <td>{{ getCourseSemester(b.course_id) }}</td>
                     <td><span class="status-chip" :class="b.is_active?'green':'orange'">{{ b.is_active?'启用':'禁用' }}</span></td>
                     <td class="actions">
                       <mdui-button variant="icon" @click="deleteBinding(b)" title="解绑" style="color:#c62828;">🗑️</mdui-button>
@@ -779,6 +781,7 @@ createApp({
     // 列表
     const accounts = ref([]);
     const bindings = ref([]);
+    const courses = ref([]);  // Course 表缓存
     const logs = ref([]);
     const users = ref([]);
     const recentLogs = ref([]);
@@ -845,6 +848,16 @@ createApp({
     function getAccountEmail(id) {
       const a = accounts.value.find(a => a.id === id);
       return a ? a.email : `#${id}`;
+    }
+
+    function getCourseName(courseId) {
+      const c = courses.value.find(c => c.id === courseId);
+      return c ? c.course_name : courseId;
+    }
+
+    function getCourseSemester(courseId) {
+      const c = courses.value.find(c => c.id === courseId);
+      return c ? `${c.semester}·${c.term==='1'?'上学期':c.term==='2'?'下学期':c.term}` : '';
     }
 
     // ---- 导航 ----
@@ -948,8 +961,12 @@ createApp({
     async function loadBindings() {
       try {
         if (accounts.value.length === 0) await loadAccounts();
-        const res = await api('GET', '/api/courses/bindings');
-        bindings.value = res.data || [];
+        const [bRes, cRes] = await Promise.all([
+          api('GET', '/api/courses/bindings'),
+          api('GET', '/api/courses'),
+        ]);
+        bindings.value = bRes.data || [];
+        courses.value = cRes.data || [];
       } catch (e) { showToast(e.message); }
     }
 
@@ -1116,7 +1133,7 @@ createApp({
       modals, editingAccount, editingUser,
       checkinLoading, checkinResults,
       pageTitle, pageSubtitle, filteredLogs, stats, checkinSuccessCount,
-      formatTime, getAccountEmail, showToast,
+      formatTime, getAccountEmail, getCourseName, getCourseSemester, showToast,
       navigate, login, register, logout,
       loadAccounts, openAccountModal, saveAccount, deleteAccount,
       loadBindings, openBindingModal, saveBinding, deleteBinding,
