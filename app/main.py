@@ -1134,7 +1134,6 @@ async def check_in(
     result: dict[int, CheckInResult | None] = await session_pool.execute_checkin(
         current_user.id, account_ids, data
     )
-    await asyncio.to_thread(session_pool.remove, account_ids)
 
     success_count = sum(1 for r in result.values() if r is not None and r.success)
     return BaseResponse(
