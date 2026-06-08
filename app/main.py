@@ -15,11 +15,14 @@ from fastapi.staticfiles import StaticFiles
 from app.security import (
     configure_jwt,
     create_access_token,
+    create_refresh_token,
     decode_access_token,
+    decode_refresh_token,
     hash_password,
     verify_password,
     validate_password_strength,
     is_token_blacklisted,
+    blacklist_token,
     encrypt_credential,
 )
 from app.db import Session, Redis, ConnectionError, get_session_with, get_redis
@@ -266,10 +269,12 @@ async def register(
     session.refresh(user)
 
     access_token = create_access_token(str(user.id))
+    refresh_token = create_refresh_token(str(user.id))
     return BaseResponse(
         message="注册成功",
         data={
             "access_token": access_token,
+            "refresh_token": refresh_token,
             "token_type": "bearer",
             "user": {
                 "id": user.id,
@@ -304,11 +309,13 @@ async def login(
     session.flush()
 
     access_token = create_access_token(str(user.id))
+    refresh_token = create_refresh_token(str(user.id))
     return BaseResponse(
         code=200,
         message="登录成功",
         data={
             "access_token": access_token,
+            "refresh_token": refresh_token,
             "token_type": "bearer",
             "user": {
                 "id": user.id,
@@ -332,11 +339,67 @@ async def logout(
         if payload and payload.get("jti"):
             jti = payload["jti"]
             exp = payload.get("exp", 0)
-            ttl = max(int(exp - time.time()), 60)  # 剩余有效期，至少 60 秒
-            from app.security import blacklist_token
-
+            ttl = max(int(exp - time.time()), 60)
             blacklist_token(jti, redis, ttl=ttl)
     return BaseResponse(message="已登出")
+
+
+@app.post("/api/refresh")
+async def refresh_token(
+    request: Request,
+    redis: Redis = Depends(get_redis),
+    session: Session = Depends(get_session_with),
+) -> BaseResponse:
+    """刷新令牌 — 使用 refresh_token 换取新的 access_token + refresh_token。
+
+    采用 rotation 策略：旧的 refresh_token 被标记为已使用，无法再次刷新。
+    """
+    authorization = request.headers.get("Authorization")
+    if authorization is None or not authorization.startswith("Bearer "):
+        raise HTTPException(status_code=401, detail="缺失令牌")
+
+    token = authorization.removeprefix("Bearer ").strip()
+    payload = decode_refresh_token(token)
+    if payload is None:
+        raise HTTPException(status_code=401, detail="刷新令牌无效或已过期")
+
+    jti = payload.get("jti")
+    user_id = payload.get("sub")
+    if not jti or not user_id:
+        raise HTTPException(status_code=401, detail="刷新令牌格式错误")
+
+    # 检查 refresh token 是否已被使用（rotation 防重用）
+    if redis and redis.exists(f"refresh_used:{jti}"):
+        raise HTTPException(status_code=401, detail="刷新令牌已被使用")
+
+    # 标记当前 refresh token 为已使用
+    exp = payload.get("exp", 0)
+    ttl = max(int(exp - time.time()), 86400)
+    if redis:
+        redis.setex(f"refresh_used:{jti}", ttl, "1")
+
+    # 验证用户仍然存在且活跃
+    user = session.get(User, int(user_id))
+    if user is None:
+        raise HTTPException(status_code=401, detail="用户不存在")
+    if not user.is_active:
+        raise HTTPException(status_code=403, detail="账号已被禁用")
+
+    # 签发新令牌对
+    new_access = create_access_token(user_id)
+    new_refresh = create_refresh_token(user_id)
+    return BaseResponse(
+        data={
+            "access_token": new_access,
+            "refresh_token": new_refresh,
+            "token_type": "bearer",
+            "user": {
+                "id": user.id,
+                "email": user.email,
+                "role": user.role,
+            },
+        },
+    )
 
 
 # ================================

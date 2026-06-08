@@ -28,6 +28,7 @@ _pwd_context = CryptContext(schemes=["argon2"], deprecated="auto")
 _JWT_SECRET: str | None = None
 _JWT_ALGORITHM: str = "HS256"
 _JWT_EXPIRE_HOURS: int = 24
+_REFRESH_EXPIRE_DAYS: int = 30
 
 # Allowed JWT algorithms
 _ALLOWED_ALGORITHMS = frozenset({"HS256", "HS384", "HS512", "RS256", "RS384", "RS512", "ES256", "ES384", "ES512"})
@@ -117,6 +118,53 @@ def create_access_token(
         "jti": uuid.uuid4().hex,
     }
     return jwt.encode(payload, _JWT_SECRET, algorithm=_JWT_ALGORITHM)
+
+
+def create_refresh_token(
+    user_id: str,
+    expires_delta: timedelta | None = None,
+) -> str:
+    """Create a signed JWT refresh token for *user_id*.
+
+    Refresh tokens live longer (default 30 days) and carry
+    ``type="refresh"`` so the auth endpoint can distinguish them
+    from access tokens.
+    """
+    if _JWT_SECRET is None:
+        raise RuntimeError("JWT secret 未配置 — 请调用 configure_jwt()")
+    expire = datetime.now(timezone.utc) + (
+        expires_delta or timedelta(days=_REFRESH_EXPIRE_DAYS)
+    )
+    payload = {
+        "sub": user_id,
+        "exp": expire,
+        "iat": datetime.now(timezone.utc),
+        "jti": uuid.uuid4().hex,
+        "type": "refresh",
+    }
+    return jwt.encode(payload, _JWT_SECRET, algorithm=_JWT_ALGORITHM)
+
+
+def decode_refresh_token(token: str) -> dict | None:
+    """Decode and validate a JWT refresh token.
+
+    Only accepts tokens with ``type="refresh"`` to prevent access
+    tokens from being used on the refresh endpoint.
+    """
+    if _JWT_SECRET is None:
+        raise RuntimeError("JWT secret 未配置 — 请调用 configure_jwt()")
+    try:
+        payload = jwt.decode(token, _JWT_SECRET, algorithms=[_JWT_ALGORITHM])
+        if payload.get("type") != "refresh":
+            logger.warning("Token used on refresh endpoint is not a refresh token")
+            return None
+        return payload
+    except jwt.ExpiredSignatureError:
+        logger.warning("Refresh token has expired.")
+        return None
+    except jwt.InvalidTokenError as exc:
+        logger.warning("Invalid refresh token: %s", exc)
+        return None
 
 
 def validate_password_strength(password: str) -> tuple[bool, str]:
