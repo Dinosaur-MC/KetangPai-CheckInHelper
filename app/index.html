@@ -471,11 +471,10 @@
             </div>
             <div class="table-wrap" v-if="accounts.length">
               <table>
-                <thead><tr><th>账号</th><th>学号</th><th>状态</th><th>创建时间</th><th class="actions">操作</th></tr></thead>
+                <thead><tr><th>账号</th><th>状态</th><th>创建时间</th><th class="actions">操作</th></tr></thead>
                 <tbody>
                   <tr v-for="acct in accounts" :key="acct.id">
                     <td>{{ acct.email }}</td>
-                    <td>{{ acct.sno || '-' }}</td>
                     <td><span class="status-chip" :class="acct.status===1?'green':(acct.status===0?'orange':'red')">{{ acct.status===1?'正常':(acct.status===0?'未知':'不可用') }}</span></td>
                     <td>{{ formatTime(acct.created_at) }}</td>
                     <td class="actions">
@@ -507,7 +506,7 @@
                     <td>{{ getCourseName(b.course_id) }}</td>
                     <td>{{ getAccountEmail(b.account_id) }}</td>
                     <td>{{ getCourseSemester(b.course_id) }}</td>
-                    <td><span class="status-chip" :class="b.is_active?'green':'orange'">{{ b.is_active?'启用':'禁用' }}</span></td>
+                    <td><mdui-switch :checked="b.is_active" @change="toggleBinding(b, $event)"></mdui-switch></td>
                     <td class="actions">
                       <mdui-button variant="icon" @click="deleteBinding(b)" title="解绑" style="color:#c62828;">🗑️</mdui-button>
                     </td>
@@ -865,13 +864,7 @@ createApp({
       route.value = to;
       window.location.hash = '#' + to;
       if (isMobile()) sidebarOpen.value = false;
-      switch (to) {
-        case 'dashboard': loadRecentLogs(); break;
-        case 'accounts': loadAccounts(); break;
-        case 'courses': loadBindings(); break;
-        case 'logs': loadLogs(); break;
-        case 'users': loadUsers(); break;
-      }
+      loadPageData(to);
     }
 
     // ---- 认证 ----
@@ -918,9 +911,15 @@ createApp({
     }
 
     // ---- 账号 ----
+    let _accountsPromise = null;
+    function invalidateAccounts() { _accountsPromise = null; }
     async function loadAccounts() {
-      try { const res = await api('GET', '/api/accounts'); accounts.value = res.data || []; }
-      catch (e) { showToast(e.message); }
+      if (_accountsPromise) return _accountsPromise;
+      _accountsPromise = (async () => {
+        try { const res = await api('GET', '/api/accounts'); accounts.value = res.data || []; }
+        catch (e) { showToast(e.message); }
+      })();
+      return _accountsPromise;
     }
 
     function openAccountModal(acct) {
@@ -938,10 +937,12 @@ createApp({
           if (accountForm.password) body.password = accountForm.password;
           await api('PUT', `/api/accounts/${editingAccount.value.id}`, body);
           showToast('账号已更新');
+          invalidateAccounts();
         } else {
           if (!accountForm.password) { showToast('请填写密码'); return; }
           await api('POST', '/api/accounts', { email: accountForm.email, password: accountForm.password });
           showToast('账号已添加');
+          invalidateAccounts();
         }
         modals.account = false;
         loadAccounts();
@@ -960,7 +961,6 @@ createApp({
     // ---- 课程绑定 ----
     async function loadBindings() {
       try {
-        if (accounts.value.length === 0) await loadAccounts();
         const [bRes, cRes] = await Promise.all([
           api('GET', '/api/courses/bindings'),
           api('GET', '/api/courses'),
@@ -994,6 +994,19 @@ createApp({
         showToast('课程已解绑');
         loadBindings();
       } catch (e) { showToast(e.message); }
+    }
+
+    async function toggleBinding(b, event) {
+      const target = event.target;
+      const newState = target.checked;
+      try {
+        await api('PUT', `/api/courses/bindings/${b.id}`, { is_active: newState });
+        b.is_active = newState;
+        showToast(newState ? '已启用' : '已禁用');
+      } catch (e) {
+        target.checked = !newState;  // 回滚 DOM 状态
+        showToast(e.message);
+      }
     }
 
     // ---- 签到 ----
@@ -1096,13 +1109,13 @@ createApp({
     }
 
     // 根据当前路由加载数据
-    function loadPageData(page) {
+    async function loadPageData(page) {
       switch (page) {
-        case 'dashboard': loadRecentLogs(); break;
-        case 'accounts': loadAccounts(); break;
-        case 'courses': loadBindings(); break;
-        case 'logs': loadLogs(); break;
-        case 'users': loadUsers(); break;
+        case 'dashboard': await Promise.all([loadAccounts(), loadBindings(), loadLogs()]); break;
+        case 'accounts': await loadAccounts(); break;
+        case 'courses': await Promise.all([loadAccounts(), loadBindings()]); break;
+        case 'logs': await loadLogs(); break;
+        case 'users': await loadUsers(); break;
       }
     }
 
@@ -1116,9 +1129,7 @@ createApp({
 
     // ---- 初始化 ----
     if (state.token) {
-      api('GET', '/api/accounts').then(() => {
-        loadPageData(route.value);
-      }).catch(() => {
+      loadPageData(route.value).catch(() => {
         state.token = null;
         state.currentUser = null;
         localStorage.removeItem('token');
@@ -1136,7 +1147,7 @@ createApp({
       formatTime, getAccountEmail, getCourseName, getCourseSemester, showToast,
       navigate, login, register, logout,
       loadAccounts, openAccountModal, saveAccount, deleteAccount,
-      loadBindings, openBindingModal, saveBinding, deleteBinding,
+      loadBindings, openBindingModal, saveBinding, deleteBinding, toggleBinding,
       executeCheckin, parseCheckinUrl, checkinUrl, loadLogs, loadRecentLogs,
       loadUsers, openUserModal, saveUser, deleteUser,
     };
