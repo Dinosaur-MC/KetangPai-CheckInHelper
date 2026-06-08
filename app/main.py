@@ -2,6 +2,7 @@ import os
 import re
 import json
 import secrets
+from contextlib import asynccontextmanager
 from pathlib import Path
 from datetime import datetime, timezone
 from starlette.exceptions import HTTPException
@@ -38,6 +39,24 @@ configure_jwt(
     os.environ.get("JWT_EXPIRE_HOURS") or 24 * 7,
 )
 
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    """启动时清空 user 缓存，关闭时无操作。"""
+    from app.db import get_redis_client
+
+    # startup
+    r = get_redis_client()
+    try:
+        keys = r.keys("user:*")
+        if keys:
+            r.delete(*keys)
+            logger.info("已清除 %s 条 user 缓存", len(keys))
+    except Exception:
+        logger.warning("清除 user 缓存失败（Redis 可能不可用）")
+    yield
+    # shutdown — nothing to do
+
+
 # 创建 FastAPI 实例
 app = FastAPI(
     title="CheckInHelper API",
@@ -46,6 +65,7 @@ app = FastAPI(
     docs_url="/docs",
     redoc_url="/redoc",
     openapi_url="/openapi.json",
+    lifespan=lifespan,
 )
 
 # 添加 CORS 中间件
@@ -536,11 +556,13 @@ async def create_account(
     # 2. 先通过课堂派 API 验证凭据有效性（不入库）
     from app.api import KetangPaiAPI
 
+    uid = None
     token = None
     try:
         client = KetangPaiAPI(email, password)
         response = client.login()
         token = response.data.token
+        uid = response.data.uid
         client.close()
         if not token:
             raise HTTPException(status_code=400, detail="账号验证失败")
@@ -552,6 +574,7 @@ async def create_account(
     account = Account(
         email=email,
         password=password,
+        uid=uid,
         status=1,
     )
     session.add(account)
@@ -570,6 +593,45 @@ async def create_account(
     from app.sessions import session_pool
 
     await asyncio.to_thread(session_pool.create, [account], False)
+
+    # 5. 拉取课程列表并自动绑定（不启用）
+    try:
+        courses = await asyncio.to_thread(
+            session_pool.get_course_list, account.id
+        )
+        if courses:
+            for course_data in courses:
+                # 检查课程是否已存在，不存在则创建
+                course = session.get(Course, course_data["id"])
+                if course is None:
+                    course = Course(
+                        id=course_data["id"],
+                        code=course_data.get("code", ""),
+                        course_name=course_data.get("course_name", ""),
+                        semester=course_data.get("semester", ""),
+                        term=course_data.get("term", ""),
+                    )
+                    session.add(course)
+                    session.flush()
+
+                # 检查是否已有绑定
+                existing_binding = session.exec(
+                    select(CourseBinding).where(
+                        CourseBinding.course_id == course.id,
+                        CourseBinding.account_id == account.id,
+                    )
+                ).first()
+                if existing_binding is None:
+                    session.add(
+                        CourseBinding(
+                            course_id=course.id,
+                            account_id=account.id,
+                            is_active=False,  # 默认不启用
+                        )
+                    )
+            session.flush()
+    except Exception as e:
+        logger.warning("Failed to fetch courses for account %s: %s", account.id, e)
 
     return BaseResponse(
         message="success",
@@ -775,6 +837,89 @@ async def delete_course_binding(
         raise HTTPException(status_code=403, detail="无权限删除此绑定")
 
     session.delete(binding)
+    session.flush()
+
+    # 检查该课程是否还有其它绑定，引用数归零则删除课程
+    remaining = session.exec(
+        select(CourseBinding).where(
+            CourseBinding.course_id == binding.course_id,
+        )
+    ).first()
+    if remaining is None:
+        course = session.get(Course, binding.course_id)
+        if course is not None:
+            session.delete(course)
+
+    return BaseResponse(code=200, message="删除成功")
+
+
+# ================================
+#       Course CRUD
+# ================================
+
+
+@app.get("/api/courses")
+async def list_courses(
+    current_user: User = Depends(get_current_user),
+    session: Session = Depends(get_session_with),
+):
+    """列出所有课程（管理员），或用户关联的课程"""
+    if current_user.role == Role.admin:
+        courses = session.exec(select(Course)).all()
+    else:
+        user_accounts = session.exec(
+            select(UserAccount).where(UserAccount.user_id == current_user.id)
+        ).all()
+        account_ids = [ua.account_id for ua in user_accounts]
+        if not account_ids:
+            return BaseResponse(message="success", data=[])
+        courses = session.exec(
+            select(Course)
+            .join(CourseBinding)
+            .where(CourseBinding.account_id.in_(account_ids))
+            .distinct()
+        ).all()
+
+    return BaseResponse(
+        message="success",
+        data=[c.model_dump() for c in courses],
+    )
+
+
+@app.get("/api/courses/{course_id}")
+async def get_course(
+    course_id: str,
+    session: Session = Depends(get_session_with),
+):
+    """获取指定课程信息"""
+    course = session.get(Course, course_id)
+    if course is None:
+        raise HTTPException(status_code=404, detail="课程不存在")
+    return BaseResponse(message="success", data=course.model_dump())
+
+
+@app.delete("/api/courses/{course_id}")
+async def delete_course(
+    course_id: str,
+    current_user: User = Depends(get_current_user),
+    session: Session = Depends(get_session_with),
+):
+    """删除课程（仅管理员）"""
+    if current_user.role != Role.admin:
+        raise HTTPException(status_code=403, detail="权限不足")
+
+    course = session.get(Course, course_id)
+    if course is None:
+        raise HTTPException(status_code=404, detail="课程不存在")
+
+    # 先删关联绑定
+    bindings = session.exec(
+        select(CourseBinding).where(CourseBinding.course_id == course_id)
+    ).all()
+    for b in bindings:
+        session.delete(b)
+
+    session.delete(course)
     session.flush()
 
     return BaseResponse(code=200, message="删除成功")
