@@ -22,9 +22,13 @@ engine = create_engine(
     max_overflow=int(os.getenv("DB_MAX_OVERFLOW", "20")),
     pool_recycle=int(os.getenv("DB_POOL_RECYCLE", "3600")),
 )
-SQLModel.metadata.create_all(engine)
 
 redis_pool = ConnectionPool.from_url(REDIS_URL)
+
+
+def init_db():
+    """在应用启动时调用，确保表已创建（幂等）。"""
+    SQLModel.metadata.create_all(engine)
 
 
 def get_session() -> Session:
@@ -35,12 +39,10 @@ def get_session_with():
     with Session(engine) as session:
         try:
             yield session
-            session.commit()
+            session.commit()  # commit before __exit__ calls close()
         except Exception:
             session.rollback()
             raise
-        finally:
-            session.close()
 
 
 def get_redis():
