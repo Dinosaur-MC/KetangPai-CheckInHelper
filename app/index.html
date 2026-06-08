@@ -343,7 +343,7 @@
               <label class="field-label">密码</label>
               <input class="field-input" type="password" :value="form.password" @input="form.password=$event.target.value" placeholder="至少 8 位">
             </div>
-            <mdui-button variant="filled" @click="login" type="submit" :disabled="loading" style="width:100%;margin-top:8px;height:44px;">{{ loading ? '登录中…' : '登 录' }}</mdui-button>
+            <mdui-button variant="filled" type="submit" :disabled="loading" style="width:100%;margin-top:8px;height:44px;">{{ loading ? '登录中…' : '登 录' }}</mdui-button>
           </form>
           <div class="form-footer">
             <a @click="loginView='register'">没有账号？去注册</a>
@@ -361,7 +361,7 @@
               <label class="field-label">密码</label>
               <input class="field-input" type="password" :value="form.password" @input="form.password=$event.target.value" placeholder="至少 8 位">
             </div>
-            <mdui-button variant="filled" @click="register" type="submit" :disabled="loading" style="width:100%;margin-top:8px;height:44px;">{{ loading ? '注册中…' : '注 册' }}</mdui-button>
+            <mdui-button variant="filled" type="submit" :disabled="loading" style="width:100%;margin-top:8px;height:44px;">{{ loading ? '注册中…' : '注 册' }}</mdui-button>
           </form>
           <div class="form-footer">
             <a @click="loginView='login'">已有账号？去登录</a>
