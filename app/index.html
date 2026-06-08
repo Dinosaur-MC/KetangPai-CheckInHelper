@@ -8,236 +8,312 @@
   <link rel="stylesheet" href="https://unpkg.com/mdui@2/mdui.css">
   <style>
     /* ============================================================
-       全局重置
+       全局 & 变量
        ============================================================ */
-    * { box-sizing: border-box; }
+    *, *::before, *::after { box-sizing: border-box; }
     html, body {
-      margin: 0;
-      padding: 0;
-      height: 100%;
-      background: #f0f2f5;
+      margin:0; padding:0; height:100%;
+      background: #e8eaed;
       font-family: "Roboto", "Noto Sans SC", -apple-system, BlinkMacSystemFont, sans-serif;
       -webkit-font-smoothing: antialiased;
+      color: #1f2937;
     }
     [v-cloak] { display: none; }
     #app { height: 100%; }
 
-    /* ---- 主布局 (flexbox) ---- */
+    /* ============================================================
+       主布局
+       ============================================================ */
     .app-layout { display:flex; height:100vh; overflow:hidden; }
+
+    /* ── 侧边栏 ── */
     .sidebar {
-      width:240px; min-width:240px;
-      background:#fff;
-      border-right:1px solid #e8e8e8;
-      display:flex; flex-direction:column;
-      overflow-y:auto;
+      width: 250px; min-width: 250px;
+      background: #2d3340;
+      display:flex; flex-direction:column; overflow-y:auto;
     }
-    /* 移动端：侧栏 fixed + transform */
+    .sidebar-header {
+      padding: 24px 20px 16px;
+    }
+    .sidebar-header h1 {
+      margin:0; font-size: 25px; font-weight: 700;
+      background: linear-gradient(135deg, #818cf8, #c084fc);
+      -webkit-background-clip: text; -webkit-text-fill-color: transparent;
+      background-clip: text;
+    }
+    .sidebar-header small { color: #94a3b8; font-size: 14px; }
+    .sidebar-user {
+      padding: 14px 20px; margin: 0 12px 8px;
+      border-radius: 12px;
+      background: rgba(0,0,0,.12);
+      display:flex; align-items:center; gap: 10px;
+    }
+    .sidebar-user .avatar {
+      width: 38px; height: 38px; border-radius: 10px;
+      background: linear-gradient(135deg, #6366f1, #8b5cf6);
+      color:#fff; display:flex; align-items:center; justify-content:center;
+      font-size: 15px; font-weight: 600; flex-shrink: 0;
+    }
+    .sidebar-user .name {
+      font-size: 13px; font-weight: 500; color: #e2e8f0;
+      overflow:hidden; text-overflow:ellipsis; white-space:nowrap;
+    }
+    .sidebar-user .role-badge {
+      font-size: 10px; background: rgba(129,140,248,.25); color: #c7d2fe;
+      padding: 2px 8px; border-radius: 6px; flex-shrink:0;
+    }
+    /* MDUI list items — 必须用 ::part() 穿透 shadow DOM */
+    .sidebar mdui-list { padding: 4px 12px; }
+    .sidebar mdui-list-item { border-radius: 10px; margin-bottom: 2px; min-height: 42px; }
+    .sidebar mdui-list-item::part(container) {
+      border-radius: 10px; padding: 0 14px;
+      transition: background .15s;
+    }
+    .sidebar mdui-list-item::part(headline) {
+      color: #cbd5e1; font-size: 16px;
+    }
+    .sidebar mdui-list-item:hover::part(container) { background: rgba(0,0,0,.15); }
+    .sidebar mdui-list-item:hover::part(headline) { color: #f1f5f9; }
+    .sidebar mdui-list-item[active]::part(container) { background: rgba(129,140,248,1); }
+    .sidebar mdui-list-item[active]::part(headline) { color: #e0e7ff; font-weight: 600; }
+    .sidebar-footer {
+      margin-top: auto; padding: 8px 12px 12px;
+      border-top: 1px solid rgba(255,255,255,.06);
+    }
+    .sidebar-footer mdui-list-item::part(headline) { color: #f87171; }
+    .sidebar-footer mdui-list-item:hover::part(container) { background: rgba(239,68,68,.1); }
+
+    /* 移动端侧栏 */
     @media (max-width: 768px) {
       .sidebar {
-        position:fixed; top:0; left:0; bottom:0;
-        z-index:200;
-        transform:translateX(-100%);
-        transition:transform .25s ease;
-        box-shadow:2px 0 12px rgba(0,0,0,.15);
+        position:fixed; top:0; left:0; bottom:0; z-index:200;
+        transform:translateX(-100%); transition:transform .3s cubic-bezier(.4,0,.2,1);
+        box-shadow: 4px 0 24px rgba(0,0,0,.25);
       }
       .sidebar.open { transform:translateX(0); }
     }
-    /* 遮罩（仅移动端） */
     .sidebar-overlay {
-      display:none;
-      position:fixed; inset:0;
-      background:rgba(0,0,0,.3);
-      z-index:199;
+      display:none; position:fixed; inset:0;
+      background: rgba(0,0,0,.4); z-index:199;
+      backdrop-filter: blur(2px);
     }
-    @media (max-width: 768px) {
-      .sidebar-overlay { display:block; }
-    }
+    @media (max-width: 768px) { .sidebar-overlay { display:block; } }
 
-    /* 侧边栏内部 */
-    .sidebar-header {
-      padding:20px 16px 12px;
-      border-bottom:1px solid rgba(0,0,0,.08);
-    }
-    .sidebar-header h1 { margin:0; font-size:18px; font-weight:600; color:#333; }
-    .sidebar-header small { color:#999; font-size:12px; }
-    .sidebar-user {
-      padding:12px 16px;
-      border-bottom:1px solid rgba(0,0,0,.08);
-      display:flex; align-items:center; gap:10px;
-    }
-    .sidebar-user .avatar {
-      width:36px; height:36px; border-radius:50%;
-      background:linear-gradient(135deg,#667eea,#764ba2);
-      color:#fff; display:flex; align-items:center; justify-content:center;
-      font-size:14px; flex-shrink:0;
-    }
-    .sidebar-user .name { font-size:14px; font-weight:500; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
-    .sidebar-user .role-badge {
-      font-size:11px; background:#e8eaf6; color:#3f51b5;
-      padding:1px 8px; border-radius:10px; flex-shrink:0;
-    }
-    .sidebar-footer { border-top:1px solid rgba(0,0,0,.08); margin-top:auto; }
-    .sidebar-footer mdui-list-item { color:#e53935; }
-
-    /* 主内容 */
-    .main-content { flex:1; display:flex; flex-direction:column; overflow:hidden; min-width:0; }
+    /* ── 主内容 ── */
+    .main-content { flex:1; display:flex; flex-direction:column; overflow:hidden; min-width:0; background:#e8eaed; }
     .main-header {
-      background:#fff; padding:10px 24px;
-      border-bottom:1px solid #e8e8e8;
+      background:#fff; padding: 12px 24px;
+      border-bottom: 1px solid #e5e7eb;
       display:flex; align-items:center; gap:12px;
-      min-height:56px; flex-shrink:0;
+      min-height: 56px; flex-shrink:0;
+      box-shadow: 0 1px 2px rgba(0,0,0,.03);
     }
-    .main-header h2 { margin:0; font-size:18px; font-weight:500; }
-    .main-header .breadcrumb { color:#999; font-size:13px; }
+    .main-header h2 { margin:0; font-size: 18px; font-weight: 600; color: #111827; }
+    .main-header .breadcrumb { color: #9ca3af; font-size: 12px; }
     .main-header .menu-btn {
       display:none; background:none; border:none;
-      font-size:24px; cursor:pointer; padding:4px; color:#555;
+      font-size: 22px; cursor:pointer; padding:6px; color: #374151;
+      border-radius: 8px; transition: background .15s;
     }
-    .main-body { flex:1; overflow-y:auto; padding:20px 24px; }
+    .main-header .menu-btn:hover { background: #f3f4f6; }
+    .main-body { flex:1; overflow-y:auto; padding: 24px; }
 
-    /* ---- 登录页 ---- */
+    /* ============================================================
+       登录页
+       ============================================================ */
     .login-page {
       min-height:100vh; display:flex; align-items:center; justify-content:center;
-      background:linear-gradient(135deg,#667eea 0%,#764ba2 100%); padding:16px;
+      background: #e8eaed;
+      padding: 16px;
     }
     .login-card {
-      width:100%; max-width:400px; padding:36px 28px 28px;
-      border-radius:16px; background:#fff;
+      width:100%; max-width: 420px; padding: 40px 32px 32px;
+      border-radius: 20px; background:#fff;
+      box-shadow: 0 4px 24px rgba(0,0,0,.08);
     }
-    .login-card h2 { margin:0 0 8px; font-size:24px; font-weight:500; text-align:center; }
-    .login-card .subtitle { color:#666; text-align:center; margin-bottom:28px; font-size:14px; }
-    .login-card .field { margin-bottom:16px; }
-    .login-card .form-footer { margin-top:20px; display:flex; justify-content:space-between; align-items:center; }
-    .login-card .form-footer a { color:#667eea; cursor:pointer; font-size:14px; }
-    .login-card mdui-button { width:100%; margin-top:8px; }
+    .login-card h2 { margin:0 0 6px; font-size: 26px; font-weight: 700; text-align:center; color:#111827; }
+    .login-card .subtitle { color: #6b7280; text-align:center; margin-bottom: 32px; font-size: 14px; }
+    .login-card .form-footer { margin-top: 20px; text-align:center; }
+    .login-card .form-footer a { color: #6366f1; cursor:pointer; font-size: 13px; font-weight: 500; }
+    .login-card .form-footer a:hover { color: #4f46e5; }
 
-    @media (max-width: 768px) {
-      .main-header .menu-btn { display:block; }
-      .main-header h2 { font-size:16px; }
-      .main-body { padding:14px 16px; }
-    }
-
-    /* ---- 统计卡片 ---- */
+    /* ============================================================
+       统计卡片
+       ============================================================ */
     .stat-cards {
       display: grid;
-      grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
-      gap: 16px;
-      margin-bottom: 24px;
+      grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));
+      gap: 16px; margin-bottom: 28px;
     }
     .stat-card {
-      background: #fff;
-      border-radius: 12px;
-      padding: 20px;
-      box-shadow: 0 1px 3px rgba(0,0,0,.08);
+      background: #fff; border-radius: 14px; padding: 22px 20px;
+      box-shadow: 0 1px 3px rgba(0,0,0,.05);
+      border-top: 3px solid #6366f1;
+      transition: box-shadow .2s, transform .2s;
     }
-    .stat-card .num {
-      font-size: 32px;
-      font-weight: 600;
-      color: #3f51b5;
-    }
-    .stat-card .label {
-      font-size: 13px;
-      color: #888;
-      margin-top: 4px;
-    }
+    .stat-card:nth-child(2) { border-top-color: #8b5cf6; }
+    .stat-card:nth-child(3) { border-top-color: #06b6d4; }
+    .stat-card:nth-child(4) { border-top-color: #f59e0b; }
+    .stat-card:hover { box-shadow: 0 4px 12px rgba(0,0,0,.08); transform: translateY(-2px); }
+    .stat-card .num { font-size: 34px; font-weight: 700; color: #111827; }
+    .stat-card .label { font-size: 13px; color: #6b7280; margin-top: 6px; }
 
-    /* ---- 表格 ---- */
+    /* ============================================================
+       表格
+       ============================================================ */
     .table-wrap {
-      background: #fff;
-      border-radius: 12px;
-      box-shadow: 0 1px 3px rgba(0,0,0,.08);
-      overflow-x: auto;
+      background:#fff; border-radius:14px;
+      box-shadow: 0 1px 3px rgba(0,0,0,.04); overflow-x:auto;
     }
-    .table-wrap table {
-      width: 100%;
-      border-collapse: collapse;
-    }
-    .table-wrap th, .table-wrap td {
-      padding: 12px 16px;
-      text-align: left;
-      font-size: 14px;
-      border-bottom: 1px solid #f0f0f0;
-      white-space: nowrap;
-    }
+    .table-wrap table { width:100%; border-collapse:collapse; }
+    .table-wrap thead { background: #f8fafc; }
     .table-wrap th {
-      background: #fafafa;
-      font-weight: 600;
-      color: #555;
-      font-size: 13px;
+      padding: 12px 18px; text-align:left; font-size: 12px;
+      font-weight: 600; color: #6b7280; border-bottom: 2px solid #e5e7eb;
+      white-space:nowrap; text-transform: uppercase; letter-spacing: .5px;
     }
-    .table-wrap tr:hover td { background: #fafafa; }
-    .table-wrap .actions { text-align: right; white-space: nowrap; }
+    .table-wrap td {
+      padding: 13px 18px; font-size: 14px; color: #374151;
+      border-bottom: 1px solid #f3f4f6; white-space:nowrap;
+    }
+    .table-wrap tbody tr { transition: background .12s; }
+    .table-wrap tbody tr:hover { background: #fafaff; }
+    .table-wrap .actions { text-align:right; white-space:nowrap; }
 
-    /* ---- toolbar ---- */
+    /* ============================================================
+       Toolbar
+       ============================================================ */
     .toolbar {
-      display: flex;
-      justify-content: space-between;
-      align-items: center;
-      flex-wrap: wrap;
-      gap: 12px;
-      margin-bottom: 16px;
+      display:flex; justify-content:space-between; align-items:center;
+      flex-wrap:wrap; gap:12px; margin-bottom: 18px;
     }
-    .toolbar .left { display: flex; gap: 8px; align-items: center; font-size: 13px; color: #888; }
-    .toolbar .right { display: flex; gap: 8px; }
+    .toolbar .left { display:flex; gap:10px; align-items:center; font-size:13px; color:#6b7280; }
+    .toolbar .right { display:flex; gap: 8px; }
 
-    /* ---- 状态标签 (chip 替代) ---- */
+    /* ============================================================
+       状态标签 chip
+       ============================================================ */
     .status-chip {
-      display: inline-block;
-      padding: 2px 12px;
-      border-radius: 14px;
-      font-size: 12px;
-      line-height: 22px;
+      display:inline-block; padding: 3px 14px; border-radius: 20px;
+      font-size: 12px; font-weight: 500; line-height: 20px;
     }
-    .status-chip.green { background: #e8f5e9; color: #2e7d32; }
-    .status-chip.red { background: #ffebee; color: #c62828; }
-    .status-chip.orange { background: #fff3e0; color: #e65100; }
-    .status-chip.blue { background: #e8eaf6; color: #3f51b5; }
+    .status-chip.green { background: #ecfdf5; color: #059669; }
+    .status-chip.red { background: #fef2f2; color: #dc2626; }
+    .status-chip.orange { background: #fffbeb; color: #d97706; }
+    .status-chip.blue { background: #eff6ff; color: #2563eb; }
 
-    /* ---- 空状态 ---- */
+    /* ============================================================
+       空状态
+       ============================================================ */
     .empty-state {
-      text-align: center;
-      padding: 48px 16px;
-      color: #999;
+      text-align:center; padding: 64px 16px; color:#9ca3af;
     }
-    .empty-state .icon { font-size: 48px; margin-bottom: 12px; }
-    .empty-state p { margin: 0; font-size: 14px; }
+    .empty-state .icon { font-size: 56px; margin-bottom: 14px; opacity: .6; }
+    .empty-state p { margin:0; font-size: 15px; }
 
-    /* ---- 签到表单 ---- */
-    .checkin-form {
-      max-width: 600px;
+    /* ============================================================
+       签到表单
+       ============================================================ */
+    /* 签到页 */
+    .checkin-card {
+      max-width: 720px;
+      background:#fff; border-radius:16px; padding:28px;
+      box-shadow:0 1px 3px rgba(0,0,0,.05);
     }
-    .checkin-form .field { margin-bottom: 16px; }
-    .checkin-form .hint {
-      font-size: 12px;
-      color: #999;
-      margin-top: 4px;
-    }
+    .checkin-header h3 { margin:0 0 6px; font-size:18px; font-weight:600; }
+    .checkin-header p { margin:0 0 24px; color:#6b7280; font-size:13px; }
+    .checkin-fields { display:flex; flex-direction:column; gap:16px; margin-bottom:20px; }
+    .checkin-row { display:grid; grid-template-columns:1fr 1fr; gap:16px; }
+    @media (max-width: 600px) { .checkin-row { grid-template-columns: 1fr; } }
+    .checkin-btn { width:100%; height:46px; font-size:15px; font-weight:600; }
 
-    /* ---- 签到结果 ---- */
+    /* 签到结果 */
+    .result-summary { font-size:14px; font-weight:500; margin-bottom:12px; color:#374151; }
+    .result-ok { color:#059669; }
+    .result-fail { color:#dc2626; }
+    .result-divider { color:#d1d5db; margin:0 2px; }
+
+    /* 日志页 */
+    .logs-toolbar {
+      display:flex; align-items:center; flex-wrap:wrap; gap:12px;
+      margin-bottom:18px; padding:12px 20px;
+      background:#fff; border-radius:12px; box-shadow:0 1px 3px rgba(0,0,0,.04);
+    }
+    .log-count { font-size:13px; color:#6b7280; margin-left:auto; }
+    .log-filter-wrap {
+      position:relative; display:flex; align-items:center;
+    }
+    .log-filter-icon {
+      position:absolute; left:10px;
+      font-size:13px; pointer-events:none;
+    }
+    .log-filter-input {
+      width:200px; padding:9px 28px 9px 30px;
+      border:1px solid #d1d5db; border-radius:8px;
+      font-size:14px; outline:none; color:#374151; background:#fff;
+      transition:border-color .15s, box-shadow .15s;
+    }
+    .log-filter-input:focus { border-color:#6366f1; box-shadow:0 0 0 2px rgba(99,102,241,.12); }
+    .log-filter-input::placeholder { color:#9ca3af; }
+    .log-filter-clear {
+      position:absolute; right:4px;
+      width:20px; height:20px; border-radius:50%;
+      border:none; background:transparent; cursor:pointer;
+      font-size:11px; color:#9ca3af; display:flex; align-items:center; justify-content:center;
+      transition:background .15s, color .15s;
+    }
+    .log-filter-clear:hover { background:#f3f4f6; color:#374151; }
+
+    /* ============================================================
+       统一表单控件（替代 mdui-text-field）
+       ============================================================ */
+    .field-wrap { margin-bottom: 16px; }
+    .field-label {
+      display: block; margin-bottom: 5px; padding-left: 2px;
+      font-size: 13px; font-weight: 500; color: #374151;
+    }
+    .field-label .req { color: #ef4444; margin-left: 2px; }
+    .field-input, .field-select {
+      width: 100%; padding: 9px 12px;
+      border: 1px solid #d1d5db; border-radius: 8px;
+      font-size: 14px; color: #374151; background: #fff;
+      outline: none; transition: border-color .15s, box-shadow .15s;
+      font-family: inherit;
+    }
+    .field-input:focus, .field-select:focus {
+      border-color: #6366f1; box-shadow: 0 0 0 2px rgba(99,102,241,.12);
+    }
+    .field-input::placeholder { color: #9ca3af; }
+    .field-select { cursor: pointer; appearance: none; background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 24 24' fill='none' stroke='%239ca3af' stroke-width='2'%3E%3Cpath d='M6 9l6 6 6-6'/%3E%3C/svg%3E"); background-repeat: no-repeat; background-position: right 10px center; padding-right: 32px; }
+
+    /* ============================================================
+       签到结果
+       ============================================================ */
     .result-grid {
-      display: grid;
-      grid-template-columns: repeat(auto-fill, minmax(250px, 1fr));
-      gap: 12px;
-      margin-top: 16px;
+      display:grid; grid-template-columns:repeat(auto-fill,minmax(260px,1fr));
+      gap:12px; margin-top:16px;
     }
     .result-item {
-      background: #fff;
-      border-radius: 8px;
-      padding: 14px;
-      box-shadow: 0 1px 3px rgba(0,0,0,.06);
-      border-left: 4px solid #ddd;
-      font-size: 13px;
+      background:#fff; border-radius:10px; padding:14px 16px;
+      box-shadow:0 1px 4px rgba(0,0,0,.04);
+      border-left: 4px solid #d1d5db; font-size:13px;
     }
-    .result-item.success { border-left-color: #4caf50; }
-    .result-item.fail { border-left-color: #f44336; }
-    .result-item .email { font-weight: 500; margin-bottom: 4px; }
-    .result-item .msg { color: #888; }
+    .result-item.success { border-left-color: #10b981; background: #f0fdf6; }
+    .result-item.fail { border-left-color: #ef4444; background: #fef2f2; }
+    .result-item .email { font-weight:600; margin-bottom:3px; }
+    .result-item .msg { color: #6b7280; font-size:12px; }
 
-    /* ---- 弹窗内表单 ---- */
-    .dialog-field { margin-bottom: 16px; }
-
-    /* ---- 加载中 ---- */
-    .loading { text-align: center; padding: 48px; color: #999; }
+    /* ============================================================
+       响应式
+       ============================================================ */
+    @media (max-width: 768px) {
+      .main-header .menu-btn { display:block; }
+      .main-header h2 { font-size: 16px; }
+      .main-body { padding: 16px; }
+      .login-card { padding: 32px 20px 24px; }
+      .stat-cards { grid-template-columns: repeat(2, 1fr); gap: 12px; }
+      .table-wrap th, .table-wrap td { padding: 10px 12px; font-size:13px; }
+    }
   </style>
 </head>
 <body>
@@ -253,18 +329,15 @@
           <h2>签到助手</h2>
           <p class="subtitle">登录以管理课堂派签到</p>
           <form @submit.prevent="login">
-            <div class="field">
-              <mdui-text-field label="邮箱" type="email"
-                :value="form.email" @input="form.email = $event.target.value"
-                placeholder="your@email.com"></mdui-text-field>
+            <div class="field-wrap">
+              <label class="field-label">邮箱</label>
+              <input class="field-input" type="email" :value="form.email" @input="form.email=$event.target.value" placeholder="your@email.com">
             </div>
-            <div class="field">
-              <mdui-text-field label="密码" type="password"
-                :value="form.password" @input="form.password = $event.target.value"
-                placeholder="至少 8 位"></mdui-text-field>
+            <div class="field-wrap">
+              <label class="field-label">密码</label>
+              <input class="field-input" type="password" :value="form.password" @input="form.password=$event.target.value" placeholder="至少 8 位">
             </div>
-            <mdui-button variant="filled" color="primary"
-              @click="login" :disabled="loading">{{ loading ? '登录中…' : '登 录' }}</mdui-button>
+            <mdui-button variant="filled" @click="login" :disabled="loading" style="width:100%;margin-top:8px;height:44px;">{{ loading ? '登录中…' : '登 录' }}</mdui-button>
           </form>
           <div class="form-footer">
             <a @click="loginView='register'">没有账号？去注册</a>
@@ -274,18 +347,15 @@
           <h2>注册账号</h2>
           <p class="subtitle">创建签到助手账号</p>
           <form @submit.prevent="register">
-            <div class="field">
-              <mdui-text-field label="邮箱" type="email"
-                :value="form.email" @input="form.email = $event.target.value"
-                placeholder="your@email.com"></mdui-text-field>
+            <div class="field-wrap">
+              <label class="field-label">邮箱</label>
+              <input class="field-input" type="email" :value="form.email" @input="form.email=$event.target.value" placeholder="your@email.com">
             </div>
-            <div class="field">
-              <mdui-text-field label="密码" type="password"
-                :value="form.password" @input="form.password = $event.target.value"
-                placeholder="至少 8 位"></mdui-text-field>
+            <div class="field-wrap">
+              <label class="field-label">密码</label>
+              <input class="field-input" type="password" :value="form.password" @input="form.password=$event.target.value" placeholder="至少 8 位">
             </div>
-            <mdui-button variant="filled" color="primary"
-              @click="register" :disabled="loading">{{ loading ? '注册中…' : '注 册' }}</mdui-button>
+            <mdui-button variant="filled" @click="register" :disabled="loading" style="width:100%;margin-top:8px;height:44px;">{{ loading ? '注册中…' : '注 册' }}</mdui-button>
           </form>
           <div class="form-footer">
             <a @click="loginView='login'">已有账号？去登录</a>
@@ -401,11 +471,11 @@
             </div>
             <div class="table-wrap" v-if="accounts.length">
               <table>
-                <thead><tr><th>邮箱</th><th>状态</th><th>创建时间</th><th class="actions">操作</th></tr></thead>
+                <thead><tr><th>账号</th><th>状态</th><th>创建时间</th><th class="actions">操作</th></tr></thead>
                 <tbody>
                   <tr v-for="acct in accounts" :key="acct.id">
                     <td>{{ acct.email }}</td>
-                    <td><span class="status-chip" :class="acct.is_active===false?'orange':'green'">{{ acct.is_active===false?'已禁用':'正常' }}</span></td>
+                    <td><span class="status-chip" :class="acct.status===1?'green':(acct.status===0?'orange':'red')">{{ acct.status===1?'正常':(acct.status===0?'未知':'不可用') }}</span></td>
                     <td>{{ formatTime(acct.created_at) }}</td>
                     <td class="actions">
                       <mdui-button variant="icon" @click="openAccountModal(acct)" title="编辑">✏️</mdui-button>
@@ -450,49 +520,62 @@
                签到执行
                ========================================================== -->
           <div v-if="route === 'checkin'">
-            <mdui-card style="padding:24px;max-width:600px;">
-              <div style="font-size:16px;font-weight:500;margin-bottom:4px;">批量签到</div>
-              <div class="page-desc" style="color:#888;font-size:13px;margin-bottom:20px;">填写签到二维码中的参数，将对绑定了该课程的所有账号执行签到</div>
-
-              <div class="field">
-                <mdui-text-field label="CourseID *" required
-                  :value="checkinForm.courseid" @input="checkinForm.courseid = $event.target.value"
-                  placeholder="课程 ID"></mdui-text-field>
-              </div>
-              <div class="field">
-                <mdui-text-field label="TicketID *" required
-                  :value="checkinForm.ticketid" @input="checkinForm.ticketid = $event.target.value"
-                  placeholder="二维码中的 ticketid"></mdui-text-field>
-              </div>
-              <div class="field">
-                <mdui-text-field label="Expire"
-                  :value="checkinForm.expire" @input="checkinForm.expire = $event.target.value"
-                  placeholder="过期时间戳">
-                  <span slot="helper">留空自动填充</span>
-                </mdui-text-field>
-              </div>
-              <div class="field">
-                <mdui-text-field label="Sign"
-                  :value="checkinForm.sign" @input="checkinForm.sign = $event.target.value"
-                  placeholder="签名">
-                  <span slot="helper">留空自动填充</span>
-                </mdui-text-field>
-              </div>
-              <div class="field">
-                <mdui-text-field label="RandNum"
-                  :value="checkinForm.randNum" @input="checkinForm.randNum = $event.target.value"
-                  placeholder="随机数">
-                  <span slot="helper">留空自动填充</span>
-                </mdui-text-field>
+            <div class="checkin-card">
+              <div class="checkin-header">
+                <h3>批量签到</h3>
+                <p>粘贴签到二维码链接或手动填写参数，对绑定该课程的所有账号执行签到</p>
               </div>
 
-              <mdui-button variant="filled" color="success" @click="executeCheckin"
-                :disabled="checkinLoading" style="width:100%;">
-                {{ checkinLoading ? '签到中…' : '执行签到' }}
+              <!-- URL 快速解析 -->
+              <div class="field-wrap">
+                <label class="field-label">签到链接 <span style="color:#6b7280;font-weight:400;">（粘贴完整 URL 自动解析）</span></label>
+                <input class="field-input" :value="checkinUrl" @input="parseCheckinUrl($event.target.value)"
+                  placeholder="https://w.ketangpai.com/checkIn/checkinCodeResult?ticketid=...&expire=...&sign=...&courseid=...&randNum=...">
+              </div>
+
+              <!-- 手动输入参数 -->
+              <details style="margin:16px 0 20px;">
+                <summary style="cursor:pointer; font-size:13px; color:#6366f1; padding:4px 0;">📝 或手动填写参数</summary>
+                <div class="checkin-fields" style="margin-top:14px;">
+                  <div class="checkin-row">
+                    <div class="field-wrap">
+                      <label class="field-label">CourseID<span class="req">*</span></label>
+                      <input class="field-input" :value="checkinForm.courseid" @input="checkinForm.courseid=$event.target.value" placeholder="课程 ID">
+                    </div>
+                    <div class="field-wrap">
+                      <label class="field-label">TicketID<span class="req">*</span></label>
+                      <input class="field-input" :value="checkinForm.ticketid" @input="checkinForm.ticketid=$event.target.value" placeholder="二维码中的 ticketid">
+                    </div>
+                  </div>
+                  <div class="checkin-row">
+                    <div class="field-wrap">
+                      <label class="field-label">Expire<span class="req">*</span></label>
+                      <input class="field-input" :value="checkinForm.expire" @input="checkinForm.expire=$event.target.value" placeholder="过期时间戳">
+                    </div>
+                    <div class="field-wrap">
+                      <label class="field-label">Sign<span class="req">*</span></label>
+                      <input class="field-input" :value="checkinForm.sign" @input="checkinForm.sign=$event.target.value" placeholder="签名">
+                    </div>
+                  </div>
+                  <div class="field-wrap">
+                    <label class="field-label">RandNum<span class="req">*</span></label>
+                    <input class="field-input" :value="checkinForm.randNum" @input="checkinForm.randNum=$event.target.value" placeholder="随机数">
+                  </div>
+                </div>
+              </details>
+
+              <mdui-button variant="filled" @click="executeCheckin"
+                :disabled="checkinLoading" class="checkin-btn">
+                {{ checkinLoading ? '签到中…' : '🚀 执行签到' }}
               </mdui-button>
 
               <div v-if="checkinResults.length" style="margin-top:24px;">
-                <div style="font-size:14px;font-weight:500;margin-bottom:8px;">签到结果 ({{ checkinSuccessCount }}/{{ checkinResults.length }} 成功)</div>
+                <div class="result-summary">
+                  签到结果 ·
+                  <span class="result-ok">{{ checkinSuccessCount }} 成功</span>
+                  <span class="result-divider">/</span>
+                  <span class="result-fail">{{ checkinResults.length - checkinSuccessCount }} 失败</span>
+                </div>
                 <div class="result-grid">
                   <div v-for="r in checkinResults" :key="r.email"
                     class="result-item" :class="r.success?'success':'fail'">
@@ -501,31 +584,32 @@
                   </div>
                 </div>
               </div>
-            </mdui-card>
+            </div>
           </div>
 
           <!-- ==========================================================
                签到日志
                ========================================================== -->
           <div v-if="route === 'logs'">
-            <div class="toolbar">
-              <div class="left">
-                <mdui-text-field label="课程 ID 筛选" style="width:160px;"
+            <div class="logs-toolbar">
+              <div class="log-filter-wrap">
+                <span class="log-filter-icon">🔍</span>
+                <input class="log-filter-input" placeholder="按课程 ID 筛选…"
                   :value="logFilter.course_id" @input="logFilter.course_id = $event.target.value">
-                </mdui-text-field>
-                <mdui-button variant="icon" @click="loadLogs">🔄</mdui-button>
+                <button class="log-filter-clear" v-if="logFilter.course_id" @click="logFilter.course_id=''">✕</button>
               </div>
+              <mdui-button variant="outlined" @click="loadLogs" size="small">🔄 刷新</mdui-button>
+              <span class="log-count" v-if="logs.length">共 {{ filteredLogs.length }} 条记录</span>
             </div>
             <div class="table-wrap" v-if="logs.length">
               <table>
-                <thead><tr><th>ID</th><th>账号</th><th>课程</th><th>状态</th><th>时间</th></tr></thead>
+                <thead><tr><th>时间</th><th>账号</th><th>课程 ID</th><th>状态</th></tr></thead>
                 <tbody>
                   <tr v-for="log in filteredLogs" :key="log.id">
-                    <td>{{ log.id }}</td>
+                    <td>{{ formatTime(log.created_at) }}</td>
                     <td>{{ getAccountEmail(log.account_id) }}</td>
                     <td>{{ log.course_id }}</td>
                     <td><span class="status-chip" :class="log.status===1?'green':'red'">{{ log.status===1?'成功':'失败' }}</span></td>
-                    <td>{{ formatTime(log.created_at) }}</td>
                   </tr>
                 </tbody>
               </table>
@@ -573,81 +657,69 @@
   <!-- ============================================================
        弹窗: 添加 / 编辑账号
        ============================================================ -->
-  <mdui-dialog :open="modals.account" @closed="modals.account=false"
+  <mdui-dialog :open="modals.account" @closed="modals.account=false" close-on-esc close-on-overlay-click
     :headline="editingAccount ? '编辑账号' : '添加账号'">
-    <div class="dialog-field">
-      <mdui-text-field label="课堂派邮箱" type="email"
-        :value="accountForm.email" @input="accountForm.email = $event.target.value">
-      </mdui-text-field>
+    <div class="field-wrap">
+      <label class="field-label">课堂派账号（邮箱/手机号）</label>
+      <input class="field-input" type="text" :value="accountForm.email" @input="accountForm.email=$event.target.value">
     </div>
-    <div class="dialog-field">
-      <mdui-text-field :label="editingAccount ? '新密码 (留空不修改)' : '密码'" type="password"
-        :value="accountForm.password" @input="accountForm.password = $event.target.value">
-      </mdui-text-field>
+    <div class="field-wrap">
+      <label class="field-label">{{ editingAccount ? '新密码 (留空不修改)' : '密码' }}</label>
+      <input class="field-input" type="password" :value="accountForm.password" @input="accountForm.password=$event.target.value">
     </div>
-    <div slot="actions">
-      <mdui-button variant="text" @click="modals.account=false">取消</mdui-button>
-      <mdui-button variant="filled" color="primary" @click="saveAccount">{{ editingAccount ? '保存' : '添加' }}</mdui-button>
-    </div>
+    <mdui-button slot="action" variant="text" @click="modals.account=false">取消</mdui-button>
+    <mdui-button slot="action" variant="filled" @click="saveAccount">{{ editingAccount ? '保存' : '添加' }}</mdui-button>
   </mdui-dialog>
 
   <!-- ============================================================
        弹窗: 绑定课程
        ============================================================ -->
-  <mdui-dialog :open="modals.binding" @closed="modals.binding=false"
+  <mdui-dialog :open="modals.binding" @closed="modals.binding=false" close-on-esc close-on-overlay-click
     headline="绑定课程">
-    <div class="dialog-field">
-      <mdui-text-field label="课程 ID"
-        :value="bindingForm.course_id" @input="bindingForm.course_id = $event.target.value"
-        placeholder="课堂派课程 ID">
-      </mdui-text-field>
+    <div class="field-wrap">
+      <label class="field-label">课程 ID</label>
+      <input class="field-input" :value="bindingForm.course_id" @input="bindingForm.course_id=$event.target.value" placeholder="课堂派课程 ID">
     </div>
-    <div class="dialog-field">
-      <mdui-select label="课堂派账号"
-        :value="bindingForm.account_id" @change="bindingForm.account_id = $event.target.value">
-        <mdui-menu-item value="" disabled>请选择账号</mdui-menu-item>
-        <mdui-menu-item v-for="acct in accounts" :key="acct.id" :value="acct.id">{{ acct.email }}</mdui-menu-item>
-      </mdui-select>
+    <div class="field-wrap">
+      <label class="field-label">课堂派账号</label>
+      <select class="field-select" :value="bindingForm.account_id" @change="bindingForm.account_id = $event.target.value">
+        <option value="" disabled>请选择账号</option>
+        <option v-for="acct in accounts" :key="acct.id" :value="acct.id">{{ acct.email }}</option>
+      </select>
     </div>
-    <div slot="actions">
-      <mdui-button variant="text" @click="modals.binding=false">取消</mdui-button>
-      <mdui-button variant="filled" color="primary" @click="saveBinding">绑定</mdui-button>
-    </div>
+    <mdui-button slot="action" variant="text" @click="modals.binding=false">取消</mdui-button>
+    <mdui-button slot="action" variant="filled" @click="saveBinding">绑定</mdui-button>
   </mdui-dialog>
 
   <!-- ============================================================
        弹窗: 新建 / 编辑用户 (admin)
        ============================================================ -->
-  <mdui-dialog :open="modals.user" @closed="modals.user=false"
+  <mdui-dialog :open="modals.user" @closed="modals.user=false" close-on-esc close-on-overlay-click
     :headline="editingUser ? '编辑用户' : '新建用户'">
-    <div class="dialog-field">
-      <mdui-text-field label="邮箱" type="email"
-        :value="userForm.email" @input="userForm.email = $event.target.value">
-      </mdui-text-field>
+    <div class="field-wrap">
+      <label class="field-label">邮箱</label>
+      <input class="field-input" type="email" :value="userForm.email" @input="userForm.email=$event.target.value">
     </div>
-    <div class="dialog-field">
-      <mdui-text-field :label="editingUser ? '新密码 (留空不修改)' : '密码'" type="password"
-        :value="userForm.password" @input="userForm.password = $event.target.value">
-      </mdui-text-field>
+    <div class="field-wrap">
+      <label class="field-label">{{ editingUser ? '新密码 (留空不修改)' : '密码' }}</label>
+      <input class="field-input" type="password" :value="userForm.password" @input="userForm.password=$event.target.value">
     </div>
-    <div class="dialog-field" v-if="editingUser">
-      <mdui-select label="角色"
-        :value="userForm.role" @change="userForm.role = $event.target.value">
-        <mdui-menu-item value="user">普通用户</mdui-menu-item>
-        <mdui-menu-item value="admin">管理员</mdui-menu-item>
-      </mdui-select>
+    <div class="field-wrap" v-if="editingUser">
+      <label class="field-label">角色</label>
+      <select class="field-select" :value="userForm.role" @change="userForm.role = $event.target.value">
+        <option value="user">普通用户</option>
+        <option value="admin">管理员</option>
+      </select>
     </div>
-    <div class="dialog-field" v-if="editingUser">
-      <mdui-select label="状态"
-        :value="userForm.is_active" @change="userForm.is_active = $event.target.value === 'true'">
-        <mdui-menu-item :value="true">正常</mdui-menu-item>
-        <mdui-menu-item :value="false">已禁用</mdui-menu-item>
-      </mdui-select>
+    <div class="field-wrap" v-if="editingUser">
+      <label class="field-label">状态</label>
+      <select class="field-select" :value="String(userForm.is_active)" @change="userForm.is_active = $event.target.value === 'true'">
+        <option value="true">正常</option>
+        <option value="false">已禁用</option>
+      </select>
     </div>
-    <div slot="actions">
-      <mdui-button variant="text" @click="modals.user=false">取消</mdui-button>
-      <mdui-button variant="filled" color="primary" @click="saveUser">{{ editingUser ? '保存' : '创建' }}</mdui-button>
-    </div>
+    <mdui-button slot="action" variant="text" @click="modals.user=false">取消</mdui-button>
+    <mdui-button slot="action" variant="filled" @click="saveUser">{{ editingUser ? '保存' : '创建' }}</mdui-button>
   </mdui-dialog>
 
 </div><!-- /#app -->
@@ -683,7 +755,9 @@ createApp({
       currentUser: JSON.parse(localStorage.getItem('user') || 'null'),
     });
 
-    const route = ref('dashboard');
+    // hash 路由：从 URL 恢复状态，支持刷新保持页面
+    function hashFromURL() { return window.location.hash.replace(/^#\/?/, '') || 'dashboard'; }
+    const route = ref(hashFromURL());
     const isMobile = () => window.innerWidth <= 768;
     const sidebarOpen = ref(!isMobile());
     // 窗口尺寸变化时自动调整侧栏
@@ -699,6 +773,7 @@ createApp({
     const bindingForm = reactive({ course_id: '', account_id: '' });
     const userForm = reactive({ email: '', password: '', role: 'user', is_active: true });
     const checkinForm = reactive({ courseid: '', ticketid: '', expire: '', sign: '', randNum: '' });
+    const checkinUrl = ref('');
     const logFilter = reactive({ course_id: '' });
 
     // 列表
@@ -775,6 +850,7 @@ createApp({
     // ---- 导航 ----
     function navigate(to) {
       route.value = to;
+      window.location.hash = '#' + to;
       if (isMobile()) sidebarOpen.value = false;
       switch (to) {
         case 'dashboard': loadRecentLogs(); break;
@@ -842,7 +918,7 @@ createApp({
     }
 
     async function saveAccount() {
-      if (!accountForm.email) { showToast('请填写邮箱'); return; }
+      if (!accountForm.email) { showToast('请填写课堂派账号'); return; }
       try {
         if (editingAccount.value) {
           const body = { email: accountForm.email };
@@ -904,8 +980,30 @@ createApp({
     }
 
     // ---- 签到 ----
+    function parseCheckinUrl(url) {
+      checkinUrl.value = url;
+      if (!url) return;
+      try {
+        const parsed = new URL(url);
+        const params = parsed.searchParams;
+        const ticketid = params.get('ticketid');
+        if (!ticketid) return; // 不是有效的签到链接
+        checkinForm.ticketid = ticketid;
+        checkinForm.expire = params.get('expire') || '';
+        checkinForm.sign = params.get('sign') || '';
+        checkinForm.courseid = params.get('courseid') || '';
+        checkinForm.randNum = params.get('randNum') || '';
+        showToast('参数已自动填充');
+      } catch {
+        // 不是合法 URL，忽略
+      }
+    }
+
     async function executeCheckin() {
-      if (!checkinForm.courseid || !checkinForm.ticketid) { showToast('请填写 CourseID 和 TicketID'); return; }
+      if (!checkinForm.courseid || !checkinForm.ticketid || !checkinForm.expire || !checkinForm.sign || !checkinForm.randNum) {
+        showToast('所有参数均为必填项');
+        return;
+      }
       checkinLoading.value = true;
       checkinResults.value = [];
       try {
@@ -980,15 +1078,35 @@ createApp({
       } catch (e) { showToast(e.message); }
     }
 
+    // 根据当前路由加载数据
+    function loadPageData(page) {
+      switch (page) {
+        case 'dashboard': loadRecentLogs(); break;
+        case 'accounts': loadAccounts(); break;
+        case 'courses': loadBindings(); break;
+        case 'logs': loadLogs(); break;
+        case 'users': loadUsers(); break;
+      }
+    }
+
+    // 监听 hashchange 自动加载数据
+    window.addEventListener('hashchange', () => {
+      const to = hashFromURL();
+      if (route.value === to) return;
+      route.value = to;
+      loadPageData(to);
+    });
+
     // ---- 初始化 ----
     if (state.token) {
-      api('GET', '/api/accounts').then(() => loadRecentLogs())
-        .catch(() => {
-          state.token = null;
-          state.currentUser = null;
-          localStorage.removeItem('token');
-          localStorage.removeItem('user');
-        });
+      api('GET', '/api/accounts').then(() => {
+        loadPageData(route.value);
+      }).catch(() => {
+        state.token = null;
+        state.currentUser = null;
+        localStorage.removeItem('token');
+        localStorage.removeItem('user');
+      });
     }
 
     return {
@@ -1002,7 +1120,7 @@ createApp({
       navigate, login, register, logout,
       loadAccounts, openAccountModal, saveAccount, deleteAccount,
       loadBindings, openBindingModal, saveBinding, deleteBinding,
-      executeCheckin, loadLogs, loadRecentLogs,
+      executeCheckin, parseCheckinUrl, checkinUrl, loadLogs, loadRecentLogs,
       loadUsers, openUserModal, saveUser, deleteUser,
     };
   }
