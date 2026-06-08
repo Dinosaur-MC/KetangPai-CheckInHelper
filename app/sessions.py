@@ -4,6 +4,7 @@ from threading import Lock
 from app.api import CheckInRequest, KetangPaiAPI, CheckInResult
 from app.db import get_session, get_redis_client
 from app.models import Account, CheckInLog
+from app.security import decrypt_credential
 
 import logging
 
@@ -41,11 +42,11 @@ class SessionPool:
     def _cleanup_expired(self):
         """移除过期的会话（调用方需持有 self.lock）。"""
         now = time.time()
-        expired = [
-            aid for aid, (_, ts) in self.clients.items()
+        expired_ids = [
+            aid for aid, (_, ts) in list(self.clients.items())
             if now - ts > SESSION_TTL
         ]
-        for aid in expired:
+        for aid in expired_ids:
             try:
                 self.clients.pop(aid)[0].close()
             except Exception:
@@ -53,7 +54,7 @@ class SessionPool:
             logger.debug("Session expired for account %s", aid)
 
     def _touch(self, account_id: int):
-        """刷新会话最后使用时间。"""
+        """刷新会话最后使用时间（调用方需持有 self.lock）。"""
         entry = self.clients.get(account_id)
         if entry is not None:
             self.clients[account_id] = (entry[0], time.time())
@@ -85,7 +86,7 @@ class SessionPool:
                     token = r.get(f"account:{account.id}:token")
                 except Exception:
                     token = None
-                client = KetangPaiAPI(account.email, account.password, token)
+                client = KetangPaiAPI(account.email, decrypt_credential(account.password), token)
                 if not token:
                     try:
                         client.login()
@@ -133,7 +134,8 @@ class SessionPool:
             entry = self.clients.get(account_id)
 
         if entry is not None:
-            self._touch(account_id)
+            with self.lock:
+                self._touch(account_id)
             return entry[0]
 
         # 从 DB 重建
@@ -149,7 +151,7 @@ class SessionPool:
             except Exception:
                 token = None
 
-            client = KetangPaiAPI(account.email, account.password, token)
+            client = KetangPaiAPI(account.email, decrypt_credential(account.password), token)
             if not token:
                 client.login()
                 try:
@@ -506,7 +508,8 @@ class SessionPool:
                         message=f"签到失败：{e}",
                     ),
                 )
-            self._touch(account_id)
+            with self.lock:
+                self._touch(account_id)
             self._record(
                 db, r, user_id, account_id, data.courseid, client, result,
             )
