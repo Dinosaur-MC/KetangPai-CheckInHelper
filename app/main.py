@@ -9,6 +9,7 @@ from starlette.exceptions import HTTPException
 from fastapi import FastAPI, Request, Response, Depends, Body
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse, FileResponse
+from fastapi.staticfiles import StaticFiles
 
 from app.security import (
     configure_jwt,
@@ -82,6 +83,10 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+# 挂载静态文件目录
+static_dir = Path(__file__).parent.parent / "static"
+if static_dir.exists():
+    app.mount("/static", StaticFiles(directory=str(static_dir)), name="static")
 
 # ================================
 #            异常处理
