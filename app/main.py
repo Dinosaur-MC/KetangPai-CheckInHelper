@@ -1,5 +1,6 @@
 import os
 import re
+import secrets
 from pathlib import Path
 from datetime import datetime, timezone
 from starlette.exceptions import HTTPException
@@ -13,18 +14,25 @@ from app.security import (
     decode_access_token,
     hash_password,
     verify_password,
+    validate_password_strength,
+    is_token_blacklisted,
 )
 from app.db import Session, Redis, ConnectionError, get_session_with, get_redis
 from sqlmodel import select
 from app.models import *
-from app.api import CheckInRequest
+from app.api import CheckInRequest, CheckInResult
 
 import logging
 
 logger = logging.getLogger(__name__)
 
+# JWT 配置 — 生产环境务必设置 JWT_SECRET 环境变量
+_jwt_secret = os.environ.get("JWT_SECRET")
+if _jwt_secret is None:
+    _jwt_secret = secrets.token_hex(32)
+    logger.warning("JWT_SECRET 未设置！已生成随机密钥。重启后所有 token 将失效。")
 configure_jwt(
-    os.environ.get("JWT_SECRET", "secret-" + "-".join(__file__)),
+    _jwt_secret,
     os.environ.get("JWT_ALGORITHM", "HS256"),
     os.environ.get("JWT_EXPIRE_HOURS") or 24 * 7,
 )
@@ -40,11 +48,16 @@ app = FastAPI(
 )
 
 # 添加 CORS 中间件
+ALLOWED_ORIGINS = os.getenv("ALLOWED_ORIGINS")
+if ALLOWED_ORIGINS:
+    _origins = [o.strip() for o in ALLOWED_ORIGINS.split(",") if o.strip()]
+else:
+    _origins = []  # 默认不允许任何跨域请求
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
+    allow_origins=_origins,
     allow_credentials=True,
-    allow_methods=["*"],
+    allow_methods=["GET", "POST", "PUT", "DELETE", "HEAD", "OPTIONS"],
     allow_headers=["*"],
 )
 
@@ -57,14 +70,11 @@ app.add_middleware(
 @app.exception_handler(HTTPException)
 async def http_exception_handler(request: Request, exc: HTTPException):
     logger.error(f"HTTP 异常：{str(exc)}", exc_info=True)
-    import traceback
-
     return JSONResponse(
         status_code=exc.status_code,
         content=ErrorResponse(
             code=exc.status_code,
             message=exc.detail,
-            detail=traceback.format_exc() if app.debug else None,
         ).model_dump(exclude_none=True),
     )
 
@@ -77,9 +87,37 @@ async def unhandled_exception_handler(request: Request, exc: Exception):
         content=ErrorResponse(
             code=500,
             message="Internal Server Error",
-            detail=str(exc) if app.debug else None,
         ).model_dump(exclude_none=True),
     )
+
+
+# ================================
+#            速率限制
+# ================================
+
+
+class RateLimiter:
+    """Redis-based rate limiter dependency."""
+
+    def __init__(self, times: int, seconds: int):
+        self.times = times
+        self.seconds = seconds
+
+    async def __call__(self, request: Request, redis: Redis = Depends(get_redis)):
+        client_ip = request.client.host if request.client else "unknown"
+        key = f"rate_limit:{request.url.path}:{client_ip}"
+        try:
+            current = redis.incr(key)
+            if current == 1:
+                redis.expire(key, self.seconds)
+        except ConnectionError:
+            return  # Redis 不可用时放行
+        if current > self.times:
+            raise HTTPException(status_code=429, detail="请求过于频繁，请稍后再试")
+
+
+# 登录/注册接口每分钟最多 5 次请求
+auth_rate_limiter = RateLimiter(times=5, seconds=60)
 
 
 # ================================
@@ -116,13 +154,24 @@ def get_current_user(
     if user_id is None:
         raise HTTPException(status_code=401, detail="认证令牌格式错误")
 
+    # 检查 token 是否已被吊销
+    token_jti = payload.get("jti")
+    if token_jti and is_token_blacklisted(token_jti, redis):
+        raise HTTPException(status_code=401, detail="令牌已被吊销")
+
     user_cache = get_user_cache(redis, user_id)
     if user_cache is not None:
+        # 缓存命中时也检查 is_active
+        if not user_cache.is_active:
+            raise HTTPException(status_code=403, detail="账号已被禁用")
         return user_cache
 
     user = session.get(User, user_id)
     if user is None:
         raise HTTPException(status_code=401, detail="用户不存在")
+
+    if not user.is_active:
+        raise HTTPException(status_code=403, detail="账号已被禁用")
 
     redis.set(f"user:{user_id}", user.model_dump(exclude_none=True), 86400)
     return user
@@ -149,15 +198,13 @@ async def register(
     email: str = Body(...),
     password: str = Body(...),
     session: Session = Depends(get_session_with),
+    _rate_limit: None = Depends(auth_rate_limiter),
 ):
     if not re.match(r"^[a-zA-Z0-9_-]+@[a-zA-Z0-9_-]+(\.[a-zA-Z0-9_-]+)+$", email):
         raise HTTPException(status_code=400, detail="邮箱格式错误")
-    if len(password) < 8:
-        raise HTTPException(status_code=400, detail="密码长度至少为 8 个字符")
-    if not re.match(r"^[a-zA-Z0-9_-]+$", password):
-        raise HTTPException(
-            status_code=400, detail="密码只能包含字母、数字、下划线、减号"
-        )
+    valid, msg = validate_password_strength(password)
+    if not valid:
+        raise HTTPException(status_code=400, detail=msg)
 
     user = session.exec(select(User).where(User.email == email)).first()
     if user is not None:
@@ -191,22 +238,19 @@ async def login(
     email: str = Body(...),
     password: str = Body(...),
     session: Session = Depends(get_session_with),
+    _rate_limit: None = Depends(auth_rate_limiter),
 ):
     if not re.match(r"^[a-zA-Z0-9_-]+@[a-zA-Z0-9_-]+(\.[a-zA-Z0-9_-]+)+$", email):
         raise HTTPException(status_code=400, detail="邮箱格式错误")
     if len(password) < 8:
         raise HTTPException(status_code=400, detail="密码长度至少为 8 个字符")
-    if not re.match(r"^[a-zA-Z0-9_-]+$", password):
-        raise HTTPException(
-            status_code=400, detail="密码只能包含字母、数字、下划线、减号"
-        )
 
     user = session.exec(select(User).where(User.email == email)).first()
-    if user is None:
-        raise HTTPException(status_code=401, detail="用户不存在")
+    if user is None or not verify_password(password, user.password):
+        raise HTTPException(status_code=401, detail="邮箱或密码错误")
 
-    if not verify_password(password, user.password):
-        raise HTTPException(status_code=401, detail="密码错误")
+    if not user.is_active:
+        raise HTTPException(status_code=403, detail="账号已被禁用")
 
     user.last_login_at = datetime.now(timezone.utc)
     session.add(user)
@@ -226,6 +270,27 @@ async def login(
             },
         },
     )
+
+
+@app.post("/api/logout")
+async def logout(
+    request: Request,
+    redis: Redis = Depends(get_redis),
+) -> BaseResponse:
+    """登出 — 将当前 token 加入黑名单"""
+    authorization = request.headers.get("Authorization")
+    if authorization and authorization.startswith("Bearer "):
+        token = authorization.removeprefix("Bearer ").strip()
+        payload = decode_access_token(token)
+        if payload and payload.get("jti"):
+            jti = payload["jti"]
+            exp = payload.get("exp", 0)
+            iat = payload.get("iat", 0)
+            ttl = max(exp - iat, 60)  # 至少保存 60 秒
+            from app.security import blacklist_token
+
+            blacklist_token(jti, redis, ttl=ttl)
+    return BaseResponse(message="已登出")
 
 
 # ================================
@@ -281,6 +346,15 @@ async def create_user(
     if current_user.role != Role.admin:
         raise HTTPException(status_code=403, detail="权限不足")
 
+    # 验证邮箱格式
+    if not re.match(r"^[a-zA-Z0-9_-]+@[a-zA-Z0-9_-]+(\.[a-zA-Z0-9_-]+)+$", email):
+        raise HTTPException(status_code=400, detail="邮箱格式错误")
+
+    # 验证密码强度
+    valid, msg = validate_password_strength(password)
+    if not valid:
+        raise HTTPException(status_code=400, detail=msg)
+
     # 检查邮箱是否已存在
     existing_user = session.exec(select(User).where(User.email == email)).first()
     if existing_user:
@@ -329,12 +403,15 @@ async def update_user(
         user.email = email
 
     if password is not None:
+        valid, msg = validate_password_strength(password)
+        if not valid:
+            raise HTTPException(status_code=400, detail=msg)
         user.password = hash_password(password)
 
     if role is not None and current_user.role == Role.admin:
         user.role = role
 
-    if is_active is not None:
+    if is_active is not None and current_user.role == Role.admin:
         user.is_active = is_active
 
     session.add(user)
@@ -820,7 +897,9 @@ async def check_in(
     data: CheckInRequest,
     current_user: User = Depends(get_current_user),
     session: Session = Depends(get_session_with),
+    _rate_limit: None = Depends(RateLimiter(times=10, seconds=60)),
 ):
+    import asyncio
     from app.sessions import session_pool
 
     course_id = data.courseid
@@ -837,19 +916,21 @@ async def check_in(
     if not accounts:
         raise HTTPException(status_code=404, detail="无绑定此课程的账号")
 
-    if not session_pool.create(accounts):
+    if not await asyncio.to_thread(session_pool.create, accounts):
         return BaseResponse(code=500, message="创建会话失败")
 
     account_ids = [a.id for a in accounts]
-    result = session_pool.execute_checkin(current_user.id, account_ids, data)
-    session_pool.remove(account_ids)
+    result: dict[int, CheckInResult | None] = await session_pool.execute_checkin(
+        current_user.id, account_ids, data
+    )
+    await asyncio.to_thread(session_pool.remove, account_ids)
 
-    success_count = sum(r[1].success for r in result)
+    success_count = sum(1 for r in result.values() if r is not None and r.success)
     return BaseResponse(
         code=200,
         data={
             "success_count": success_count,
-            "results": [r[1].model_dump() for r in result],
+            "results": [r.model_dump() for r in result.values() if r is not None],
         },
         message=f"成功签到{success_count}个账号",
     )
