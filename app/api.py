@@ -1,4 +1,5 @@
 import time
+import random
 import requests
 from typing import Optional, List
 from pydantic import BaseModel, Field
@@ -116,6 +117,30 @@ class CheckInResult(BaseModel):
     message: str
 
 
+# 5. 获取课程列表接口
+class SemesterCourseListRequest(BaseModel):
+    isstudy: str = "1"
+    search: str = ""
+    semester: str = "2026-2027"
+    term: str = "1"
+    reqtimestamp: int = Field(default_factory=lambda: int(time.time() * 1000))
+
+
+class CourseItem(BaseModel):
+    id: str  # 课程 ID
+    code: str = ""
+    course_name: str = Field(default="", alias="coursename")
+    semester: str = ""
+    term: str = ""
+
+
+class SemesterCourseListResponse(BaseModel):
+    status: int
+    code: int
+    message: str
+    data: list[CourseItem] = []
+
+
 # -------------------- 请求函数 --------------------
 def build_session(token: Optional[str] = None) -> requests.Session:
     """创建带基础 headers 的 Session，可选注入 token"""
@@ -171,6 +196,23 @@ class KetangPaiAPI:
         )
         resp.raise_for_status()
         return GetUserInfoResponse(**resp.json())
+
+    def get_course_list(self) -> list[CourseItem]:
+        """获取学期课程列表。"""
+        req = SemesterCourseListRequest(
+            reqtimestamp=int(time.time() * 1000) + random.randint(-100, 100),
+        )
+        resp = self.session.post(
+            f"{API_BASE}/CourseApi/semesterCourseList",
+            json=req.model_dump(),
+        )
+        resp.raise_for_status()
+        data = resp.json()
+        if data.get("status") != 1:
+            raise RuntimeError(
+                f"获取课程列表失败：{data.get('message', 'Unknown error')}"
+            )
+        return [CourseItem(**item) for item in data.get("data", [])]
 
     def check_in_with_url(self, url: str) -> CheckInResult:
         query = [

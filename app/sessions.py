@@ -122,11 +122,11 @@ class SessionPool:
                         pass
             return True
 
-    def get_user_info(self, account_id: int) -> dict | None:
-        """获取指定账号的用户信息，返回 dict 或 None。
+    def _ensure_client(self, account_id: int) -> KetangPaiAPI | None:
+        """确保 *account_id* 在 self.clients 中有可用会话。
 
-        如果会话不存在则新建并登录（调用方需确保 Account 密码正确）。
-        会话过期会被重建。
+        调用方建议持有 self.lock；为安全，本方法内部自行加锁。
+        返回客户端或 None（账号不存在或登录失败）。
         """
         with self.lock:
             self._cleanup_expired()
@@ -134,25 +134,9 @@ class SessionPool:
 
         if entry is not None:
             self._touch(account_id)
-            try:
-                resp = entry[0].get_user_info()
-                return resp.data.model_dump()
-            except Exception as e:
-                logger.warning(
-                    "get_user_info failed for account %s: %s", account_id, e
-                )
-                # 会话可能失效，移除旧客户端并尝试重建
-                with self.lock:
-                    old = self.clients.pop(account_id, None)
-                    if old is not None:
-                        try:
-                            old[0].close()
-                        except Exception:
-                            pass
-                # fall through to rebuild
-                entry = None
+            return entry[0]
 
-        # 无缓存或缓存失效 — 从 DB 重建
+        # 从 DB 重建
         try:
             with get_session() as db:
                 account = db.get(Account, account_id)
@@ -180,15 +164,88 @@ class SessionPool:
 
             with self.lock:
                 self.clients[account_id] = (client, time.time())
-
-            resp = client.get_user_info()
-            return resp.data.model_dump()
+            return client
 
         except Exception as e:
             logger.error(
-                "get_user_info failed for account %s: %s", account_id, e
+                "Failed to ensure client for account %s: %s", account_id, e
             )
             return None
+
+    # ------------------------------------------------------------------
+    # 查询方法（均支持批量：int → result, list[int] → dict[int, result]）
+    # ------------------------------------------------------------------
+
+    def get_account_info(
+        self, account_ids: int | list[int]
+    ) -> dict | None:
+        """获取账号用户信息。
+
+        :param account_ids: 单个 ID 或 ID 列表。
+        :return: 单个 ID → dict 或 None；列表 → {id: dict | None, ...}。
+        """
+        single = isinstance(account_ids, int)
+        ids = [account_ids] if single else account_ids
+        result: dict[int, dict | None] = {}
+
+        for aid in ids:
+            client = self._ensure_client(aid)
+            if client is None:
+                result[aid] = None
+                continue
+            try:
+                resp = client.get_user_info()
+                result[aid] = resp.data.model_dump()
+            except Exception as e:
+                logger.warning(
+                    "get_user_info failed for account %s: %s", aid, e
+                )
+                # 移除失效会话以便下次重建
+                with self.lock:
+                    old = self.clients.pop(aid, None)
+                    if old is not None:
+                        try:
+                            old[0].close()
+                        except Exception:
+                            pass
+                result[aid] = None
+
+        return result[account_ids] if single else result
+
+    def get_course_list(
+        self, account_ids: int | list[int]
+    ) -> list[dict] | None | dict[int, list[dict] | None]:
+        """获取账号的学期课程列表。
+
+        :param account_ids: 单个 ID 或 ID 列表。
+        :return: 单个 → list[dict] 或 None；列表 → {id: list[dict] | None, ...}。
+        """
+        single = isinstance(account_ids, int)
+        ids = [account_ids] if single else account_ids
+        result: dict[int, list[dict] | None] = {}
+
+        for aid in ids:
+            client = self._ensure_client(aid)
+            if client is None:
+                result[aid] = None
+                continue
+            try:
+                items = client.get_course_list()
+                result[aid] = [item.model_dump() for item in items]
+            except Exception as e:
+                logger.warning(
+                    "get_course_list failed for account %s: %s", aid, e
+                )
+                with self.lock:
+                    old = self.clients.pop(aid, None)
+                    if old is not None:
+                        try:
+                            old[0].close()
+                        except Exception:
+                            pass
+                result[aid] = None
+
+        return result[account_ids] if single else result
 
     def _set_account_status(self, account_id: int, status: int):
         """更新账号状态字段。"""

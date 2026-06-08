@@ -37,6 +37,8 @@ class Account(SQLModel, table=True):
     id: Optional[int] = Field(default=None, primary_key=True)
     email: str = Field(index=True, unique=True)
     password: str
+    uid: str
+    status: int = Field(default=0)
     created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
 
 
@@ -46,9 +48,17 @@ class UserAccount(SQLModel, table=True):
     account_id: int = Field(default=None, foreign_key="account.id")
 
 
+class Course(SQLModel, table=True):
+    id: Optional[str] = Field(default=None, primary_key=True)
+    code: str
+    course_name: str
+    semester: str
+    term: str
+
+
 class CourseBinding(SQLModel, table=True):
     id: Optional[int] = Field(default=None, primary_key=True)
-    course_id: str
+    course_id: str = Field(default=None, foreign_key="course.id")
     account_id: int = Field(default=None, foreign_key="account.id")
     is_active: bool = True
 
