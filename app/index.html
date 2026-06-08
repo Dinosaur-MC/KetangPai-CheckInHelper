@@ -7,6 +7,7 @@
   <link rel="icon" href="/favicon.ico">
   <!-- MDUI 2 CSS -->
   <link rel="stylesheet" href="/static/mdui.css">
+  <link rel="stylesheet" href="/static/material-icons.css">
   <style>
     /* ============================================================
        全局 & 变量
@@ -30,7 +31,7 @@
     /* ── 侧边栏 ── */
     .sidebar {
       width: 250px; min-width: 250px;
-      background: #2d3340;
+      background: linear-gradient(135deg, #2d3340, #1e293b);
       display:flex; flex-direction:column; overflow-y:auto;
     }
     .sidebar-header {
@@ -90,6 +91,7 @@
         position:fixed; top:0; left:0; bottom:0; z-index:200;
         transform:translateX(-100%); transition:transform .3s cubic-bezier(.4,0,.2,1);
         box-shadow: 4px 0 24px rgba(0,0,0,.25);
+        background: linear-gradient(135deg, rgba(45, 51, 64, .99), rgba(30, 41, 59, .99));
       }
       .sidebar.open { transform:translateX(0); }
     }
@@ -101,16 +103,18 @@
     @media (max-width: 768px) { .sidebar-overlay { display:block; } }
 
     /* ── 主内容 ── */
-    .main-content { flex:1; display:flex; flex-direction:column; overflow:hidden; min-width:0; background:#e8eaed; }
+    .main-content { flex:1; display:flex; flex-direction:column; overflow:hidden; min-width:0; 
+      background: #e8eaed url("https://blog.dmcstudio.top/assets/image/img/img(32).webp") no-repeat fixed center; background-size: cover; }
     .main-header {
-      background:#fff; padding: 12px 24px;
+      background: rgba(255,255,255,.99);
+      padding: 12px 24px;
       border-bottom: 1px solid #e5e7eb;
       display:flex; align-items:center; gap:12px;
       min-height: 56px; flex-shrink:0;
       box-shadow: 0 1px 2px rgba(0,0,0,.03);
     }
     .main-header h2 { margin:0; font-size: 18px; font-weight: 600; color: #111827; }
-    .main-header .breadcrumb { color: #9ca3af; font-size: 12px; }
+    .main-header .breadcrumb { color: #6b7280; font-size: 12px; }
     .main-header .menu-btn {
       display:none; background:none; border:none;
       font-size: 22px; cursor:pointer; padding:6px; color: #374151;
@@ -124,12 +128,13 @@
        ============================================================ */
     .login-page {
       min-height:100vh; display:flex; align-items:center; justify-content:center;
-      background: #e8eaed;
+      background: #e8eaed url("https://blog.dmcstudio.top/assets/image/img/img(64).webp") no-repeat fixed center;
+      background-size: cover;
       padding: 16px;
     }
     .login-card {
       width:100%; max-width: 420px; padding: 40px 32px 32px;
-      border-radius: 20px; background:#fff;
+      border-radius: 20px; background:rgba(255,255,255,.8);
       box-shadow: 0 4px 24px rgba(0,0,0,.08);
     }
     .login-card h2 { margin:0 0 6px; font-size: 26px; font-weight: 700; text-align:center; color:#111827; }
@@ -147,7 +152,7 @@
       gap: 16px; margin-bottom: 28px;
     }
     .stat-card {
-      background: #fff; border-radius: 14px; padding: 22px 20px;
+      background: rgba(255,255,255,.9); border-radius: 14px; padding: 22px 20px;
       box-shadow: 0 1px 3px rgba(0,0,0,.05);
       border-top: 3px solid #6366f1;
       transition: box-shadow .2s, transform .2s;
@@ -163,7 +168,7 @@
        表格
        ============================================================ */
     .table-wrap {
-      background:#fff; border-radius:14px;
+      background:rgba(255,255,255,.9); border-radius:14px;
       box-shadow: 0 1px 3px rgba(0,0,0,.04); overflow-x:auto;
     }
     .table-wrap table { width:100%; border-collapse:collapse; }
@@ -186,9 +191,9 @@
        ============================================================ */
     .toolbar {
       display:flex; justify-content:space-between; align-items:center;
-      flex-wrap:wrap; gap:12px; margin-bottom: 18px;
+      flex-wrap:wrap; gap:12px; margin-bottom: 18px; border-radius: 20px; background: rgba(255,255,255,.9);
     }
-    .toolbar .left { display:flex; gap:10px; align-items:center; font-size:13px; color:#6b7280; }
+    .toolbar .left { display:flex; gap:10px; align-items:center; font-size:13px; color:#6b7280; padding: 10px 16px; border-radius: 20px; background: rgba(255,255,255,.8);}
     .toolbar .right { display:flex; gap: 8px; }
 
     /* ============================================================
@@ -207,9 +212,9 @@
        空状态
        ============================================================ */
     .empty-state {
-      text-align:center; padding: 64px 16px; color:#9ca3af;
+      text-align:center; padding: 64px 16px; color:#6b7280; background: rgba(255,255,255,.8); border-radius: 20px;
     }
-    .empty-state .icon { font-size: 56px; margin-bottom: 14px; opacity: .6; }
+    .empty-icon { font-size: 56px; margin-bottom: 14px; opacity: .4; color: #6b7280; }
     .empty-state p { margin:0; font-size: 15px; }
 
     /* ============================================================
@@ -218,7 +223,7 @@
     /* 签到页 */
     .checkin-card {
       max-width: 720px;
-      background:#fff; border-radius:16px; padding:28px;
+      background: rgba(255,255,255,.9); border-radius:16px; padding:28px;
       box-shadow:0 1px 3px rgba(0,0,0,.05);
     }
     .checkin-header h3 { margin:0 0 6px; font-size:18px; font-weight:600; }
@@ -238,15 +243,15 @@
     .logs-toolbar {
       display:flex; align-items:center; flex-wrap:wrap; gap:12px;
       margin-bottom:18px; padding:12px 20px;
-      background:#fff; border-radius:12px; box-shadow:0 1px 3px rgba(0,0,0,.04);
+      background: rgba(255,255,255,.9); border-radius:12px; box-shadow:0 1px 3px rgba(0,0,0,.04);
     }
     .log-count { font-size:13px; color:#6b7280; margin-left:auto; }
     .log-filter-wrap {
       position:relative; display:flex; align-items:center;
     }
     .log-filter-icon {
-      position:absolute; left:10px;
-      font-size:13px; pointer-events:none;
+      position:absolute; left:10px; top:50%; transform:translateY(-50%);
+      font-size:16px; pointer-events:none; color:#9ca3af;
     }
     .log-filter-input {
       width:200px; padding:9px 28px 9px 30px;
@@ -338,7 +343,7 @@
               <label class="field-label">密码</label>
               <input class="field-input" type="password" :value="form.password" @input="form.password=$event.target.value" placeholder="至少 8 位">
             </div>
-            <mdui-button variant="filled" @click="login" :disabled="loading" style="width:100%;margin-top:8px;height:44px;">{{ loading ? '登录中…' : '登 录' }}</mdui-button>
+            <mdui-button variant="filled" @click="login" type="submit" :disabled="loading" style="width:100%;margin-top:8px;height:44px;">{{ loading ? '登录中…' : '登 录' }}</mdui-button>
           </form>
           <div class="form-footer">
             <a @click="loginView='register'">没有账号？去注册</a>
@@ -356,7 +361,7 @@
               <label class="field-label">密码</label>
               <input class="field-input" type="password" :value="form.password" @input="form.password=$event.target.value" placeholder="至少 8 位">
             </div>
-            <mdui-button variant="filled" @click="register" :disabled="loading" style="width:100%;margin-top:8px;height:44px;">{{ loading ? '注册中…' : '注 册' }}</mdui-button>
+            <mdui-button variant="filled" @click="register" type="submit" :disabled="loading" style="width:100%;margin-top:8px;height:44px;">{{ loading ? '注册中…' : '注 册' }}</mdui-button>
           </form>
           <div class="form-footer">
             <a @click="loginView='login'">已有账号？去登录</a>
@@ -384,27 +389,27 @@
         </div>
         <mdui-list>
           <mdui-list-item :active="route==='dashboard'" @click="navigate('dashboard')">
-            📊&nbsp; 首页
+            <mdui-icon slot="icon" name="dashboard"></mdui-icon>首页
           </mdui-list-item>
           <mdui-list-item :active="route==='accounts'" @click="navigate('accounts')">
-            🔑&nbsp; 账号
+            <mdui-icon slot="icon" name="key"></mdui-icon>账号
           </mdui-list-item>
           <mdui-list-item :active="route==='courses'" @click="navigate('courses')">
-            📚&nbsp; 课程
+            <mdui-icon slot="icon" name="book"></mdui-icon>课程
           </mdui-list-item>
           <mdui-list-item :active="route==='checkin'" @click="navigate('checkin')">
-            ✅&nbsp; 签到
+            <mdui-icon slot="icon" name="checklist"></mdui-icon>签到
           </mdui-list-item>
           <mdui-list-item :active="route==='logs'" @click="navigate('logs')">
-            📋&nbsp; 日志
+            <mdui-icon slot="icon" name="history"></mdui-icon>日志
           </mdui-list-item>
           <mdui-list-item :active="route==='users'" @click="navigate('users')"
             v-if="state.currentUser?.role === 'admin'">
-            👥&nbsp; 用户管理
+            <mdui-icon slot="icon" name="people"></mdui-icon>用户管理
           </mdui-list-item>
         </mdui-list>
         <div class="sidebar-footer">
-          <mdui-list-item @click="logout">🚪&nbsp; 退出登录</mdui-list-item>
+          <mdui-list-item @click="logout"><mdui-icon slot="icon" name="logout"></mdui-icon>退出登录</mdui-list-item>
         </div>
       </aside>
 
@@ -443,7 +448,7 @@
               </div>
             </div>
 
-            <h3 style="margin:24px 0 12px;font-size:15px;font-weight:500;">最近签到</h3>
+            <h3 style="margin:24px 0 12px;font-size:15px;font-weight:500; background: rgba(255,255,255,.8); border-radius: 20px; padding: 12px">最近签到</h3>
             <div class="table-wrap" v-if="recentLogs.length">
               <table>
                 <thead><tr><th>课程</th><th>账号 ID</th><th>状态</th><th>时间</th></tr></thead>
@@ -479,14 +484,14 @@
                     <td><span class="status-chip" :class="acct.status===1?'green':(acct.status===0?'orange':'red')">{{ acct.status===1?'正常':(acct.status===0?'未知':'不可用') }}</span></td>
                     <td>{{ formatTime(acct.created_at) }}</td>
                     <td class="actions">
-                      <mdui-button variant="icon" @click="openAccountModal(acct)" title="编辑">✏️</mdui-button>
-                      <mdui-button variant="icon" @click="deleteAccount(acct)" title="删除" style="color:#c62828;">🗑️</mdui-button>
+                      <mdui-button-icon icon="edit" @click="openAccountModal(acct)" title="编辑"></mdui-button-icon>
+                      <mdui-button-icon icon="delete" @click="deleteAccount(acct)" title="删除" style="color:#c62828;"></mdui-button-icon>
                     </td>
                   </tr>
                 </tbody>
               </table>
             </div>
-            <div class="empty-state" v-else><div class="icon">🔑</div><p>还没有课堂派账号，点击右上角添加</p></div>
+            <div class="empty-state" v-else><mdui-icon class="empty-icon" name="key"></mdui-icon><p>还没有课堂派账号，点击右上角添加</p></div>
           </div>
 
           <!-- ==========================================================
@@ -510,13 +515,13 @@
                     <td>{{ getCourseSemester(b.course_id) }}</td>
                     <td><mdui-switch :checked="b.is_active" @change="toggleBinding(b, $event)"></mdui-switch></td>
                     <td class="actions">
-                      <mdui-button variant="icon" @click="deleteBinding(b)" title="解绑" style="color:#c62828;">🗑️</mdui-button>
+                      <mdui-button-icon icon="delete" @click="deleteBinding(b)" title="解绑" style="color:#c62828;"></mdui-button-icon>
                     </td>
                   </tr>
                 </tbody>
               </table>
             </div>
-            <div class="empty-state" v-else><div class="icon">📚</div><p>还没有绑定课程</p></div>
+            <div class="empty-state" v-else><mdui-icon class="empty-icon" name="book"></mdui-icon><p>还没有绑定课程</p></div>
           </div>
 
           <!-- ==========================================================
@@ -596,12 +601,12 @@
           <div v-if="route === 'logs'">
             <div class="logs-toolbar">
               <div class="log-filter-wrap">
-                <span class="log-filter-icon">🔍</span>
+                <mdui-icon class="log-filter-icon" name="search"></mdui-icon>
                 <input class="log-filter-input" placeholder="按课程 ID 筛选…"
                   :value="logFilter.course_id" @input="logFilter.course_id = $event.target.value">
                 <button class="log-filter-clear" v-if="logFilter.course_id" @click="logFilter.course_id=''">✕</button>
               </div>
-              <mdui-button variant="outlined" @click="loadLogs" size="small">🔄 刷新</mdui-button>
+              <mdui-button variant="outlined" icon="refresh" @click="loadLogs" size="small">刷新</mdui-button>
               <span class="log-count" v-if="logs.length">共 {{ filteredLogs.length }} 条记录</span>
             </div>
             <div class="table-wrap" v-if="logs.length">
@@ -617,7 +622,7 @@
                 </tbody>
               </table>
             </div>
-            <div class="empty-state" v-else><div class="icon">📋</div><p>暂无签到记录</p></div>
+            <div class="empty-state" v-else><mdui-icon class="empty-icon" name="history"></mdui-icon><p>暂无签到记录</p></div>
           </div>
 
           <!-- ==========================================================
@@ -642,14 +647,14 @@
                     <td>{{ u.last_login_at ? formatTime(u.last_login_at) : '-' }}</td>
                     <td>{{ formatTime(u.created_at) }}</td>
                     <td class="actions">
-                      <mdui-button variant="icon" @click="openUserModal(u)" title="编辑">✏️</mdui-button>
-                      <mdui-button variant="icon" @click="deleteUser(u)" v-if="u.id !== state.currentUser?.id" title="删除" style="color:#c62828;">🗑️</mdui-button>
+                      <mdui-button-icon icon="edit" @click="openUserModal(u)" title="编辑"></mdui-button-icon>
+                      <mdui-button-icon icon="delete" @click="deleteUser(u)" v-if="u.id !== state.currentUser?.id" title="删除" style="color:#c62828;"></mdui-button-icon>
                     </td>
                   </tr>
                 </tbody>
               </table>
             </div>
-            <div class="empty-state" v-else><div class="icon">👥</div><p>暂无用户数据</p></div>
+            <div class="empty-state" v-else><mdui-icon class="empty-icon" name="people"></mdui-icon><p>暂无用户数据</p></div>
           </div>
 
         </div><!-- /main-body -->
@@ -664,11 +669,11 @@
     :headline="editingAccount ? '编辑账号' : '添加账号'">
     <div class="field-wrap">
       <label class="field-label">课堂派账号（邮箱/手机号）</label>
-      <input class="field-input" type="text" :value="accountForm.email" @input="accountForm.email=$event.target.value">
+      <input class="field-input" type="text" :value="accountForm.email" @input="accountForm.email=$event.target.value" @keydown.enter="saveAccount">
     </div>
     <div class="field-wrap">
       <label class="field-label">{{ editingAccount ? '新密码 (留空不修改)' : '密码' }}</label>
-      <input class="field-input" type="password" :value="accountForm.password" @input="accountForm.password=$event.target.value">
+      <input class="field-input" type="password" :value="accountForm.password" @input="accountForm.password=$event.target.value" @keydown.enter="saveAccount">
     </div>
     <mdui-button slot="action" variant="text" @click="modals.account=false">取消</mdui-button>
     <mdui-button slot="action" variant="filled" @click="saveAccount">{{ editingAccount ? '保存' : '添加' }}</mdui-button>
@@ -681,11 +686,11 @@
     headline="绑定课程">
     <div class="field-wrap">
       <label class="field-label">课程 ID</label>
-      <input class="field-input" :value="bindingForm.course_id" @input="bindingForm.course_id=$event.target.value" placeholder="课堂派课程 ID">
+      <input class="field-input" :value="bindingForm.course_id" @input="bindingForm.course_id=$event.target.value" @keydown.enter="saveBinding" placeholder="课堂派课程 ID">
     </div>
     <div class="field-wrap">
       <label class="field-label">课堂派账号</label>
-      <select class="field-select" :value="bindingForm.account_id" @change="bindingForm.account_id = $event.target.value">
+      <select class="field-select" :value="bindingForm.account_id" @change="bindingForm.account_id = $event.target.value" @keydown.enter="saveBinding">
         <option value="" disabled>请选择账号</option>
         <option v-for="acct in accounts" :key="acct.id" :value="acct.id">{{ acct.email }}</option>
       </select>
@@ -701,11 +706,11 @@
     :headline="editingUser ? '编辑用户' : '新建用户'">
     <div class="field-wrap">
       <label class="field-label">邮箱</label>
-      <input class="field-input" type="email" :value="userForm.email" @input="userForm.email=$event.target.value">
+      <input class="field-input" type="email" :value="userForm.email" @input="userForm.email=$event.target.value" @keydown.enter="saveUser">
     </div>
     <div class="field-wrap">
       <label class="field-label">{{ editingUser ? '新密码 (留空不修改)' : '密码' }}</label>
-      <input class="field-input" type="password" :value="userForm.password" @input="userForm.password=$event.target.value">
+      <input class="field-input" type="password" :value="userForm.password" @input="userForm.password=$event.target.value" @keydown.enter="saveUser">
     </div>
     <div class="field-wrap" v-if="editingUser">
       <label class="field-label">角色</label>
