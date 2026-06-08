@@ -36,16 +36,16 @@ class LoginRequest(BaseModel):
 
 
 class LoginData(BaseModel):
-    token: str
-    uid: str
-    bindWechat: bool
+    token: Optional[str] = None
+    uid: Optional[str] = None
+    bindWechat: Optional[bool] = None
 
 
 class LoginResponse(BaseModel):
     status: int
     code: int
     message: str
-    data: LoginData
+    data: LoginData = Field(default_factory=LoginData)
 
 
 # 2. 获取用户信息接口
@@ -207,7 +207,7 @@ class KetangPaiAPI:
             json=req.model_dump(),
         )
         resp.raise_for_status()
-        data = resp.json()
+        data: dict = resp.json()
         if data.get("status") != 1:
             raise RuntimeError(
                 f"获取课程列表失败：{data.get('message', 'Unknown error')}"
@@ -229,34 +229,37 @@ class KetangPaiAPI:
         )
 
     def check_in(self, data: CheckInRequest) -> CheckInResult:
+        """签到接口（POST AttenceApi/AttenceResult，返回 JSON）。
+
+        :return: 签到结果（success=True 表示签到成功）。
         """
-        签到接口（GET 请求，返回 HTML）
-        :param ticketid: 二维码 ticket ID
-        :param expire: 过期时间戳
-        :param sign: 签名
-        :param courseid: 课程 ID
-        :param randNum: 随机数
-        :return: 解析后的签到结果
-        """
+        body = {
+            "ticketid": data.ticketid,
+            "expire": data.expire,
+            "sign": data.sign,
+            "reqtimestamp": int(time.time() * 1000),
+        }
         try:
-            resp = self.session.get(
-                f"{CHECKIN_BASE}/checkIn/checkinCodeResult", params=data.model_dump()
+            resp = self.session.post(
+                f"{API_BASE}/AttenceApi/AttenceResult", json=body,
             )
             resp.raise_for_status()
-            html = resp.text
+            j: dict = resp.json()
 
-            # 根据页面关键词判断结果
-            if "签到成功" in html:
-                return CheckInResult(success=True, message="签到成功")
-            if "二维码已过期" in html:
-                return CheckInResult(success=False, message="二维码已过期")
-            if "考勤已结束" in html:
-                return CheckInResult(success=False, message="考勤已结束")
-            # 其它未知失败
+            status = j.get("status")
+            code = j.get("code")
+            message = j.get("message", "")
+
+            if status == 1:
+                return CheckInResult(
+                    email=self.email, success=True, message="签到成功",
+                )
+            # status != 1 → 失败，message 已有可读文本
             return CheckInResult(
-                email=self.email, success=False, message="签到失败：其它错误"
+                email=self.email, success=False,
+                message=message or f"签到失败 (code={code})",
             )
         except requests.exceptions.RequestException as e:
             return CheckInResult(
-                email=self.email, success=False, message=f"签到失败：{e}"
+                email=self.email, success=False, message=f"请求失败：{e}",
             )
