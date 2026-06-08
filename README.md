@@ -19,7 +19,7 @@
 |------|------|
 | 后端 | Python 3.13, FastAPI, SQLModel, uvicorn |
 | 数据库 | MySQL + Redis |
-| 前端 | Vue 3 (CDN), MDUI 2 (Web Components) |
+| 前端 | Vue 3, MDUI 2 (Web Components)，静态资源本地化 |
 | 安全 | Passlib (Argon2), PyJWT |
 | 包管理 | uv |
 
@@ -39,6 +39,10 @@ CheckInHelper/
     ├── sessions.py      # 会话池（异步签到、并发限流、30min 过期）
     ├── db.py            # MySQL + Redis 连接池
     └── index.html       # 前端 SPA（Vue 3 + MDUI 2）
+├── static/
+│   ├── mdui.css         # MDUI 2 样式（本地化）
+│   ├── mdui.global.js   # MDUI 2 组件（本地化）
+│   └── vue.global.prod.js  # Vue 3 生产包（本地化）
 ```
 
 ## 快速开始
