@@ -215,16 +215,16 @@ class KetangPaiAPI:
         return [CourseItem(**item) for item in data.get("data", [])]
 
     def check_in_with_url(self, url: str) -> CheckInResult:
-        query = [
-            {x.split("=")[0], x.split("=")[1]} for x in urlparse(url).query.split("&")
-        ]
+        query = dict(
+            x.split("=", 1) for x in urlparse(url).query.split("&") if "=" in x
+        )
         return self.check_in(
             CheckInRequest(
-                ticketid=query["ticketid"],
-                expire=query["expire"],
-                sign=query["sign"],
-                courseid=query["courseid"],
-                randNum=query["randNum"],
+                ticketid=query.get("ticketid", ""),
+                expire=query.get("expire", 0),
+                sign=query.get("sign", ""),
+                courseid=query.get("courseid", ""),
+                randNum=query.get("randNum", ""),
             )
         )
 
