@@ -17,6 +17,6 @@ if __name__ == "__main__":
         "app.main:app",
         host="0.0.0.0",
         port=os.getenv("PORT", 8765),
-        reload=os.getenv("DEBUG", False),
+        reload=os.getenv("DEBUG", "false").lower() in ("1", "true", "yes"),
     )
     logger.info("Server stopped.")
