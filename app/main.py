@@ -174,7 +174,11 @@ def get_current_user(
     if not user.is_active:
         raise HTTPException(status_code=403, detail="账号已被禁用")
 
-    redis.set(f"user:{user_id}", json.dumps(user.model_dump(exclude_none=True, mode="json")), 86400)
+    redis.set(
+        f"user:{user_id}",
+        json.dumps(user.model_dump(exclude_none=True, mode="json")),
+        86400,
+    )
     return user
 
 
@@ -192,6 +196,12 @@ async def root():
 @app.head("/")
 async def root_head():
     return Response(status_code=200)
+
+
+@app.get("/favicon.ico")
+async def favicon():
+    path = Path(__file__).parent.parent / "favicon.ico"
+    return FileResponse(path)
 
 
 @app.post("/api/register")
@@ -299,7 +309,7 @@ async def logout(
 # ================================
 
 
-@app.get("/api/users", response_model=list[User])
+@app.get("/api/users")
 async def list_users(
     current_user: User = Depends(get_current_user),
     session: Session = Depends(get_session_with),
@@ -315,7 +325,7 @@ async def list_users(
     )
 
 
-@app.get("/api/users/{user_id}", response_model=User)
+@app.get("/api/users/{user_id}")
 async def get_user(
     user_id: int,
     current_user: User = Depends(get_current_user),
@@ -335,7 +345,7 @@ async def get_user(
     )
 
 
-@app.post("/api/users", response_model=User)
+@app.post("/api/users")
 async def create_user(
     email: str = Body(...),
     password: str = Body(...),
@@ -375,7 +385,7 @@ async def create_user(
     )
 
 
-@app.put("/api/users/{user_id}", response_model=User)
+@app.put("/api/users/{user_id}")
 async def update_user(
     user_id: int,
     email: Optional[str] = Body(None),
@@ -459,7 +469,7 @@ async def delete_user(
 # ================================
 
 
-@app.get("/api/accounts", response_model=list[Account])
+@app.get("/api/accounts")
 async def list_accounts(
     current_user: User = Depends(get_current_user),
     session: Session = Depends(get_session_with),
@@ -482,7 +492,7 @@ async def list_accounts(
     )
 
 
-@app.get("/api/accounts/{account_id}", response_model=Account)
+@app.get("/api/accounts/{account_id}")
 async def get_account(
     account_id: int,
     current_user: User = Depends(get_current_user),
@@ -509,30 +519,45 @@ async def get_account(
     )
 
 
-@app.post("/api/accounts", response_model=Account)
+@app.post("/api/accounts")
 async def create_account(
     email: str = Body(...),
     password: str = Body(...),
     current_user: User = Depends(get_current_user),
     session: Session = Depends(get_session_with),
+    redis: Redis = Depends(get_redis),
 ):
     """创建新账号并关联到当前用户"""
-    # 检查邮箱是否已存在
-    existing_account = session.exec(
-        select(Account).where(Account.email == email)
-    ).first()
+    # 1. 检查是否已存在
+    existing = session.exec(select(Account).where(Account.email == email)).first()
+    if existing:
+        raise HTTPException(status_code=400, detail="该账号已存在")
 
-    if existing_account:
-        raise HTTPException(status_code=400, detail="邮箱已被注册")
+    # 2. 先通过课堂派 API 验证凭据有效性（不入库）
+    from app.api import KetangPaiAPI
 
+    token = None
+    try:
+        client = KetangPaiAPI(email, password)
+        response = client.login()
+        token = response.data.token
+        client.close()
+        if not token:
+            raise HTTPException(status_code=400, detail="账号验证失败")
+    except Exception as e:
+        logger.warning("Account verification failed for %s: %s", email, e)
+        raise HTTPException(status_code=400, detail=f"账号验证失败：{e}")
+
+    # 3. 验证通过再入库
     account = Account(
         email=email,
-        password=hash_password(password),
+        password=password,
+        status=1,
     )
     session.add(account)
     session.flush()
+    redis.set(f"account:{account.id}:token", token)
 
-    # 创建用户与账号的关联
     user_account = UserAccount(
         user_id=current_user.id,
         account_id=account.id,
@@ -540,18 +565,24 @@ async def create_account(
     session.add(user_account)
     session.flush()
 
+    # 4. 加入会话池
+    import asyncio
+    from app.sessions import session_pool
+
+    await asyncio.to_thread(session_pool.create, [account], False)
+
     return BaseResponse(
         message="success",
         data=account.model_dump(exclude=["password"]),
     )
 
 
-@app.put("/api/accounts/{account_id}", response_model=Account)
+@app.put("/api/accounts/{account_id}")
 async def update_account(
     account_id: int,
     email: Optional[str] = Body(None),
     password: Optional[str] = Body(None),
-    is_active: Optional[bool] = Body(None),
+    status: Optional[int] = Body(None),
     current_user: User = Depends(get_current_user),
     session: Session = Depends(get_session_with),
 ):
@@ -580,10 +611,10 @@ async def update_account(
         account.email = email
 
     if password is not None:
-        account.password = hash_password(password)
+        account.password = password  # 课堂派 API 凭据，不哈希
 
-    if is_active is not None:
-        account.is_active = is_active
+    if status is not None:
+        account.status = status
 
     session.add(account)
     session.flush()
@@ -660,7 +691,7 @@ async def delete_account(
 # ================================
 
 
-@app.get("/api/courses/bindings", response_model=list[CourseBinding])
+@app.get("/api/courses/bindings")
 async def list_course_bindings(
     current_user: User = Depends(get_current_user),
     session: Session = Depends(get_session_with),
@@ -683,7 +714,7 @@ async def list_course_bindings(
     return BaseResponse(message="success", data=[x.model_dump() for x in bindings])
 
 
-@app.post("/api/courses/bindings", response_model=CourseBinding)
+@app.post("/api/courses/bindings")
 async def create_course_binding(
     course_id: str = Body(...),
     account_id: int = Body(...),
@@ -754,7 +785,7 @@ async def delete_course_binding(
 # ================================
 
 
-@app.get("/api/checkin/logs", response_model=list[CheckInLog])
+@app.get("/api/checkin/logs")
 async def list_checkin_logs(
     current_user: User = Depends(get_current_user),
     session: Session = Depends(get_session_with),
@@ -783,7 +814,7 @@ async def list_checkin_logs(
     return BaseResponse(message="success", data=[x.model_dump() for x in logs])
 
 
-# @app.post("/api/checkin/logs", response_model=CheckInLog)
+# @app.post("/api/checkin/logs")
 # async def create_checkin_log(
 #     account_id: int = Body(...),
 #     course_id: str = Body(...),
@@ -813,7 +844,7 @@ async def list_checkin_logs(
 #     return BaseResponse(message="success", data=log.model_dump())
 
 
-@app.get("/api/checkin/logs/{log_id}", response_model=CheckInLog)
+@app.get("/api/checkin/logs/{log_id}")
 async def get_checkin_log(
     log_id: int,
     current_user: User = Depends(get_current_user),
@@ -838,7 +869,7 @@ async def get_checkin_log(
     return BaseResponse(message="success", data=log.model_dump())
 
 
-# @app.put("/api/checkin/logs/{log_id}", response_model=CheckInLog)
+# @app.put("/api/checkin/logs/{log_id}")
 # async def update_checkin_log(
 #     log_id: int,
 #     status: int = Body(...),
