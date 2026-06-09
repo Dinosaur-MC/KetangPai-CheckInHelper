@@ -288,7 +288,7 @@ async def register(
             raise HTTPException(status_code=400, detail="邀请码无效")
         if matched_code.max_uses is not None and matched_code.used_count >= matched_code.max_uses:
             raise HTTPException(status_code=400, detail="邀请码已用完")
-        if matched_code.expires_at and matched_code.expires_at < datetime.now(timezone.utc):
+        if matched_code.expires_at and matched_code.expires_at.replace(tzinfo=None) < datetime.now(timezone.utc).replace(tzinfo=None):
             raise HTTPException(status_code=400, detail="邀请码已过期")
     elif invite_code:
         # 选填模式，仅做记录
@@ -313,7 +313,7 @@ async def register(
     # 注册成功后才记录邀请码使用
     if matched_code:
         if matched_code.max_uses is None or matched_code.used_count < matched_code.max_uses:
-            if not matched_code.expires_at or matched_code.expires_at >= datetime.now(timezone.utc):
+            if not matched_code.expires_at or matched_code.expires_at.replace(tzinfo=None) >= datetime.now(timezone.utc).replace(tzinfo=None):
                 matched_code.used_count += 1
                 session.add(matched_code)
 
