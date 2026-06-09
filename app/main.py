@@ -614,6 +614,45 @@ async def delete_user(
 
 
 # ================================
+#       当前用户 — 修改密码
+# ================================
+
+
+@app.put("/api/user/password")
+async def change_password(
+    old_password: str = Body(...),
+    new_password: str = Body(...),
+    current_user: User = Depends(get_current_user),
+    session: Session = Depends(get_session_with),
+    redis: Redis = Depends(get_redis),
+):
+    """修改当前登录用户的密码"""
+    # 1. 验证旧密码
+    if not verify_password(old_password, current_user.password):
+        raise HTTPException(status_code=400, detail="旧密码不正确")
+
+    # 2. 验证新密码强度
+    valid, msg = validate_password_strength(new_password)
+    if not valid:
+        raise HTTPException(status_code=400, detail=msg)
+
+    # 3. 新旧密码不能相同
+    if old_password == new_password:
+        raise HTTPException(status_code=400, detail="新密码不能与旧密码相同")
+
+    # 4. 更新密码
+    current_user.password = hash_password(new_password)
+    session.add(current_user)
+    session.flush()
+
+    # 5. 清除 Redis 用户缓存
+    if redis:
+        redis.delete(f"user:{current_user.id}")
+
+    return BaseResponse(message="密码修改成功")
+
+
+# ================================
 #          邀请码管理
 # ================================
 

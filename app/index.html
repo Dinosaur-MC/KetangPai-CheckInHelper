@@ -508,6 +508,10 @@
             v-if="state.currentUser?.role === 'admin'">
             <mdui-icon slot="icon" name="people"></mdui-icon>用户管理
           </mdui-list-item>
+          <mdui-divider></mdui-divider>
+          <mdui-list-item @click="modals.changePwd = true">
+            <mdui-icon slot="icon" name="key"></mdui-icon>修改密码
+          </mdui-list-item>
         </mdui-list>
         <div class="sidebar-footer">
           <mdui-list-item @click="logout"><mdui-icon slot="icon" name="logout"></mdui-icon>退出登录</mdui-list-item>
@@ -930,6 +934,42 @@
   </mdui-dialog>
 
   <!-- ============================================================
+       弹窗: 修改密码
+       ============================================================ -->
+  <mdui-dialog :open="modals.changePwd" @closed="modals.changePwd=false; changePwdForm.old_password=''; changePwdForm.new_password=''; changePwdForm.confirm=''" close-on-esc close-on-overlay-click
+    headline="修改密码">
+    <div class="field-wrap">
+      <label class="field-label">旧密码</label>
+      <div class="pwd-wrap">
+        <input class="field-input" :type="showChangeOldPwd ? 'text' : 'password'" v-model="changePwdForm.old_password" placeholder="输入当前密码" @keydown.enter="changePassword">
+        <button class="pwd-toggle" type="button" @click="showChangeOldPwd = !showChangeOldPwd" tabindex="-1" :title="showChangeOldPwd ? '隐藏密码' : '显示密码'">
+          <span class="material-icons">{{ showChangeOldPwd ? 'visibility_off' : 'visibility' }}</span>
+        </button>
+      </div>
+    </div>
+    <div class="field-wrap">
+      <label class="field-label">新密码</label>
+      <div class="pwd-wrap">
+        <input class="field-input" :type="showChangeNewPwd ? 'text' : 'password'" v-model="changePwdForm.new_password" placeholder="至少 8 位，含大小写字母和数字" @keydown.enter="changePassword">
+        <button class="pwd-toggle" type="button" @click="showChangeNewPwd = !showChangeNewPwd" tabindex="-1" :title="showChangeNewPwd ? '隐藏密码' : '显示密码'">
+          <span class="material-icons">{{ showChangeNewPwd ? 'visibility_off' : 'visibility' }}</span>
+        </button>
+      </div>
+    </div>
+    <div class="field-wrap">
+      <label class="field-label">确认新密码</label>
+      <div class="pwd-wrap">
+        <input class="field-input" :type="showChangeConfirmPwd ? 'text' : 'password'" v-model="changePwdForm.confirm" placeholder="再次输入新密码" @keydown.enter="changePassword">
+        <button class="pwd-toggle" type="button" @click="showChangeConfirmPwd = !showChangeConfirmPwd" tabindex="-1" :title="showChangeConfirmPwd ? '隐藏密码' : '显示密码'">
+          <span class="material-icons">{{ showChangeConfirmPwd ? 'visibility_off' : 'visibility' }}</span>
+        </button>
+      </div>
+    </div>
+    <mdui-button slot="action" variant="text" @click="modals.changePwd=false">取消</mdui-button>
+    <mdui-button slot="action" variant="filled" @click="changePassword">确认修改</mdui-button>
+  </mdui-dialog>
+
+  <!-- ============================================================
        弹窗: 扫码识别
        ============================================================ -->
   <mdui-dialog :open="modals.scanner" @closed="stopScanner" close-on-esc close-on-overlay-click
@@ -1046,6 +1086,9 @@ createApp({
     const showRegPwd = ref(false);
     const showAcctPwd = ref(false);
     const showUserPwd = ref(false);
+    const showChangeOldPwd = ref(false);
+    const showChangeNewPwd = ref(false);
+    const showChangeConfirmPwd = ref(false);
 
     // 表单
     const form = reactive({ email: '', password: '', invite_code: '' });
@@ -1070,9 +1113,12 @@ createApp({
     const recentLogs = computed(() => logs.value.slice(-10).reverse());
 
     // 弹窗
-    const modals = reactive({ account: false, binding: false, user: false, invite: false, scanner: false });
+    const modals = reactive({ account: false, binding: false, user: false, invite: false, scanner: false, changePwd: false });
     const editingAccount = ref(null);
     const editingUser = ref(null);
+
+    // 修改密码
+    const changePwdForm = reactive({ old_password: '', new_password: '', confirm: '' });
 
     // 签到
     const checkinLoading = ref(false);
@@ -1626,6 +1672,24 @@ createApp({
       } catch (e) { showToast(e.message); }
     }
 
+    // ---- 修改密码 ----
+    async function changePassword() {
+      if (!changePwdForm.old_password) { showToast('请输入旧密码'); return; }
+      if (!changePwdForm.new_password) { showToast('请输入新密码'); return; }
+      if (changePwdForm.new_password !== changePwdForm.confirm) { showToast('两次输入的新密码不一致'); return; }
+      try {
+        await api('PUT', '/api/user/password', {
+          old_password: changePwdForm.old_password,
+          new_password: changePwdForm.new_password,
+        });
+        showToast('密码修改成功');
+        modals.changePwd = false;
+        changePwdForm.old_password = '';
+        changePwdForm.new_password = '';
+        changePwdForm.confirm = '';
+      } catch (e) { showToast(e.message); }
+    }
+
     // 根据当前路由加载数据
     // ---- 管理员全部账号 ----
     async function loadAdminAccounts() {
@@ -1738,7 +1802,9 @@ createApp({
     return {
       state, route, sidebarOpen, loading, loginView,
       showLoginPwd, showRegPwd, showAcctPwd, showUserPwd,
+      showChangeOldPwd, showChangeNewPwd, showChangeConfirmPwd,
       form, accountForm, bindingForm, userForm, checkinForm, logFilter,
+      changePwdForm,
       accounts, bindings, logs, users, recentLogs,
       modals, editingAccount, editingUser,
       checkinLoading, checkinResults,
@@ -1748,7 +1814,7 @@ createApp({
       loadAccounts, openAccountModal, saveAccount, deleteAccount,
       loadBindings, openBindingModal, saveBinding, deleteBinding, toggleBinding,
       executeCheckin, parseCheckinUrl, checkinUrl, loadLogs,
-      loadUsers, openUserModal, saveUser, deleteUser,
+      loadUsers, openUserModal, saveUser, deleteUser, changePassword,
       inviteRequired, inviteCodes, editingInvite, inviteForm, adminAccounts,
       loadInviteCodes, openInviteModal, saveInviteCode, deleteInviteCode, toggleInviteActive, toggleInviteRequired,
       copyText, codeIsExpired, codeStatusClass, codeStatusText,
