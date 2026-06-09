@@ -23,21 +23,21 @@
         <template v-if="!state.token">
             <div class="login-page">
                 <div class="login-card">
-                    <template v-if="loginView === 'login'">
+                    <template v-if="route === 'login'">
                         <h2>签到助手</h2>
                         <p class="subtitle">登录以管理课堂派签到</p>
                         <form @submit.prevent="login">
                             <div class="field-wrap">
                                 <label class="field-label">邮箱</label>
                                 <input class="field-input" type="email" :value="form.email"
-                                    @input="form.email=$event.target.value" placeholder="your@email.com">
+                                    @input="form.email=$event.target.value" placeholder="your@email.com" autocomplete="username">
                             </div>
                             <div class="field-wrap">
                                 <label class="field-label">密码</label>
                                 <div class="pwd-wrap">
                                     <input class="field-input" :type="showLoginPwd ? 'text' : 'password'"
                                         :value="form.password" @input="form.password=$event.target.value"
-                                        placeholder="至少 8 位">
+                                        placeholder="至少 8 位" autocomplete="current-password">
                                     <button class="pwd-toggle" type="button" @click="showLoginPwd = !showLoginPwd"
                                         tabindex="-1" :title="showLoginPwd ? '隐藏密码' : '显示密码'">
                                         <span class="material-icons">{{ showLoginPwd ? 'visibility_off' : 'visibility'
@@ -50,24 +50,24 @@
                                 }}</mdui-button>
                         </form>
                         <div class="form-footer">
-                            <a @click="loginView='register'; loadInviteRequired()">没有账号？去注册</a>
+                            <a @click="navigate('register')">没有账号？去注册</a>
                         </div>
                     </template>
-                    <template v-else>
+                    <template v-else-if="route === 'register'">
                         <h2>注册账号</h2>
                         <p class="subtitle">创建签到助手账号</p>
                         <form @submit.prevent="register">
                             <div class="field-wrap">
                                 <label class="field-label">邮箱<span class="req">*</span></label>
                                 <input class="field-input" type="email" :value="form.email"
-                                    @input="form.email=$event.target.value" placeholder="your@email.com">
+                                    @input="form.email=$event.target.value" placeholder="your@email.com" autocomplete="username">
                             </div>
                             <div class="field-wrap">
                                 <label class="field-label">密码<span class="req">*</span></label>
                                 <div class="pwd-wrap">
                                     <input class="field-input" :type="showRegPwd ? 'text' : 'password'"
                                         :value="form.password" @input="form.password=$event.target.value"
-                                        placeholder="至少 8 位">
+                                        placeholder="至少 8 位" autocomplete="new-password">
                                     <button class="pwd-toggle" type="button" @click="showRegPwd = !showRegPwd"
                                         tabindex="-1" :title="showRegPwd ? '隐藏密码' : '显示密码'">
                                         <span class="material-icons">{{ showRegPwd ? 'visibility_off' : 'visibility'
@@ -87,7 +87,7 @@
                                 }}</mdui-button>
                         </form>
                         <div class="form-footer">
-                            <a @click="loginView='login'">已有账号？去登录</a>
+                            <a @click="navigate('login')">已有账号？去登录</a>
                         </div>
                     </template>
                 </div>
@@ -598,7 +598,7 @@
                 <label class="field-label">{{ editingAccount ? '新密码 (留空不修改)' : '密码' }}</label>
                 <div class="pwd-wrap">
                     <input class="field-input" :type="showAcctPwd ? 'text' : 'password'" :value="accountForm.password"
-                        @input="accountForm.password=$event.target.value" @keydown.enter="saveAccount">
+                        @input="accountForm.password=$event.target.value" @keydown.enter="saveAccount" autocomplete="new-password">
                     <button class="pwd-toggle" type="button" @click="showAcctPwd = !showAcctPwd" tabindex="-1"
                         :title="showAcctPwd ? '隐藏密码' : '显示密码'">
                         <span class="material-icons">{{ showAcctPwd ? 'visibility_off' : 'visibility' }}</span>
@@ -647,7 +647,7 @@
                 <label class="field-label">{{ editingUser ? '新密码 (留空不修改)' : '密码' }}</label>
                 <div class="pwd-wrap">
                     <input class="field-input" :type="showUserPwd ? 'text' : 'password'" :value="userForm.password"
-                        @input="userForm.password=$event.target.value" @keydown.enter="saveUser">
+                        @input="userForm.password=$event.target.value" @keydown.enter="saveUser" autocomplete="new-password">
                     <button class="pwd-toggle" type="button" @click="showUserPwd = !showUserPwd" tabindex="-1"
                         :title="showUserPwd ? '隐藏密码' : '显示密码'">
                         <span class="material-icons">{{ showUserPwd ? 'visibility_off' : 'visibility' }}</span>
@@ -715,7 +715,8 @@
                 <label class="field-label">旧密码</label>
                 <div class="pwd-wrap">
                     <input class="field-input" :type="showChangeOldPwd ? 'text' : 'password'"
-                        v-model="changePwdForm.old_password" placeholder="输入当前密码" @keydown.enter="changePassword">
+                        v-model="changePwdForm.old_password" placeholder="输入当前密码" @keydown.enter="changePassword"
+                        autocomplete="current-password">
                     <button class="pwd-toggle" type="button" @click="showChangeOldPwd = !showChangeOldPwd" tabindex="-1"
                         :title="showChangeOldPwd ? '隐藏密码' : '显示密码'">
                         <span class="material-icons">{{ showChangeOldPwd ? 'visibility_off' : 'visibility' }}</span>
@@ -727,7 +728,7 @@
                 <div class="pwd-wrap">
                     <input class="field-input" :type="showChangeNewPwd ? 'text' : 'password'"
                         v-model="changePwdForm.new_password" placeholder="至少 8 位，含大小写字母和数字"
-                        @keydown.enter="changePassword">
+                        @keydown.enter="changePassword" autocomplete="new-password">
                     <button class="pwd-toggle" type="button" @click="showChangeNewPwd = !showChangeNewPwd" tabindex="-1"
                         :title="showChangeNewPwd ? '隐藏密码' : '显示密码'">
                         <span class="material-icons">{{ showChangeNewPwd ? 'visibility_off' : 'visibility' }}</span>
@@ -738,7 +739,8 @@
                 <label class="field-label">确认新密码</label>
                 <div class="pwd-wrap">
                     <input class="field-input" :type="showChangeConfirmPwd ? 'text' : 'password'"
-                        v-model="changePwdForm.confirm" placeholder="再次输入新密码" @keydown.enter="changePassword">
+                        v-model="changePwdForm.confirm" placeholder="再次输入新密码" @keydown.enter="changePassword"
+                        autocomplete="new-password">
                     <button class="pwd-toggle" type="button" @click="showChangeConfirmPwd = !showChangeConfirmPwd"
                         tabindex="-1" :title="showChangeConfirmPwd ? '隐藏密码' : '显示密码'">
                         <span class="material-icons">{{ showChangeConfirmPwd ? 'visibility_off' : 'visibility' }}</span>

@@ -70,7 +70,6 @@ createApp({
             sidebarOpen.value = !isMobile();
         });
         const loading = ref(false);
-        const loginView = ref("login");
 
         // 密码显示切换
         const showLoginPwd = ref(false);
@@ -264,7 +263,8 @@ createApp({
             route.value = to;
             window.location.hash = "#" + to;
             if (isMobile()) sidebarOpen.value = false;
-            loadPageData(to);
+            if (to === "register") loadInviteRequired();
+            if (to !== "login" && to !== "register") loadPageData(to);
         }
 
         // ---- 认证 ----
@@ -282,6 +282,7 @@ createApp({
                 localStorage.setItem("refresh_token", res.data.refresh_token);
                 localStorage.setItem("user", JSON.stringify(res.data.user));
                 route.value = "dashboard";
+                window.location.hash = "#dashboard";
                 showToast("登录成功");
                 loadPageData("dashboard");
             } catch (e) {
@@ -309,6 +310,7 @@ createApp({
                 localStorage.setItem("refresh_token", res.data.refresh_token);
                 localStorage.setItem("user", JSON.stringify(res.data.user));
                 route.value = "dashboard";
+                window.location.hash = "#dashboard";
                 showToast("注册成功");
                 loadPageData("dashboard");
             } catch (e) {
@@ -961,7 +963,7 @@ createApp({
                     await loadLogs();
                     break;
                 case "users":
-                    await Promise.all([loadUsers(), loadAdminAccounts(), loadInviteRequired(), loadInviteCodes()]);
+                    await Promise.all([loadUsers(), loadAdminAccounts(), loadInviteCodes()]);
                     break;
             }
         }
@@ -970,13 +972,44 @@ createApp({
         window.addEventListener("hashchange", () => {
             const to = hashFromURL();
             if (route.value === to) return;
+            // 未登录时访问需登录页面 → 跳回登录页
+            if (!state.token && to !== "login" && to !== "register") {
+                window.location.hash = "#login";
+                return;
+            }
             route.value = to;
-            loadPageData(to);
+            if (to === "register") loadInviteRequired();
+            if (to !== "login" && to !== "register") loadPageData(to);
         });
 
+        // JWT 过期检测（仅解码 exp，不验证签名）
+        function isJwtExpired(token) {
+            try {
+                const payload = JSON.parse(atob(token.split(".")[1]));
+                return payload.exp * 1000 < Date.now();
+            } catch { return true; }
+        }
+
         // ---- 初始化 ----
-        loadInviteRequired();
-        if (state.token) {
+        if (!state.token) {
+            const hash = window.location.hash.replace(/^#\/?/, "");
+            if (hash === "register") {
+                route.value = "register";
+                loadInviteRequired();
+            } else {
+                route.value = "login";
+                window.location.hash = "#login";
+            }
+        } else if (isJwtExpired(state.token)) {
+            // 本地就能判断 token 已过期 — 直接清掉，无需发起请求
+            state.token = null;
+            state.currentUser = null;
+            localStorage.removeItem("token");
+            localStorage.removeItem("refresh_token");
+            localStorage.removeItem("user");
+            route.value = "login";
+            window.location.hash = "#login";
+        } else {
             loadPageData(route.value).catch(() => {
                 state.token = null;
                 state.currentUser = null;
@@ -991,7 +1024,6 @@ createApp({
             route,
             sidebarOpen,
             loading,
-            loginView,
             showLoginPwd,
             showRegPwd,
             showAcctPwd,
@@ -1055,6 +1087,7 @@ createApp({
             inviteForm,
             adminAccounts,
             loadInviteCodes,
+            loadInviteRequired,
             openInviteModal,
             saveInviteCode,
             deleteInviteCode,
