@@ -550,7 +550,7 @@
                ========================================================== -->
           <div v-if="route === 'accounts'">
             <div class="toolbar">
-              <div class="left"><div style="">共 {{ accounts.length }} 个账号</div></div>
+              <div class="left"><div>共 {{ accounts.length }} 个账号</div></div>
               <div class="right">
                   <mdui-button variant="filled" color="primary" @click="openAccountModal()">+ 添加账号</mdui-button>
               </div>
@@ -752,15 +752,19 @@
             </div>
             <div class="table-wrap" v-if="inviteCodes.length">
               <table>
-                <thead><tr><th>邀请码</th><th>使用次数</th><th>上限</th><th>过期时间</th><th>备注</th><th>状态</th><th>创建时间</th><th class="actions">操作</th></tr></thead>
+                <thead><tr><th>邀请码</th><th>启用</th><th>使用次数</th><th>上限</th><th>过期时间</th><th>备注</th><th>状态</th><th>创建时间</th><th class="actions">操作</th></tr></thead>
                 <tbody>
                   <tr v-for="c in inviteCodes" :key="c.id">
-                    <td><code style="font-size:12px;background:#f1f5f9;padding:2px 6px;border-radius:4px;letter-spacing:1px;">{{ c.code }}</code></td>
+                    <td>
+                      <code style="font-size:15px;background:#f1f5f9;padding:8px;border-radius:4px;letter-spacing:1.5px;font-weight:600;color:#6750a4;">{{ c.code }}</code>
+                      <mdui-button-icon icon="content_copy" size="small" @click="copyText(c.code)" title="复制邀请码" style="vertical-align:middle;"></mdui-button-icon>
+                    </td>
+                    <td><mdui-switch :checked="c.is_active" :disabled="codeIsExpired(c)" @change="toggleInviteActive(c, $event)"></mdui-switch></td>
                     <td>{{ c.used_count }}{{ c.max_uses ? '/'+c.max_uses : '' }}</td>
                     <td>{{ c.max_uses ?? '不限' }}</td>
                     <td>{{ c.expires_at ? formatTime(c.expires_at) : '永久' }}</td>
                     <td style="max-width:120px;overflow:hidden;text-overflow:ellipsis;">{{ c.note || '-' }}</td>
-                    <td><span class="status-chip" :class="c.is_active?'green':'red'">{{ c.is_active?'有效':'已禁用' }}</span></td>
+                    <td><span class="status-chip" :class="codeStatusClass(c)">{{ codeStatusText(c) }}</span></td>
                     <td>{{ formatTime(c.created_at) }}</td>
                     <td class="actions">
                       <mdui-button-icon icon="edit" @click="openInviteModal(c)" title="编辑"></mdui-button-icon>
@@ -1071,6 +1075,27 @@ createApp({
     }
 
     // ---- 工具 ----
+    function copyText(text) {
+      if (navigator.clipboard) {
+        navigator.clipboard.writeText(text).then(() => showToast('已复制'), () => {});
+      }
+    }
+    // 邀请码三种状态辅助
+    function codeIsExpired(c) {
+      if (c.max_uses !== null && c.max_uses !== undefined && c.used_count >= c.max_uses) return true;
+      if (c.expires_at && new Date(c.expires_at) < new Date()) return true;
+      return false;
+    }
+    function codeStatusClass(c) {
+      if (codeIsExpired(c)) return 'red';
+      if (!c.is_active) return 'orange';
+      return 'green';
+    }
+    function codeStatusText(c) {
+      if (codeIsExpired(c)) return '失效';
+      if (!c.is_active) return '停用';
+      return '有效';
+    }
     function formatTime(ts) {
       if (!ts) return '-';
       try {
@@ -1583,6 +1608,18 @@ createApp({
       modals.invite = false;
       loadInviteCodes();
     }
+    async function toggleInviteActive(c, event) {
+      const target = event.target;
+      const newVal = target.checked;
+      try {
+        await api('PUT', `/api/invite-codes/${c.id}`, { is_active: newVal, max_uses: c.max_uses, note: c.note || '' });
+        c.is_active = newVal;
+        showToast(newVal ? '邀请码已启用' : '邀请码已停用');
+      } catch (e) {
+        target.checked = !newVal;
+        showToast(e.message);
+      }
+    }
     async function deleteInviteCode(c) {
       if (!confirm(`确定删除邀请码 ${c.code}？`)) return;
       try { await api('DELETE', `/api/invite-codes/${c.id}`); showToast('邀请码已删除'); loadInviteCodes(); }
@@ -1645,7 +1682,8 @@ createApp({
       executeCheckin, parseCheckinUrl, checkinUrl, loadLogs,
       loadUsers, openUserModal, saveUser, deleteUser,
       inviteRequired, inviteCodes, editingInvite, inviteForm,
-      loadInviteCodes, openInviteModal, saveInviteCode, deleteInviteCode, toggleInviteRequired,
+      loadInviteCodes, openInviteModal, saveInviteCode, deleteInviteCode, toggleInviteActive, toggleInviteRequired,
+      copyText, codeIsExpired, codeStatusClass, codeStatusText,
       startScanner, stopScanner, tryOpenCamera, capturePhoto, onScanPhoto,
       scanOpening, scanLiveMode, scanFail,
       scanPhotoSrc, scanVideo, scanCanvas, scanPhotoInput,

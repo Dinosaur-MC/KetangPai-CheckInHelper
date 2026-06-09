@@ -284,7 +284,7 @@ async def register(
                 InviteCode.is_active == True,
             )
         ).first()
-        if matched_code is None:
+        if matched_code is None or len(matched_code.code) != 16:
             raise HTTPException(status_code=400, detail="邀请码无效")
         if matched_code.max_uses is not None and matched_code.used_count >= matched_code.max_uses:
             raise HTTPException(status_code=400, detail="邀请码已用完")
