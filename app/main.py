@@ -5,7 +5,7 @@ import time
 import secrets
 from contextlib import asynccontextmanager
 from pathlib import Path
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from starlette.exceptions import HTTPException
 from fastapi import FastAPI, Request, Response, Depends, Body
 from fastapi.middleware.cors import CORSMiddleware
@@ -250,7 +250,9 @@ async def favicon():
 async def register(
     email: str = Body(...),
     password: str = Body(...),
+    invite_code: str = Body(default=""),
     session: Session = Depends(get_session_with),
+    redis: Redis = Depends(get_redis),
     _rate_limit: None = Depends(auth_rate_limiter),
 ):
     if not re.match(r"^[a-zA-Z0-9_-]+@[a-zA-Z0-9_-]+(\.[a-zA-Z0-9_-]+)+$", email):
@@ -259,17 +261,61 @@ async def register(
     if not valid:
         raise HTTPException(status_code=400, detail=msg)
 
+    # 先验证邀请码（Redis 缓存优先），再查用户
+    invite_required = False
+    try:
+        if redis:
+            cached = redis.get("setting:invite_required")
+            if cached is not None:
+                invite_required = cached == b"true"
+    except Exception:
+        pass
+    if not invite_required:
+        setting = session.get(SystemSetting, "invite_required")
+        invite_required = setting and setting.value == "true"
+
+    matched_code = None
+    if invite_required:
+        if not invite_code:
+            raise HTTPException(status_code=400, detail="注册需要邀请码")
+        matched_code = session.exec(
+            select(InviteCode).where(
+                InviteCode.code == invite_code.strip().upper(),
+                InviteCode.is_active == True,
+            )
+        ).first()
+        if matched_code is None:
+            raise HTTPException(status_code=400, detail="邀请码无效")
+        if matched_code.max_uses is not None and matched_code.used_count >= matched_code.max_uses:
+            raise HTTPException(status_code=400, detail="邀请码已用完")
+        if matched_code.expires_at and matched_code.expires_at < datetime.now(timezone.utc):
+            raise HTTPException(status_code=400, detail="邀请码已过期")
+    elif invite_code:
+        # 选填模式，仅做记录
+        matched_code = session.exec(
+            select(InviteCode).where(
+                InviteCode.code == invite_code.strip().upper(),
+                InviteCode.is_active == True,
+            )
+        ).first()
+
+    # 再查用户（避免暴露已注册邮箱给未验证的邀请码请求）
     user = session.exec(select(User).where(User.email == email)).first()
     if user is not None:
         raise HTTPException(status_code=400, detail="用户已存在")
 
-    user = User(
-        email=email,
-        password=hash_password(password),
-    )
+    # 创建用户
+    user = User(email=email, password=hash_password(password))
     session.add(user)
     session.flush()
     session.refresh(user)
+
+    # 注册成功后才记录邀请码使用
+    if matched_code:
+        if matched_code.max_uses is None or matched_code.used_count < matched_code.max_uses:
+            if not matched_code.expires_at or matched_code.expires_at >= datetime.now(timezone.utc):
+                matched_code.used_count += 1
+                session.add(matched_code)
 
     access_token = create_access_token(str(user.id))
     refresh_token = create_refresh_token(str(user.id))
@@ -565,6 +611,136 @@ async def delete_user(
         redis.delete(f"user:{user_id}")
 
     return BaseResponse(message="删除成功")
+
+
+# ================================
+#          邀请码管理
+# ================================
+
+
+@app.get("/api/invite-codes")
+async def list_invite_codes(
+    current_user: User = Depends(get_current_user),
+    session: Session = Depends(get_session_with),
+):
+    if current_user.role != Role.admin:
+        raise HTTPException(status_code=403, detail="权限不足")
+    codes = session.exec(select(InviteCode).order_by(InviteCode.created_at.desc())).all()
+    return BaseResponse(
+        message="success",
+        data=[c.model_dump() for c in codes],
+    )
+
+
+@app.post("/api/invite-codes")
+async def create_invite_code(
+    code: str = Body(default=""),
+    max_uses: int | None = Body(default=None),
+    expires_in_hours: int | None = Body(default=None),
+    note: str = Body(default=""),
+    current_user: User = Depends(get_current_user),
+    session: Session = Depends(get_session_with),
+):
+    if current_user.role != Role.admin:
+        raise HTTPException(status_code=403, detail="权限不足")
+    ic = InviteCode(
+        code=code.strip().upper() if code.strip() else generate_invite_code(),
+        max_uses=max_uses,
+        expires_at=(
+            datetime.now(timezone.utc).replace(hour=0, minute=0, second=0, microsecond=0)
+            + timedelta(days=expires_in_hours // 24 + (1 if expires_in_hours % 24 else 0))
+            if expires_in_hours else None
+        ) if expires_in_hours else None,
+        note=note,
+        created_by=current_user.id,
+    )
+    session.add(ic)
+    session.flush()
+    session.refresh(ic)
+    return BaseResponse(message="邀请码已创建", data=ic.model_dump())
+
+
+@app.put("/api/invite-codes/{code_id}")
+async def update_invite_code(
+    code_id: int,
+    is_active: bool = Body(default=True),
+    max_uses: int | None = Body(default=None),
+    note: str = Body(default=""),
+    current_user: User = Depends(get_current_user),
+    session: Session = Depends(get_session_with),
+):
+    if current_user.role != Role.admin:
+        raise HTTPException(status_code=403, detail="权限不足")
+    ic = session.get(InviteCode, code_id)
+    if ic is None:
+        raise HTTPException(status_code=404, detail="邀请码不存在")
+    ic.is_active = is_active
+    ic.max_uses = max_uses
+    ic.note = note
+    session.add(ic)
+    return BaseResponse(message="邀请码已更新", data=ic.model_dump())
+
+
+@app.delete("/api/invite-codes/{code_id}")
+async def delete_invite_code(
+    code_id: int,
+    current_user: User = Depends(get_current_user),
+    session: Session = Depends(get_session_with),
+):
+    if current_user.role != Role.admin:
+        raise HTTPException(status_code=403, detail="权限不足")
+    ic = session.get(InviteCode, code_id)
+    if ic is None:
+        raise HTTPException(status_code=404, detail="邀请码不存在")
+    session.delete(ic)
+    return BaseResponse(message="邀请码已删除")
+
+
+@app.get("/api/settings/invite-required")
+async def get_invite_required(
+    session: Session = Depends(get_session_with),
+    redis: Redis = Depends(get_redis),
+):
+    # Redis 缓存优先
+    if redis:
+        try:
+            cached = redis.get("setting:invite_required")
+            if cached is not None:
+                return BaseResponse(message="success", data={"invite_required": cached == b"true"})
+        except Exception:
+            pass
+    setting = session.get(SystemSetting, "invite_required")
+    val = setting and setting.value == "true"
+    if redis:
+        try:
+            redis.set("setting:invite_required", "true" if val else "false", 604800)
+        except Exception:
+            pass
+    return BaseResponse(message="success", data={"invite_required": val})
+
+
+@app.put("/api/settings/invite-required")
+async def set_invite_required(
+    invite_required: bool = Body(..., embed=True),
+    current_user: User = Depends(get_current_user),
+    session: Session = Depends(get_session_with),
+    redis: Redis = Depends(get_redis),
+):
+    if current_user.role != Role.admin:
+        raise HTTPException(status_code=403, detail="权限不足")
+    setting = session.get(SystemSetting, "invite_required")
+    if setting is None:
+        setting = SystemSetting(key="invite_required", value="true" if invite_required else "false")
+    else:
+        setting.value = "true" if invite_required else "false"
+    session.add(setting)
+    # 更新 Redis 缓存
+    if redis:
+        try:
+            redis.set("setting:invite_required", "true" if invite_required else "false", 604800)
+        except Exception:
+            pass
+    return BaseResponse(message="设置已更新", data={"invite_required": invite_required})
 
 
 # ================================
