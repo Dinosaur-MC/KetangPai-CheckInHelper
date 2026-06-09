@@ -753,8 +753,14 @@ async def list_accounts(
     current_user: User = Depends(get_current_user),
     session: Session = Depends(get_session_with),
 ):
-    """获取当前用户的所有账号"""
-    # 通过 UserAccount 关联查询
+    """获取账号列表。管理员查看全部，普通用户查看自己关联的账号。"""
+    if current_user.role == Role.admin:
+        accounts = session.exec(select(Account).order_by(Account.created_at.desc())).all()
+        return BaseResponse(
+            message="success",
+            data=[account.model_dump(exclude=["password"]) for account in accounts],
+        )
+    # 普通用户通过 UserAccount 关联查询
     user_accounts = session.exec(
         select(UserAccount).where(UserAccount.user_id == current_user.id)
     ).all()

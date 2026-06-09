@@ -1099,7 +1099,10 @@ createApp({
     function formatTime(ts) {
       if (!ts) return '-';
       try {
-        const d = new Date(ts);
+        // 服务端时间无时区后缀 → 视为 UTC，补 Z 转换为本地时间
+        const src = typeof ts === 'string' && ts.indexOf('T') > 0 && /[+-]\d{2}:\d{2}$/.test(ts) === false && ts.slice(-1) !== 'Z'
+          ? ts + 'Z' : ts;
+        const d = new Date(src);
         if (isNaN(d.getTime())) return ts;
         return d.toLocaleString('zh-CN', { hour12: false });
       } catch { return ts; }
