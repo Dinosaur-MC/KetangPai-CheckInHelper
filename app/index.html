@@ -739,6 +739,24 @@
             </div>
             <div class="empty-state" v-else><mdui-icon class="empty-icon" name="people"></mdui-icon><p>暂无用户数据</p></div>
 
+            <!-- 全部账号（管理员） -->
+            <h3 style="margin:28px 0 12px;font-size:15px;font-weight:500;padding:0 4px; background-color: rgba(255,255,255,.95); padding: 10px 16px; border-radius: 20px;">全部课堂派账号</h3>
+            <div class="table-wrap" v-if="adminAccounts.length">
+              <table>
+                <thead><tr><th>ID</th><th>账号</th><th>UID</th><th>状态</th><th>创建时间</th></tr></thead>
+                <tbody>
+                  <tr v-for="acct in adminAccounts" :key="acct.id">
+                    <td>{{ acct.id }}</td>
+                    <td>{{ acct.email }}</td>
+                    <td>{{ acct.uid }}</td>
+                    <td><span class="status-chip" :class="acct.status===1?'green':(acct.status===0?'orange':'red')">{{ acct.status===1?'正常':(acct.status===0?'未知':'不可用') }}</span></td>
+                    <td>{{ formatTime(acct.created_at) }}</td>
+                  </tr>
+                </tbody>
+              </table>
+            </div>
+            <div class="empty-state" v-else style="margin-top:12px;"><p>暂无账号数据</p></div>
+
             <!-- 邀请码管理 -->
             <h3 style="margin:28px 0 12px;font-size:15px;font-weight:500;padding:0 4px; background-color: rgba(255,255,255,.95); padding: 10px 16px; border-radius: 20px;">邀请码管理</h3>
             <div class="toolbar">
@@ -1008,6 +1026,7 @@ createApp({
     const logs = ref([]);
     const inviteCodes = ref([]);
     const inviteRequired = ref(false);
+    const adminAccounts = ref([]);
     const editingInvite = ref(null);
     const users = ref([]);
     const recentLogs = computed(() => logs.value.slice(-10).reverse());
@@ -1570,6 +1589,13 @@ createApp({
     }
 
     // 根据当前路由加载数据
+    // ---- 管理员全部账号 ----
+    async function loadAdminAccounts() {
+      if (state.currentUser?.role !== 'admin') return;
+      try { const r = await api('GET', '/api/admin/accounts'); adminAccounts.value = r.data || []; }
+      catch {}
+    }
+
     // ---- 邀请码管理 ----
     async function loadInviteRequired() {
       try { const r = await api('GET', '/api/settings/invite-required'); inviteRequired.value = r.data?.invite_required === true; }
@@ -1647,7 +1673,7 @@ createApp({
         case 'accounts': await loadAccounts(); break;
         case 'courses': await Promise.all([loadAccounts(), loadBindings()]); break;
         case 'logs': await loadLogs(); break;
-        case 'users': await Promise.all([loadUsers(), loadInviteRequired(), loadInviteCodes()]); break;
+        case 'users': await Promise.all([loadUsers(), loadAdminAccounts(), loadInviteRequired(), loadInviteCodes()]); break;
       }
     }
 
@@ -1684,7 +1710,7 @@ createApp({
       loadBindings, openBindingModal, saveBinding, deleteBinding, toggleBinding,
       executeCheckin, parseCheckinUrl, checkinUrl, loadLogs,
       loadUsers, openUserModal, saveUser, deleteUser,
-      inviteRequired, inviteCodes, editingInvite, inviteForm,
+      inviteRequired, inviteCodes, editingInvite, inviteForm, adminAccounts,
       loadInviteCodes, openInviteModal, saveInviteCode, deleteInviteCode, toggleInviteActive, toggleInviteRequired,
       copyText, codeIsExpired, codeStatusClass, codeStatusText,
       startScanner, stopScanner, tryOpenCamera, capturePhoto, onScanPhoto,
