@@ -1,1829 +1,797 @@
 <!DOCTYPE html>
 <html lang="zh-CN">
+
 <head>
-  <meta charset="UTF-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-  <title>课堂派签到助手</title>
-  <meta name="description" content="课堂派签到助手 — 批量管理多账号签到，支持扫码识别、自动签到、签到记录追踪">
-  <link rel="icon" href="/favicon.ico">
-  <!-- MDUI 2 CSS -->
-  <link rel="stylesheet" href="/static/mdui.css">
-  <link rel="stylesheet" href="/static/material-icons.css">
-  <style>
-    /* ============================================================
-       全局 & 变量
-       ============================================================ */
-    *, *::before, *::after { box-sizing: border-box; }
-    html, body {
-      margin:0; padding:0; height:100%;
-      background: #e8eaed;
-      font-family: "Roboto", "Noto Sans SC", -apple-system, BlinkMacSystemFont, sans-serif;
-      -webkit-font-smoothing: antialiased;
-      color: #1f2937;
-    }
-    [v-cloak] { display: none; }
-    #app { height: 100%; }
-
-    /* ============================================================
-       主布局
-       ============================================================ */
-    .app-layout { display:flex; height:100vh; overflow:hidden; }
-
-    /* ── 侧边栏 ── */
-    .sidebar {
-      width: 280px; min-width: 280px;
-      background: linear-gradient(135deg, #2d3340, #1e293b);
-      display:flex; flex-direction:column; overflow-y:auto;
-    }
-    .sidebar-header {
-      padding: 24px 20px 16px;
-    }
-    .sidebar-header h1 {
-      margin:0; font-size: 25px; font-weight: 700;
-      background: linear-gradient(135deg, #818cf8, #c084fc);
-      -webkit-background-clip: text; -webkit-text-fill-color: transparent;
-      background-clip: text;
-    }
-    .sidebar-header small { color: #94a3b8; font-size: 14px; }
-    .sidebar-user {
-      padding: 14px 20px; margin: 0 12px 8px;
-      border-radius: 12px;
-      background: rgba(0,0,0,.12);
-      display:flex; align-items:center; gap: 10px;
-    }
-    .sidebar-user .avatar {
-      width: 38px; height: 38px; border-radius: 10px;
-      background: linear-gradient(135deg, #6366f1, #8b5cf6);
-      color:#fff; display:flex; align-items:center; justify-content:center;
-      font-size: 15px; font-weight: 600; flex-shrink: 0;
-    }
-    .sidebar-user .info {
-      flex:1; min-width:0; display:flex; flex-direction:column; gap:3px;
-    }
-    .sidebar-user .name {
-      font-size: 13px; font-weight: 500; color: #e2e8f0;
-      overflow:hidden; text-overflow:ellipsis; white-space:nowrap;
-    }
-    .sidebar-user .role-badge {
-      align-self:flex-start; font-size: 10px; text-align:center;
-      background: rgba(129,140,248,.25); color: #c7d2fe;
-      padding: 2px 8px; border-radius: 6px;
-    }
-    /* MDUI list items — 必须用 ::part() 穿透 shadow DOM */
-    .sidebar mdui-list { padding: 4px 12px; }
-    .sidebar mdui-list-item { border-radius: 10px; margin-bottom: 2px; min-height: 42px; }
-    .sidebar mdui-list-item::part(container) {
-      border-radius: 10px; padding: 0 14px;
-      transition: background .15s;
-    }
-    .sidebar mdui-list-item::part(headline) {
-      color: #cbd5e1; font-size: 16px;
-    }
-    .sidebar mdui-list-item:hover::part(container) { background: rgba(0,0,0,.15); }
-    .sidebar mdui-list-item:hover::part(headline) { color: #f1f5f9; }
-    .sidebar mdui-list-item[active]::part(container) { background: rgba(129,140,248,1); }
-    .sidebar mdui-list-item[active]::part(headline) { color: #e0e7ff; font-weight: 600; }
-    .sidebar-footer {
-      margin-top: auto; padding: 8px 12px 12px;
-      border-top: 1px solid rgba(255,255,255,.06);
-    }
-    .sidebar-footer mdui-list-item::part(headline) { color: #f87171; }
-    .sidebar-footer mdui-list-item:hover::part(container) { background: rgba(239,68,68,.1); }
-
-    /* 移动端侧栏 */
-    @media (max-width: 768px) {
-      .sidebar {
-        position:fixed; top:0; left:0; bottom:0; z-index:200;
-        transform:translateX(-100%); transition:transform .3s cubic-bezier(.4,0,.2,1);
-        box-shadow: 4px 0 24px rgba(0,0,0,.25);
-        background: linear-gradient(135deg, rgba(45, 51, 64, .99), rgba(30, 41, 59, .99));
-      }
-      .sidebar.open { transform:translateX(0); }
-    }
-    .sidebar-overlay {
-      display:none; position:fixed; inset:0;
-      background: rgba(0,0,0,.4); z-index:199;
-      backdrop-filter: blur(2px);
-    }
-    @media (max-width: 768px) { .sidebar-overlay { display:block; } }
-
-    /* ── 主内容 ── */
-    .main-content { flex:1; display:flex; flex-direction:column; overflow:hidden; min-width:0;
-      background: #e8eaed url("https://blog.dmcstudio.top/assets/image/img/img(32).webp") no-repeat center;
-      background-size: cover; }
-    .main-header {
-      background: rgba(255,255,255,.99);
-      padding: 12px 24px;
-      border-bottom: 1px solid #e5e7eb;
-      display:flex; align-items:center; gap:12px;
-      min-height: 56px; flex-shrink:0;
-      box-shadow: 0 1px 2px rgba(0,0,0,.03);
-    }
-    .main-header h2 { margin:0; font-size: 18px; font-weight: 600; color: #111827; }
-    .main-header .breadcrumb { color: #6b7280; font-size: 12px; }
-    .main-header .menu-btn {
-      display:none; background:none; border:none;
-      font-size: 22px; cursor:pointer; padding:6px; color: #374151;
-      border-radius: 8px; transition: background .15s;
-    }
-    .main-header .menu-btn:hover { background: #f3f4f6; }
-    .main-body { flex:1; overflow-y:auto; padding: 24px; overscroll-behavior:contain; }
-
-    /* ============================================================
-       登录页
-       ============================================================ */
-    .login-page {
-      min-height:100dvh; display:flex; align-items:center; justify-content:center;
-      background: #e8eaed url("https://blog.dmcstudio.top/assets/image/img/img(64).webp") no-repeat center;
-      background-size: cover;
-      padding: 16px;
-    }
-    .login-card {
-      width:100%; max-width: 420px; padding: 40px 32px 32px;
-      border-radius: 20px; background:rgba(255,255,255,.8);
-      box-shadow: 0 4px 24px rgba(0,0,0,.08);
-    }
-    .login-card h2 { margin:0 0 6px; font-size: 26px; font-weight: 700; text-align:center; color:#111827; }
-    .login-card .subtitle { color: #6b7280; text-align:center; margin-bottom: 32px; font-size: 14px; }
-    .login-card .form-footer { margin-top: 20px; text-align:center; }
-    .login-card .form-footer a { color: #6366f1; cursor:pointer; font-size: 13px; font-weight: 500; }
-    .login-card .form-footer a:hover { color: #4f46e5; }
-
-    /* ============================================================
-       统计卡片
-       ============================================================ */
-    .stat-cards {
-      display: grid;
-      grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));
-      gap: 16px; margin-bottom: 28px;
-    }
-    .stat-card {
-      background: rgba(255,255,255,.9); border-radius: 14px; padding: 22px 20px;
-      box-shadow: 0 1px 3px rgba(0,0,0,.05);
-      border-top: 3px solid #6366f1;
-      transition: box-shadow .2s, transform .2s;
-    }
-    .stat-card:nth-child(2) { border-top-color: #8b5cf6; }
-    .stat-card:nth-child(3) { border-top-color: #06b6d4; }
-    .stat-card:nth-child(4) { border-top-color: #f59e0b; }
-    .stat-card:hover { box-shadow: 0 4px 12px rgba(0,0,0,.08); transform: translateY(-2px); }
-    .stat-card .num { font-size: 34px; font-weight: 700; color: #111827; }
-    .stat-card .label { font-size: 13px; color: #6b7280; margin-top: 6px; }
-
-    /* ============================================================
-       表格
-       ============================================================ */
-    .table-wrap {
-      background:rgba(255,255,255,.9); border-radius:14px;
-      box-shadow: 0 1px 3px rgba(0,0,0,.04); overflow-x:auto;
-    }
-    .table-wrap table { width:100%; border-collapse:collapse; }
-    .table-wrap thead { background: #f8fafc; }
-    .table-wrap th {
-      padding: 12px 18px; text-align:left; font-size: 12px;
-      font-weight: 600; color: #6b7280; border-bottom: 2px solid #e5e7eb;
-      white-space:nowrap; text-transform: uppercase; letter-spacing: .5px;
-    }
-    .table-wrap td {
-      padding: 13px 18px; font-size: 14px; color: #374151;
-      border-bottom: 1px solid #f3f4f6; white-space:nowrap;
-    }
-    .table-wrap tbody tr { transition: background .12s; }
-    .table-wrap tbody tr:hover { background: #fafaff; }
-    .table-wrap .actions { text-align:right; white-space:nowrap; }
-
-    /* ============================================================
-       Toolbar
-       ============================================================ */
-    .toolbar {
-      display:flex; justify-content:space-between; align-items:center;
-      flex-wrap:wrap; gap:12px; margin-bottom: 18px; border-radius: 20px; background: rgba(255,255,255,.95);
-    }
-    .toolbar .left { display:flex; gap:10px; align-items:center; color:#6b7280; padding: 10px 16px;}
-    .toolbar .right { display:flex; gap: 8px; padding: 10px 16px }
-
-    /* ============================================================
-       状态标签 chip
-       ============================================================ */
-    .status-chip {
-      display:inline-block; padding: 3px 14px; border-radius: 20px;
-      font-size: 12px; font-weight: 500; line-height: 20px;
-    }
-    .status-chip.green { background: #ecfdf5; color: #059669; }
-    .status-chip.red { background: #fef2f2; color: #dc2626; }
-    .status-chip.orange { background: #fffbeb; color: #d97706; }
-    .status-chip.blue { background: #eff6ff; color: #2563eb; }
-
-    /* ============================================================
-       空状态
-       ============================================================ */
-    .empty-state {
-      text-align:center; padding: 64px 16px; color:#6b7280; background: rgba(255,255,255,.8); border-radius: 20px;
-    }
-    .empty-icon { font-size: 56px; margin-bottom: 14px; opacity: .4; color: #6b7280; }
-    .empty-state p { margin:0; font-size: 15px; }
-
-    /* 首页直达签到 FAB — 固定底部居中 */
-    .dash-fab-wrap {
-      position:fixed; bottom:28px; left:50%; transform:translateX(-50%);
-      display:none; flex-direction:column; align-items:center; gap:6px;
-      cursor:pointer; user-select:none; z-index:50;
-    }
-    .dash-fab-wrap mdui-fab {
-      transition: transform .2s;
-    }
-    .dash-fab-wrap mdui-fab::part(button) {
-      background: linear-gradient(135deg, #7c3aed, #6d28d9); color:#fff;
-      box-shadow: 0 8px 24px rgba(0,0,0,.35);
-      transition: transform .2s, box-shadow .2s;
-    }
-    .dash-fab-wrap mdui-fab:hover {
-      transform: scale(1.1);
-    }
-    .dash-fab-wrap mdui-fab:hover::part(button) {
-      box-shadow: 0 12px 32px rgba(0,0,0,.5);
-    }
-    .fab-empty-blank {
-      height:148px;
-      display:none;
-    }
-    @media (max-width: 768px) {
-      .dash-fab-wrap { 
-        display:flex;
-      }
-      .fab-empty-blank {
-        display:block;
-      }
-    }
-
-    /* ============================================================
-       签到表单
-       ============================================================ */
-    /* 签到页 */
-    .checkin-card {
-      max-width: 720px;
-      background: rgba(255,255,255,.9); border-radius:16px; padding:28px;
-      box-shadow:0 1px 3px rgba(0,0,0,.05);
-    }
-    .checkin-header h3 { margin:0 0 6px; font-size:18px; font-weight:600; }
-    .checkin-header p { margin:0 0 24px; color:#6b7280; font-size:13px; }
-    .checkin-fields { display:flex; flex-direction:column; gap:16px; margin-bottom:20px; }
-    .checkin-row { display:grid; grid-template-columns:1fr 1fr; gap:16px; }
-    @media (max-width: 600px) { .checkin-row { grid-template-columns: 1fr; } }
-    .checkin-btn { width:100%; height:46px; font-size:15px; font-weight:600; }
-
-    /* 签到结果 */
-    .result-summary { font-size:14px; font-weight:500; margin-bottom:12px; color:#374151; }
-    .result-ok { color:#059669; }
-    .result-fail { color:#dc2626; }
-    .result-divider { color:#d1d5db; margin:0 2px; }
-
-    /* 日志页 */
-    .logs-toolbar {
-      display:flex; align-items:center; flex-wrap:wrap; gap:12px;
-      margin-bottom:18px; padding:12px 20px;
-      background: rgba(255,255,255,.9); border-radius:12px; box-shadow:0 1px 3px rgba(0,0,0,.04);
-    }
-    .log-count { font-size:13px; color:#6b7280; margin-left:auto; }
-    .log-filter-wrap {
-      position:relative; display:flex; align-items:center;
-    }
-    .log-filter-icon {
-      position:absolute; left:10px; top:50%; transform:translateY(-50%);
-      font-size:16px; pointer-events:none; color:#9ca3af;
-    }
-    .log-filter-input {
-      width:200px; padding:9px 28px 9px 30px;
-      border:1px solid #d1d5db; border-radius:8px;
-      font-size:14px; outline:none; color:#374151; background:#fff;
-      transition:border-color .15s, box-shadow .15s;
-    }
-    .log-filter-input:focus { border-color:#6366f1; box-shadow:0 0 0 2px rgba(99,102,241,.12); }
-    .log-filter-input::placeholder { color:#9ca3af; }
-    .log-filter-clear {
-      position:absolute; right:4px;
-      width:20px; height:20px; border-radius:50%;
-      border:none; background:transparent; cursor:pointer;
-      font-size:11px; color:#9ca3af; display:flex; align-items:center; justify-content:center;
-      transition:background .15s, color .15s;
-    }
-    .log-filter-clear:hover { background:#f3f4f6; color:#374151; }
-
-    /* ============================================================
-       统一表单控件（替代 mdui-text-field）
-       ============================================================ */
-    .field-wrap { margin-bottom: 16px; }
-    .field-label {
-      display: block; margin-bottom: 5px; padding-left: 2px;
-      font-size: 13px; font-weight: 500; color: #374151;
-    }
-    .field-label .req { color: #ef4444; margin-left: 2px; }
-    .field-input, .field-select {
-      width: 100%; padding: 9px 12px;
-      border: 1px solid #d1d5db; border-radius: 8px;
-      font-size: 14px; color: #374151; background: #fff;
-      outline: none; transition: border-color .15s, box-shadow .15s;
-      font-family: inherit;
-    }
-    .field-input:focus, .field-select:focus {
-      border-color: #6366f1; box-shadow: 0 0 0 2px rgba(99,102,241,.12);
-    }
-    .field-input::placeholder { color: #9ca3af; }
-    .field-select { cursor: pointer; appearance: none; background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 24 24' fill='none' stroke='%239ca3af' stroke-width='2'%3E%3Cpath d='M6 9l6 6 6-6'/%3E%3C/svg%3E"); background-repeat: no-repeat; background-position: right 10px center; padding-right: 32px; }
-
-    /* ---- 密码显示切换 ---- */
-    .pwd-wrap { position: relative; }
-    .pwd-wrap .field-input { padding-right: 40px; box-sizing: border-box; }
-    .pwd-toggle {
-      position: absolute; right: 6px; top: 50%; transform: translateY(-50%);
-      background: none; border: none; cursor: pointer; color: #9ca3af;
-      display: flex; align-items: center; justify-content: center;
-      width: 32px; height: 32px; border-radius: 4px; padding: 0;
-    }
-    .pwd-toggle:hover { color: #6b7280; background: rgba(0,0,0,.04); }
-    .pwd-toggle .material-icons { font-size: 20px; }
-
-    /* ============================================================
-       签到结果
-       ============================================================ */
-    .result-grid {
-      display:grid; grid-template-columns:repeat(auto-fill,minmax(260px,1fr));
-      gap:12px; margin-top:16px;
-    }
-    .result-item {
-      background:#fff; border-radius:10px; padding:14px 16px;
-      box-shadow:0 1px 4px rgba(0,0,0,.04);
-      border-left: 4px solid #d1d5db; font-size:13px;
-    }
-    .result-item.success { border-left-color: #10b981; background: #f0fdf6; }
-    .result-item.fail { border-left-color: #ef4444; background: #fef2f2; }
-    .result-item .email { font-weight:600; margin-bottom:3px; }
-    .result-item .msg { color: #6b7280; font-size:12px; }
-
-    /* ============================================================
-       扫码弹窗
-       ============================================================ */
-    .scan-dialog-body {
-      display:flex; flex-direction:column; align-items:center; gap:12px;
-    }
-    .scan-stage {
-      position:relative; width:100%; max-width:300px;
-      border-radius:16px; overflow:hidden;
-      aspect-ratio:1; background:#f3f4f6;
-    }
-    .scan-stage.is-live { background:#000; }
-    .scan-stage video, .scan-stage img {
-      width:100%; height:100%; object-fit:cover; display:block;
-    }
-    .scan-stage .overlay {
-      position:absolute; inset:0;
-      display:flex; align-items:center; justify-content:center; pointer-events:none;
-    }
-    .scan-stage .frame {
-      width:70%; height:70%;
-      border:3px solid rgba(255,255,255,.85);
-      border-radius:24px;
-      box-shadow:0 0 0 9999px rgba(0,0,0,.5);
-    }
-    .scan-stage .empty-icon {
-      display:flex; align-items:center; justify-content:center;
-      width:100%; height:100%;
-    }
-    .scan-hint { font-size:13px; color:#6b7280; text-align:center; margin:0; line-height:1.4; }
-    mdui-dialog::part(headline) { text-align:center; }
-    .scan-actions { display:flex; gap:8px; justify-content:center; align-items:center; min-height:36px; }
-    .scan-actions .hidden-btn { visibility:hidden; pointer-events:none; }
-
-    /* ============================================================
-       响应式
-       ============================================================ */
-    @media (max-width: 768px) {
-      .main-header .menu-btn { display:block; }
-      .main-header h2 { font-size: 16px; }
-      .main-body { padding: 16px; }
-      .login-card { padding: 32px 20px 24px; }
-      .stat-cards { grid-template-columns: repeat(2, 1fr); gap: 12px; }
-      .table-wrap th, .table-wrap td { padding: 10px 12px; font-size:13px; }
-    }
-  </style>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>课堂派签到助手</title>
+    <meta name="description" content="课堂派签到助手 — 批量管理多账号签到，支持扫码识别、自动签到、签到记录追踪">
+    <link rel="icon" href="/favicon.ico">
+    <!-- MDUI 2 CSS -->
+    <link rel="stylesheet" href="/static/mdui.css">
+    <link rel="stylesheet" href="/static/material-icons.css">
+    <!-- App CSS -->
+    <link rel="stylesheet" href="/static/index.css">
 </head>
+
 <body>
-<div id="app" v-cloak>
+    <div id="app" v-cloak>
 
-  <!-- ============================================================
-       登录 / 注册 页面
-       ============================================================ -->
-  <template v-if="!state.token">
-    <div class="login-page">
-      <div class="login-card">
-        <template v-if="loginView === 'login'">
-          <h2>签到助手</h2>
-          <p class="subtitle">登录以管理课堂派签到</p>
-          <form @submit.prevent="login">
-            <div class="field-wrap">
-              <label class="field-label">邮箱</label>
-              <input class="field-input" type="email" :value="form.email" @input="form.email=$event.target.value" placeholder="your@email.com">
+        <!-- ============================================================
+             登录 / 注册 页面
+             ============================================================ -->
+        <template v-if="!state.token">
+            <div class="login-page">
+                <div class="login-card">
+                    <template v-if="loginView === 'login'">
+                        <h2>签到助手</h2>
+                        <p class="subtitle">登录以管理课堂派签到</p>
+                        <form @submit.prevent="login">
+                            <div class="field-wrap">
+                                <label class="field-label">邮箱</label>
+                                <input class="field-input" type="email" :value="form.email"
+                                    @input="form.email=$event.target.value" placeholder="your@email.com">
+                            </div>
+                            <div class="field-wrap">
+                                <label class="field-label">密码</label>
+                                <div class="pwd-wrap">
+                                    <input class="field-input" :type="showLoginPwd ? 'text' : 'password'"
+                                        :value="form.password" @input="form.password=$event.target.value"
+                                        placeholder="至少 8 位">
+                                    <button class="pwd-toggle" type="button" @click="showLoginPwd = !showLoginPwd"
+                                        tabindex="-1" :title="showLoginPwd ? '隐藏密码' : '显示密码'">
+                                        <span class="material-icons">{{ showLoginPwd ? 'visibility_off' : 'visibility'
+                                            }}</span>
+                                    </button>
+                                </div>
+                            </div>
+                            <mdui-button variant="filled" type="submit" :disabled="loading"
+                                style="width:100%;margin-top:8px;height:44px;">{{ loading ? '登录中…' : '登 录'
+                                }}</mdui-button>
+                        </form>
+                        <div class="form-footer">
+                            <a @click="loginView='register'; loadInviteRequired()">没有账号？去注册</a>
+                        </div>
+                    </template>
+                    <template v-else>
+                        <h2>注册账号</h2>
+                        <p class="subtitle">创建签到助手账号</p>
+                        <form @submit.prevent="register">
+                            <div class="field-wrap">
+                                <label class="field-label">邮箱<span class="req">*</span></label>
+                                <input class="field-input" type="email" :value="form.email"
+                                    @input="form.email=$event.target.value" placeholder="your@email.com">
+                            </div>
+                            <div class="field-wrap">
+                                <label class="field-label">密码<span class="req">*</span></label>
+                                <div class="pwd-wrap">
+                                    <input class="field-input" :type="showRegPwd ? 'text' : 'password'"
+                                        :value="form.password" @input="form.password=$event.target.value"
+                                        placeholder="至少 8 位">
+                                    <button class="pwd-toggle" type="button" @click="showRegPwd = !showRegPwd"
+                                        tabindex="-1" :title="showRegPwd ? '隐藏密码' : '显示密码'">
+                                        <span class="material-icons">{{ showRegPwd ? 'visibility_off' : 'visibility'
+                                            }}</span>
+                                    </button>
+                                </div>
+                            </div>
+                            <div class="field-wrap">
+                                <label class="field-label">邀请码 <span v-if="!inviteRequired"
+                                        style="color:#9ca3af;font-weight:400;">（选填）</span><span v-else
+                                        class="req">*</span></label>
+                                <input class="field-input" :value="form.invite_code"
+                                    @input="form.invite_code=$event.target.value" placeholder="邀请码">
+                            </div>
+                            <mdui-button variant="filled" type="submit" :disabled="loading"
+                                style="width:100%;margin-top:8px;height:44px;">{{ loading ? '注册中…' : '注 册'
+                                }}</mdui-button>
+                        </form>
+                        <div class="form-footer">
+                            <a @click="loginView='login'">已有账号？去登录</a>
+                        </div>
+                    </template>
+                </div>
             </div>
-            <div class="field-wrap">
-              <label class="field-label">密码</label>
-              <div class="pwd-wrap">
-                <input class="field-input" :type="showLoginPwd ? 'text' : 'password'" :value="form.password" @input="form.password=$event.target.value" placeholder="至少 8 位">
-                <button class="pwd-toggle" type="button" @click="showLoginPwd = !showLoginPwd" tabindex="-1" :title="showLoginPwd ? '隐藏密码' : '显示密码'">
-                  <span class="material-icons">{{ showLoginPwd ? 'visibility_off' : 'visibility' }}</span>
-                </button>
-              </div>
-            </div>
-            <mdui-button variant="filled" type="submit" :disabled="loading" style="width:100%;margin-top:8px;height:44px;">{{ loading ? '登录中…' : '登 录' }}</mdui-button>
-          </form>
-          <div class="form-footer">
-            <a @click="loginView='register'; loadInviteRequired()">没有账号？去注册</a>
-          </div>
         </template>
+
+        <!-- ============================================================
+             主布局 (已登录)
+             ============================================================ -->
         <template v-else>
-          <h2>注册账号</h2>
-          <p class="subtitle">创建签到助手账号</p>
-          <form @submit.prevent="register">
-            <div class="field-wrap">
-              <label class="field-label">邮箱<span class="req">*</span></label>
-              <input class="field-input" type="email" :value="form.email" @input="form.email=$event.target.value" placeholder="your@email.com">
-            </div>
-            <div class="field-wrap">
-              <label class="field-label">密码<span class="req">*</span></label>
-              <div class="pwd-wrap">
-                <input class="field-input" :type="showRegPwd ? 'text' : 'password'" :value="form.password" @input="form.password=$event.target.value" placeholder="至少 8 位">
-                <button class="pwd-toggle" type="button" @click="showRegPwd = !showRegPwd" tabindex="-1" :title="showRegPwd ? '隐藏密码' : '显示密码'">
-                  <span class="material-icons">{{ showRegPwd ? 'visibility_off' : 'visibility' }}</span>
-                </button>
-              </div>
-            </div>
-            <div class="field-wrap">
-              <label class="field-label">邀请码 <span v-if="!inviteRequired" style="color:#9ca3af;font-weight:400;">（选填）</span><span v-else class="req">*</span></label>
-              <input class="field-input" :value="form.invite_code" @input="form.invite_code=$event.target.value" placeholder="邀请码">
-            </div>
-            <mdui-button variant="filled" type="submit" :disabled="loading" style="width:100%;margin-top:8px;height:44px;">{{ loading ? '注册中…' : '注 册' }}</mdui-button>
-          </form>
-          <div class="form-footer">
-            <a @click="loginView='login'">已有账号？去登录</a>
-          </div>
+            <div class="app-layout">
+                <!-- 侧边栏 (纯 CSS flexbox) -->
+                <aside class="sidebar" :class="{ open: sidebarOpen }">
+                    <div class="sidebar-header">
+                        <h1>签到助手</h1>
+                        <small>课堂派 CheckInHelper</small>
+                    </div>
+                    <div class="sidebar-user">
+                        <div class="avatar">{{ state.currentUser?.email?.charAt(0).toUpperCase() }}</div>
+                        <div class="info">
+                            <div class="name" :title="state.currentUser?.email">{{ state.currentUser?.email }}</div>
+                            <span class="role-badge">{{ state.currentUser?.role === 'admin' ? '管理员' : '用户' }}</span>
+                        </div>
+                    </div>
+                    <mdui-list>
+                        <mdui-list-item :active="route==='dashboard'" @click="navigate('dashboard')">
+                            <mdui-icon slot="icon" name="dashboard"></mdui-icon>首页
+                        </mdui-list-item>
+                        <mdui-list-item :active="route==='accounts'" @click="navigate('accounts')">
+                            <mdui-icon slot="icon" name="key"></mdui-icon>账号
+                        </mdui-list-item>
+                        <mdui-list-item :active="route==='courses'" @click="navigate('courses')">
+                            <mdui-icon slot="icon" name="book"></mdui-icon>课程
+                        </mdui-list-item>
+                        <mdui-list-item :active="route==='checkin'" @click="navigate('checkin')">
+                            <mdui-icon slot="icon" name="checklist"></mdui-icon>签到
+                        </mdui-list-item>
+                        <mdui-list-item :active="route==='logs'" @click="navigate('logs')">
+                            <mdui-icon slot="icon" name="history"></mdui-icon>日志
+                        </mdui-list-item>
+                        <mdui-list-item :active="route==='users'" @click="navigate('users')"
+                            v-if="state.currentUser?.role === 'admin'">
+                            <mdui-icon slot="icon" name="people"></mdui-icon>用户管理
+                        </mdui-list-item>
+                        <mdui-divider></mdui-divider>
+                        <mdui-list-item @click="modals.changePwd = true">
+                            <mdui-icon slot="icon" name="key"></mdui-icon>修改密码
+                        </mdui-list-item>
+                    </mdui-list>
+                    <div class="sidebar-footer">
+                        <mdui-list-item @click="logout"><mdui-icon slot="icon"
+                                name="logout"></mdui-icon>退出登录</mdui-list-item>
+                    </div>
+                </aside>
+
+                <!-- 遮罩 (移动端侧栏打开时) -->
+                <div class="sidebar-overlay" v-if="sidebarOpen" @click="sidebarOpen=false"></div>
+
+                <!-- 主内容 -->
+                <div class="main-content">
+                    <div class="main-header">
+                        <button class="menu-btn" @click="sidebarOpen=!sidebarOpen">☰</button>
+                        <h2>{{ pageTitle }}</h2>
+                        <span class="breadcrumb">{{ pageSubtitle }}</span>
+                    </div>
+                    <div class="main-body">
+
+                        <!-- ==========================================================
+                             首页
+                             ========================================================== -->
+                        <div v-if="route === 'dashboard'">
+                            <div class="stat-cards">
+                                <div class="stat-card">
+                                    <div class="num">{{ stats.accountCount }}</div>
+                                    <div class="label">课堂派账号</div>
+                                </div>
+                                <div class="stat-card">
+                                    <div class="num">{{ stats.bindingCount }}</div>
+                                    <div class="label">课程绑定</div>
+                                </div>
+                                <div class="stat-card">
+                                    <div class="num">{{ stats.todayCheckins }}</div>
+                                    <div class="label">今日签到</div>
+                                </div>
+                                <div class="stat-card">
+                                    <div class="num">{{ stats.totalLogs }}</div>
+                                    <div class="label">累计记录</div>
+                                </div>
+                            </div>
+
+                            <h3
+                                style="margin:24px 0 12px;font-size:15px;font-weight:500; background: rgba(255,255,255,.8); border-radius: 20px; padding: 12px">
+                                最近签到</h3>
+                            <div class="table-wrap" v-if="recentLogs.length">
+                                <table>
+                                    <thead>
+                                        <tr>
+                                            <th>课程</th>
+                                            <th>账号 ID</th>
+                                            <th>状态</th>
+                                            <th>时间</th>
+                                        </tr>
+                                    </thead>
+                                    <tbody>
+                                        <tr v-for="log in recentLogs" :key="log.id">
+                                            <td>{{ log.course_id }}</td>
+                                            <td>{{ log.account_id }}</td>
+                                            <td><span class="status-chip" :class="log.status===1?'green':'red'">{{
+                                                    log.status===1?'成功':'失败' }}</span></td>
+                                            <td>{{ formatTime(log.created_at) }}</td>
+                                        </tr>
+                                    </tbody>
+                                </table>
+                            </div>
+                            <div class="empty-state" v-else>
+                                <p>暂无签到记录</p>
+                            </div>
+                            <div class="fab-empty-blank"></div>
+                        </div>
+
+                        <!-- ==========================================================
+                             账号管理
+                             ========================================================== -->
+                        <div v-if="route === 'accounts'">
+                            <div class="toolbar">
+                                <div class="left">
+                                    <div>共 {{ accounts.length }} 个账号</div>
+                                </div>
+                                <div class="right">
+                                    <mdui-button variant="filled" color="primary" @click="openAccountModal()">+
+                                        添加账号</mdui-button>
+                                </div>
+                            </div>
+                            <div class="table-wrap" v-if="accounts.length">
+                                <table>
+                                    <thead>
+                                        <tr>
+                                            <th>账号</th>
+                                            <th>状态</th>
+                                            <th>创建时间</th>
+                                            <th class="actions">操作</th>
+                                        </tr>
+                                    </thead>
+                                    <tbody>
+                                        <tr v-for="acct in accounts" :key="acct.id">
+                                            <td>{{ acct.email }}</td>
+                                            <td><span class="status-chip"
+                                                    :class="acct.status===1?'green':(acct.status===0?'orange':'red')">{{
+                                                    acct.status===1?'正常':(acct.status===0?'未知':'不可用') }}</span></td>
+                                            <td>{{ formatTime(acct.created_at) }}</td>
+                                            <td class="actions">
+                                                <mdui-button-icon icon="edit" @click="openAccountModal(acct)"
+                                                    title="编辑"></mdui-button-icon>
+                                                <mdui-button-icon icon="delete" @click="deleteAccount(acct)" title="删除"
+                                                    style="color:#c62828;"></mdui-button-icon>
+                                            </td>
+                                        </tr>
+                                    </tbody>
+                                </table>
+                            </div>
+                            <div class="empty-state" v-else><mdui-icon class="empty-icon" name="key"></mdui-icon>
+                                <p>还没有课堂派账号，点击右上角添加</p>
+                            </div>
+                        </div>
+
+                        <!-- ==========================================================
+                             课程绑定
+                             ========================================================== -->
+                        <div v-if="route === 'courses'">
+                            <div class="toolbar">
+                                <div class="left">共 {{ bindings.length }} 条绑定</div>
+                                <div class="right">
+                                    <mdui-button variant="filled" color="primary" @click="openBindingModal()">+
+                                        绑定课程</mdui-button>
+                                </div>
+                            </div>
+                            <div class="table-wrap" v-if="bindings.length">
+                                <table>
+                                    <thead>
+                                        <tr>
+                                            <th>课程代码</th>
+                                            <th>课程名称</th>
+                                            <th>课堂派账号</th>
+                                            <th>学期</th>
+                                            <th>启用</th>
+                                            <th class="actions">操作</th>
+                                        </tr>
+                                    </thead>
+                                    <tbody>
+                                        <tr v-for="b in bindings" :key="b.id">
+                                            <td><code
+                                                    style="font-size:12px;background:#f1f5f9;padding:2px 6px;border-radius:4px;">{{ getCourseCode(b.course_id) }}</code>
+                                            </td>
+                                            <td title="ID: {{ b.course_id }}">{{ getCourseName(b.course_id) }}</td>
+                                            <td>{{ getAccountEmail(b.account_id) }}</td>
+                                            <td>{{ getCourseSemester(b.course_id) }}</td>
+                                            <td><mdui-switch :checked="b.is_active"
+                                                    @change="toggleBinding(b, $event)"></mdui-switch></td>
+                                            <td class="actions">
+                                                <mdui-button-icon icon="delete" @click="deleteBinding(b)" title="解绑"
+                                                    style="color:#c62828;"></mdui-button-icon>
+                                            </td>
+                                        </tr>
+                                    </tbody>
+                                </table>
+                            </div>
+                            <div class="empty-state" v-else><mdui-icon class="empty-icon" name="book"></mdui-icon>
+                                <p>还没有绑定课程</p>
+                            </div>
+                        </div>
+
+                        <!-- ==========================================================
+                             签到执行
+                             ========================================================== -->
+                        <div v-if="route === 'checkin'">
+                            <div class="checkin-card">
+                                <div class="checkin-header">
+                                    <h3>批量签到</h3>
+                                    <p>粘贴签到二维码链接或手动填写参数，对绑定该课程的所有账号执行签到</p>
+                                </div>
+
+                                <!-- URL 快速解析 -->
+                                <div class="field-wrap">
+                                    <label class="field-label">签到链接 <span style="color:#6b7280;font-weight:400;">（粘贴 URL
+                                            或扫码自动解析）</span></label>
+                                    <div style="display:flex; gap:8px;">
+                                        <input class="field-input" style="flex:1;" :value="checkinUrl"
+                                            @input="parseCheckinUrl($event.target.value)"
+                                            placeholder="https://w.ketangpai.com/checkIn/checkinCodeResult?ticketid=...&expire=...&sign=...&courseid=...&randNum=...">
+                                        <mdui-button-icon icon="qr_code_scanner" @click="startScanner" title="扫码识别签到二维码"
+                                            style="flex-shrink:0;"></mdui-button-icon>
+                                    </div>
+                                </div>
+
+                                <!-- 手动输入参数 -->
+                                <details style="margin:16px 0 20px;">
+                                    <summary style="cursor:pointer; font-size:13px; color:#6366f1; padding:4px 0;">📝
+                                        或手动填写参数</summary>
+                                    <div class="checkin-fields" style="margin-top:14px;">
+                                        <div class="checkin-row">
+                                            <div class="field-wrap">
+                                                <label class="field-label">CourseID<span class="req">*</span></label>
+                                                <input class="field-input" :value="checkinForm.courseid"
+                                                    @input="checkinForm.courseid=$event.target.value"
+                                                    placeholder="课程 ID">
+                                            </div>
+                                            <div class="field-wrap">
+                                                <label class="field-label">TicketID<span class="req">*</span></label>
+                                                <input class="field-input" :value="checkinForm.ticketid"
+                                                    @input="checkinForm.ticketid=$event.target.value"
+                                                    placeholder="二维码中的 ticketid">
+                                            </div>
+                                        </div>
+                                        <div class="checkin-row">
+                                            <div class="field-wrap">
+                                                <label class="field-label">Expire<span class="req">*</span></label>
+                                                <input class="field-input" :value="checkinForm.expire"
+                                                    @input="checkinForm.expire=$event.target.value" placeholder="过期时间戳">
+                                            </div>
+                                            <div class="field-wrap">
+                                                <label class="field-label">Sign<span class="req">*</span></label>
+                                                <input class="field-input" :value="checkinForm.sign"
+                                                    @input="checkinForm.sign=$event.target.value" placeholder="签名">
+                                            </div>
+                                        </div>
+                                        <div class="field-wrap">
+                                            <label class="field-label">RandNum<span class="req">*</span></label>
+                                            <input class="field-input" :value="checkinForm.randNum"
+                                                @input="checkinForm.randNum=$event.target.value" placeholder="随机数">
+                                        </div>
+                                    </div>
+                                </details>
+
+                                <mdui-button variant="filled" @click="executeCheckin" :disabled="checkinLoading"
+                                    class="checkin-btn">
+                                    {{ checkinLoading ? '签到中…' : '🚀 执行签到' }}
+                                </mdui-button>
+
+                                <div v-if="checkinResults.length" style="margin-top:24px;">
+                                    <div class="result-summary">
+                                        签到结果 ·
+                                        <span class="result-ok">{{ checkinSuccessCount }} 成功</span>
+                                        <span class="result-divider">/</span>
+                                        <span class="result-fail">{{ checkinResults.length - checkinSuccessCount }}
+                                            失败</span>
+                                    </div>
+                                    <div class="result-grid">
+                                        <div v-for="r in checkinResults" :key="r.email" class="result-item"
+                                            :class="r.success?'success':'fail'">
+                                            <div class="email">{{ r.email }}</div>
+                                            <div class="msg">{{ r.message }}</div>
+                                        </div>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+
+                        <!-- ==========================================================
+                             签到日志
+                             ========================================================== -->
+                        <div v-if="route === 'logs'">
+                            <div class="logs-toolbar">
+                                <div class="log-filter-wrap">
+                                    <mdui-icon class="log-filter-icon" name="search"></mdui-icon>
+                                    <input class="log-filter-input" placeholder="按课程 ID 筛选…"
+                                        :value="logFilter.course_id" @input="logFilter.course_id = $event.target.value">
+                                    <button class="log-filter-clear" v-if="logFilter.course_id"
+                                        @click="logFilter.course_id=''">✕</button>
+                                </div>
+                                <mdui-button variant="outlined" icon="refresh" @click="loadLogs"
+                                    size="small">刷新</mdui-button>
+                                <span class="log-count" v-if="logs.length">共 {{ filteredLogs.length }} 条记录</span>
+                            </div>
+                            <div class="table-wrap" v-if="logs.length">
+                                <table>
+                                    <thead>
+                                        <tr>
+                                            <th>时间</th>
+                                            <th>账号</th>
+                                            <th>课程 ID</th>
+                                            <th>状态</th>
+                                        </tr>
+                                    </thead>
+                                    <tbody>
+                                        <tr v-for="log in filteredLogs" :key="log.id">
+                                            <td>{{ formatTime(log.created_at) }}</td>
+                                            <td>{{ getAccountEmail(log.account_id) }}</td>
+                                            <td>{{ log.course_id }}</td>
+                                            <td><span class="status-chip" :class="log.status===1?'green':'red'">{{
+                                                    log.status===1?'成功':'失败' }}</span></td>
+                                        </tr>
+                                    </tbody>
+                                </table>
+                            </div>
+                            <div class="empty-state" v-else><mdui-icon class="empty-icon" name="history"></mdui-icon>
+                                <p>暂无签到记录</p>
+                            </div>
+                        </div>
+
+                        <!-- ==========================================================
+                             用户管理 (admin)
+                             ========================================================== -->
+                        <div v-if="route === 'users'">
+                            <div class="toolbar">
+                                <div class="left">共 {{ users.length }} 个用户</div>
+                                <div class="right">
+                                    <mdui-button variant="filled" color="primary" @click="openUserModal()">+
+                                        新建用户</mdui-button>
+                                </div>
+                            </div>
+                            <div class="table-wrap" v-if="users.length">
+                                <table>
+                                    <thead>
+                                        <tr>
+                                            <th>ID</th>
+                                            <th>邮箱</th>
+                                            <th>角色</th>
+                                            <th>状态</th>
+                                            <th>最后登录</th>
+                                            <th>创建时间</th>
+                                            <th class="actions">操作</th>
+                                        </tr>
+                                    </thead>
+                                    <tbody>
+                                        <tr v-for="u in users" :key="u.id">
+                                            <td>{{ u.id }}</td>
+                                            <td>{{ u.email }}</td>
+                                            <td><span class="status-chip" :class="u.role==='admin'?'blue':'green'">{{
+                                                    u.role }}</span></td>
+                                            <td><span class="status-chip"
+                                                    :class="u.is_active===false?'orange':'green'">{{
+                                                    u.is_active===false?'已禁用':'正常' }}</span></td>
+                                            <td>{{ u.last_login_at ? formatTime(u.last_login_at) : '-' }}</td>
+                                            <td>{{ formatTime(u.created_at) }}</td>
+                                            <td class="actions">
+                                                <mdui-button-icon icon="edit" @click="openUserModal(u)"
+                                                    title="编辑"></mdui-button-icon>
+                                                <mdui-button-icon icon="delete" @click="deleteUser(u)"
+                                                    v-if="u.id !== state.currentUser?.id" title="删除"
+                                                    style="color:#c62828;"></mdui-button-icon>
+                                            </td>
+                                        </tr>
+                                    </tbody>
+                                </table>
+                            </div>
+                            <div class="empty-state" v-else><mdui-icon class="empty-icon" name="people"></mdui-icon>
+                                <p>暂无用户数据</p>
+                            </div>
+
+                            <!-- 全部账号（管理员） -->
+                            <h3
+                                style="margin:28px 0 12px;font-size:15px;font-weight:500;padding:0 4px; background-color: rgba(255,255,255,.95); padding: 10px 16px; border-radius: 20px;">
+                                全部课堂派账号</h3>
+                            <div class="table-wrap" v-if="adminAccounts.length">
+                                <table>
+                                    <thead>
+                                        <tr>
+                                            <th>ID</th>
+                                            <th>账号</th>
+                                            <th>UID</th>
+                                            <th>状态</th>
+                                            <th>创建时间</th>
+                                        </tr>
+                                    </thead>
+                                    <tbody>
+                                        <tr v-for="acct in adminAccounts" :key="acct.id">
+                                            <td>{{ acct.id }}</td>
+                                            <td>{{ acct.email }}</td>
+                                            <td>{{ acct.uid }}</td>
+                                            <td><span class="status-chip"
+                                                    :class="acct.status===1?'green':(acct.status===0?'orange':'red')">{{
+                                                    acct.status===1?'正常':(acct.status===0?'未知':'不可用') }}</span></td>
+                                            <td>{{ formatTime(acct.created_at) }}</td>
+                                        </tr>
+                                    </tbody>
+                                </table>
+                            </div>
+                            <div class="empty-state" v-else style="margin-top:12px;">
+                                <p>暂无账号数据</p>
+                            </div>
+
+                            <!-- 邀请码管理 -->
+                            <h3
+                                style="margin:28px 0 12px;font-size:15px;font-weight:500;padding:0 4px; background-color: rgba(255,255,255,.95); padding: 10px 16px; border-radius: 20px;">
+                                邀请码管理</h3>
+                            <div class="toolbar">
+                                <div class="left">
+                                    <mdui-switch :checked="inviteRequired"
+                                        @change="toggleInviteRequired($event)"></mdui-switch>
+                                    <span style="margin-left:8px;font-size:13px;">{{ inviteRequired ? '必须使用邀请码注册' :
+                                        '邀请码为选填（仅记录）' }}</span>
+                                </div>
+                                <div class="right">
+                                    <mdui-button variant="filled" color="primary" @click="openInviteModal()">+
+                                        生成邀请码</mdui-button>
+                                </div>
+                            </div>
+                            <div class="table-wrap" v-if="inviteCodes.length">
+                                <table>
+                                    <thead>
+                                        <tr>
+                                            <th>邀请码</th>
+                                            <th>启用</th>
+                                            <th>使用次数</th>
+                                            <th>上限</th>
+                                            <th>过期时间</th>
+                                            <th>备注</th>
+                                            <th>状态</th>
+                                            <th>创建时间</th>
+                                            <th class="actions">操作</th>
+                                        </tr>
+                                    </thead>
+                                    <tbody>
+                                        <tr v-for="c in inviteCodes" :key="c.id">
+                                            <td>
+                                                <code
+                                                    style="font-size:15px;background:#f1f5f9;padding:8px;border-radius:4px;letter-spacing:1.5px;font-weight:600;color:#6750a4;">{{ c.code }}</code>
+                                                <mdui-button-icon icon="content_copy" size="small"
+                                                    @click="copyText(c.code)" title="复制邀请码"
+                                                    style="vertical-align:middle;"></mdui-button-icon>
+                                            </td>
+                                            <td><mdui-switch :checked="c.is_active" :disabled="codeIsExpired(c)"
+                                                    @change="toggleInviteActive(c, $event)"></mdui-switch></td>
+                                            <td>{{ c.used_count }}{{ c.max_uses ? '/'+c.max_uses : '' }}</td>
+                                            <td>{{ c.max_uses ?? '不限' }}</td>
+                                            <td>{{ c.expires_at ? formatTime(c.expires_at) : '永久' }}</td>
+                                            <td style="max-width:120px;overflow:hidden;text-overflow:ellipsis;">{{
+                                                c.note || '-' }}</td>
+                                            <td><span class="status-chip" :class="codeStatusClass(c)">{{
+                                                    codeStatusText(c) }}</span></td>
+                                            <td>{{ formatTime(c.created_at) }}</td>
+                                            <td class="actions">
+                                                <mdui-button-icon icon="edit" @click="openInviteModal(c)"
+                                                    title="编辑"></mdui-button-icon>
+                                                <mdui-button-icon icon="delete" @click="deleteInviteCode(c)" title="删除"
+                                                    style="color:#c62828;"></mdui-button-icon>
+                                            </td>
+                                        </tr>
+                                    </tbody>
+                                </table>
+                            </div>
+                            <div class="empty-state" v-else style="margin-top:12px;">
+                                <p>暂无邀请码</p>
+                            </div>
+                        </div>
+
+                    </div><!-- /main-body -->
+
+                    <div class="dash-fab-wrap" v-if="route==='dashboard'">
+                        <mdui-fab icon="how_to_reg" variant="primary" size="large" @click="navigate('checkin')"
+                            title="直达签到"></mdui-fab>
+                    </div>
+                </div><!-- /main-content -->
+            </div><!-- /app-layout -->
         </template>
-      </div>
-    </div>
-  </template>
 
-  <!-- ============================================================
-       主布局 (已登录)
-       ============================================================ -->
-  <template v-else>
-    <div class="app-layout">
-      <!-- 侧边栏 (纯 CSS flexbox) -->
-      <aside class="sidebar" :class="{ open: sidebarOpen }">
-        <div class="sidebar-header">
-          <h1>签到助手</h1>
-          <small>课堂派 CheckInHelper</small>
-        </div>
-        <div class="sidebar-user">
-          <div class="avatar">{{ state.currentUser?.email?.charAt(0).toUpperCase() }}</div>
-          <div class="info">
-            <div class="name" :title="state.currentUser?.email">{{ state.currentUser?.email }}</div>
-            <span class="role-badge">{{ state.currentUser?.role === 'admin' ? '管理员' : '用户' }}</span>
-          </div>
-        </div>
-        <mdui-list>
-          <mdui-list-item :active="route==='dashboard'" @click="navigate('dashboard')">
-            <mdui-icon slot="icon" name="dashboard"></mdui-icon>首页
-          </mdui-list-item>
-          <mdui-list-item :active="route==='accounts'" @click="navigate('accounts')">
-            <mdui-icon slot="icon" name="key"></mdui-icon>账号
-          </mdui-list-item>
-          <mdui-list-item :active="route==='courses'" @click="navigate('courses')">
-            <mdui-icon slot="icon" name="book"></mdui-icon>课程
-          </mdui-list-item>
-          <mdui-list-item :active="route==='checkin'" @click="navigate('checkin')">
-            <mdui-icon slot="icon" name="checklist"></mdui-icon>签到
-          </mdui-list-item>
-          <mdui-list-item :active="route==='logs'" @click="navigate('logs')">
-            <mdui-icon slot="icon" name="history"></mdui-icon>日志
-          </mdui-list-item>
-          <mdui-list-item :active="route==='users'" @click="navigate('users')"
-            v-if="state.currentUser?.role === 'admin'">
-            <mdui-icon slot="icon" name="people"></mdui-icon>用户管理
-          </mdui-list-item>
-          <mdui-divider></mdui-divider>
-          <mdui-list-item @click="modals.changePwd = true">
-            <mdui-icon slot="icon" name="key"></mdui-icon>修改密码
-          </mdui-list-item>
-        </mdui-list>
-        <div class="sidebar-footer">
-          <mdui-list-item @click="logout"><mdui-icon slot="icon" name="logout"></mdui-icon>退出登录</mdui-list-item>
-        </div>
-      </aside>
-
-      <!-- 遮罩 (移动端侧栏打开时) -->
-      <div class="sidebar-overlay" v-if="sidebarOpen" @click="sidebarOpen=false"></div>
-
-      <!-- 主内容 -->
-      <div class="main-content">
-        <div class="main-header">
-          <button class="menu-btn" @click="sidebarOpen=!sidebarOpen">☰</button>
-          <h2>{{ pageTitle }}</h2>
-          <span class="breadcrumb">{{ pageSubtitle }}</span>
-        </div>
-        <div class="main-body">
-
-          <!-- ==========================================================
-               首页
-               ========================================================== -->
-          <div v-if="route === 'dashboard'">
-            <div class="stat-cards">
-              <div class="stat-card">
-                <div class="num">{{ stats.accountCount }}</div>
-                <div class="label">课堂派账号</div>
-              </div>
-              <div class="stat-card">
-                <div class="num">{{ stats.bindingCount }}</div>
-                <div class="label">课程绑定</div>
-              </div>
-              <div class="stat-card">
-                <div class="num">{{ stats.todayCheckins }}</div>
-                <div class="label">今日签到</div>
-              </div>
-              <div class="stat-card">
-                <div class="num">{{ stats.totalLogs }}</div>
-                <div class="label">累计记录</div>
-              </div>
+        <!-- ============================================================
+             弹窗: 添加 / 编辑账号
+             ============================================================ -->
+        <mdui-dialog :open="modals.account" @closed="modals.account=false" close-on-esc close-on-overlay-click
+            :headline="editingAccount ? '编辑账号' : '添加账号'">
+            <div class="field-wrap">
+                <label class="field-label">课堂派账号（邮箱/手机号）</label>
+                <input class="field-input" type="text" :value="accountForm.email"
+                    @input="accountForm.email=$event.target.value" @keydown.enter="saveAccount">
             </div>
-
-            <h3 style="margin:24px 0 12px;font-size:15px;font-weight:500; background: rgba(255,255,255,.8); border-radius: 20px; padding: 12px">最近签到</h3>
-            <div class="table-wrap" v-if="recentLogs.length">
-              <table>
-                <thead><tr><th>课程</th><th>账号 ID</th><th>状态</th><th>时间</th></tr></thead>
-                <tbody>
-                  <tr v-for="log in recentLogs" :key="log.id">
-                    <td>{{ log.course_id }}</td>
-                    <td>{{ log.account_id }}</td>
-                    <td><span class="status-chip" :class="log.status===1?'green':'red'">{{ log.status===1?'成功':'失败' }}</span></td>
-                    <td>{{ formatTime(log.created_at) }}</td>
-                  </tr>
-                </tbody>
-              </table>
-            </div>
-            <div class="empty-state" v-else><p>暂无签到记录</p></div>
-            <div class="fab-empty-blank"></div>
-          </div>
-
-          <!-- ==========================================================
-               账号管理
-               ========================================================== -->
-          <div v-if="route === 'accounts'">
-            <div class="toolbar">
-              <div class="left"><div>共 {{ accounts.length }} 个账号</div></div>
-              <div class="right">
-                  <mdui-button variant="filled" color="primary" @click="openAccountModal()">+ 添加账号</mdui-button>
-              </div>
-            </div>
-            <div class="table-wrap" v-if="accounts.length">
-              <table>
-                <thead><tr><th>账号</th><th>状态</th><th>创建时间</th><th class="actions">操作</th></tr></thead>
-                <tbody>
-                  <tr v-for="acct in accounts" :key="acct.id">
-                    <td>{{ acct.email }}</td>
-                    <td><span class="status-chip" :class="acct.status===1?'green':(acct.status===0?'orange':'red')">{{ acct.status===1?'正常':(acct.status===0?'未知':'不可用') }}</span></td>
-                    <td>{{ formatTime(acct.created_at) }}</td>
-                    <td class="actions">
-                      <mdui-button-icon icon="edit" @click="openAccountModal(acct)" title="编辑"></mdui-button-icon>
-                      <mdui-button-icon icon="delete" @click="deleteAccount(acct)" title="删除" style="color:#c62828;"></mdui-button-icon>
-                    </td>
-                  </tr>
-                </tbody>
-              </table>
-            </div>
-            <div class="empty-state" v-else><mdui-icon class="empty-icon" name="key"></mdui-icon><p>还没有课堂派账号，点击右上角添加</p></div>
-          </div>
-
-          <!-- ==========================================================
-               课程绑定
-               ========================================================== -->
-          <div v-if="route === 'courses'">
-            <div class="toolbar">
-              <div class="left">共 {{ bindings.length }} 条绑定</div>
-              <div class="right">
-                <mdui-button variant="filled" color="primary" @click="openBindingModal()">+ 绑定课程</mdui-button>
-              </div>
-            </div>
-            <div class="table-wrap" v-if="bindings.length">
-              <table>
-                <thead><tr><th>课程代码</th><th>课程名称</th><th>课堂派账号</th><th>学期</th><th>启用</th><th class="actions">操作</th></tr></thead>
-                <tbody>
-                  <tr v-for="b in bindings" :key="b.id">
-                    <td><code style="font-size:12px;background:#f1f5f9;padding:2px 6px;border-radius:4px;">{{ getCourseCode(b.course_id) }}</code></td>
-                    <td title="ID: {{ b.course_id }}">{{ getCourseName(b.course_id) }}</td>
-                    <td>{{ getAccountEmail(b.account_id) }}</td>
-                    <td>{{ getCourseSemester(b.course_id) }}</td>
-                    <td><mdui-switch :checked="b.is_active" @change="toggleBinding(b, $event)"></mdui-switch></td>
-                    <td class="actions">
-                      <mdui-button-icon icon="delete" @click="deleteBinding(b)" title="解绑" style="color:#c62828;"></mdui-button-icon>
-                    </td>
-                  </tr>
-                </tbody>
-              </table>
-            </div>
-            <div class="empty-state" v-else><mdui-icon class="empty-icon" name="book"></mdui-icon><p>还没有绑定课程</p></div>
-          </div>
-
-          <!-- ==========================================================
-               签到执行
-               ========================================================== -->
-          <div v-if="route === 'checkin'">
-            <div class="checkin-card">
-              <div class="checkin-header">
-                <h3>批量签到</h3>
-                <p>粘贴签到二维码链接或手动填写参数，对绑定该课程的所有账号执行签到</p>
-              </div>
-
-              <!-- URL 快速解析 -->
-              <div class="field-wrap">
-                <label class="field-label">签到链接 <span style="color:#6b7280;font-weight:400;">（粘贴 URL 或扫码自动解析）</span></label>
-                <div style="display:flex; gap:8px;">
-                  <input class="field-input" style="flex:1;" :value="checkinUrl" @input="parseCheckinUrl($event.target.value)"
-                    placeholder="https://w.ketangpai.com/checkIn/checkinCodeResult?ticketid=...&expire=...&sign=...&courseid=...&randNum=...">
-                  <mdui-button-icon icon="qr_code_scanner" @click="startScanner" title="扫码识别签到二维码" style="flex-shrink:0;"></mdui-button-icon>
+            <div class="field-wrap">
+                <label class="field-label">{{ editingAccount ? '新密码 (留空不修改)' : '密码' }}</label>
+                <div class="pwd-wrap">
+                    <input class="field-input" :type="showAcctPwd ? 'text' : 'password'" :value="accountForm.password"
+                        @input="accountForm.password=$event.target.value" @keydown.enter="saveAccount">
+                    <button class="pwd-toggle" type="button" @click="showAcctPwd = !showAcctPwd" tabindex="-1"
+                        :title="showAcctPwd ? '隐藏密码' : '显示密码'">
+                        <span class="material-icons">{{ showAcctPwd ? 'visibility_off' : 'visibility' }}</span>
+                    </button>
                 </div>
-              </div>
+            </div>
+            <mdui-button slot="action" variant="text" @click="modals.account=false">取消</mdui-button>
+            <mdui-button slot="action" variant="filled" @click="saveAccount">{{ editingAccount ? '保存' : '添加'
+                }}</mdui-button>
+        </mdui-dialog>
 
-              <!-- 手动输入参数 -->
-              <details style="margin:16px 0 20px;">
-                <summary style="cursor:pointer; font-size:13px; color:#6366f1; padding:4px 0;">📝 或手动填写参数</summary>
-                <div class="checkin-fields" style="margin-top:14px;">
-                  <div class="checkin-row">
-                    <div class="field-wrap">
-                      <label class="field-label">CourseID<span class="req">*</span></label>
-                      <input class="field-input" :value="checkinForm.courseid" @input="checkinForm.courseid=$event.target.value" placeholder="课程 ID">
-                    </div>
-                    <div class="field-wrap">
-                      <label class="field-label">TicketID<span class="req">*</span></label>
-                      <input class="field-input" :value="checkinForm.ticketid" @input="checkinForm.ticketid=$event.target.value" placeholder="二维码中的 ticketid">
-                    </div>
-                  </div>
-                  <div class="checkin-row">
-                    <div class="field-wrap">
-                      <label class="field-label">Expire<span class="req">*</span></label>
-                      <input class="field-input" :value="checkinForm.expire" @input="checkinForm.expire=$event.target.value" placeholder="过期时间戳">
-                    </div>
-                    <div class="field-wrap">
-                      <label class="field-label">Sign<span class="req">*</span></label>
-                      <input class="field-input" :value="checkinForm.sign" @input="checkinForm.sign=$event.target.value" placeholder="签名">
-                    </div>
-                  </div>
-                  <div class="field-wrap">
-                    <label class="field-label">RandNum<span class="req">*</span></label>
-                    <input class="field-input" :value="checkinForm.randNum" @input="checkinForm.randNum=$event.target.value" placeholder="随机数">
-                  </div>
+        <!-- ============================================================
+             弹窗: 绑定课程
+             ============================================================ -->
+        <mdui-dialog :open="modals.binding" @closed="modals.binding=false" close-on-esc close-on-overlay-click
+            headline="绑定课程">
+            <div class="field-wrap">
+                <label class="field-label">课程 ID</label>
+                <input class="field-input" :value="bindingForm.course_id"
+                    @input="bindingForm.course_id=$event.target.value" @keydown.enter="saveBinding"
+                    placeholder="课堂派课程 ID">
+            </div>
+            <div class="field-wrap">
+                <label class="field-label">课堂派账号</label>
+                <select class="field-select" :value="bindingForm.account_id"
+                    @change="bindingForm.account_id = $event.target.value" @keydown.enter="saveBinding">
+                    <option value="" disabled>请选择账号</option>
+                    <option v-for="acct in accounts" :key="acct.id" :value="acct.id">{{ acct.email }}</option>
+                </select>
+            </div>
+            <mdui-button slot="action" variant="text" @click="modals.binding=false">取消</mdui-button>
+            <mdui-button slot="action" variant="filled" @click="saveBinding">绑定</mdui-button>
+        </mdui-dialog>
+
+        <!-- ============================================================
+             弹窗: 新建 / 编辑用户 (admin)
+             ============================================================ -->
+        <mdui-dialog :open="modals.user" @closed="modals.user=false" close-on-esc close-on-overlay-click
+            :headline="editingUser ? '编辑用户' : '新建用户'">
+            <div class="field-wrap">
+                <label class="field-label">邮箱</label>
+                <input class="field-input" type="email" :value="userForm.email"
+                    @input="userForm.email=$event.target.value" @keydown.enter="saveUser">
+            </div>
+            <div class="field-wrap">
+                <label class="field-label">{{ editingUser ? '新密码 (留空不修改)' : '密码' }}</label>
+                <div class="pwd-wrap">
+                    <input class="field-input" :type="showUserPwd ? 'text' : 'password'" :value="userForm.password"
+                        @input="userForm.password=$event.target.value" @keydown.enter="saveUser">
+                    <button class="pwd-toggle" type="button" @click="showUserPwd = !showUserPwd" tabindex="-1"
+                        :title="showUserPwd ? '隐藏密码' : '显示密码'">
+                        <span class="material-icons">{{ showUserPwd ? 'visibility_off' : 'visibility' }}</span>
+                    </button>
                 </div>
-              </details>
+            </div>
+            <div class="field-wrap" v-if="editingUser">
+                <label class="field-label">角色</label>
+                <select class="field-select" :value="userForm.role" @change="userForm.role = $event.target.value">
+                    <option value="user">普通用户</option>
+                    <option value="admin">管理员</option>
+                </select>
+            </div>
+            <div class="field-wrap" v-if="editingUser">
+                <label class="field-label">状态</label>
+                <select class="field-select" :value="String(userForm.is_active)"
+                    @change="userForm.is_active = $event.target.value === 'true'">
+                    <option value="true">正常</option>
+                    <option value="false">已禁用</option>
+                </select>
+            </div>
+            <mdui-button slot="action" variant="text" @click="modals.user=false">取消</mdui-button>
+            <mdui-button slot="action" variant="filled" @click="saveUser">{{ editingUser ? '保存' : '创建' }}</mdui-button>
+        </mdui-dialog>
 
-              <mdui-button variant="filled" @click="executeCheckin"
-                :disabled="checkinLoading" class="checkin-btn">
-                {{ checkinLoading ? '签到中…' : '🚀 执行签到' }}
-              </mdui-button>
+        <!-- ============================================================
+             弹窗: 邀请码 (admin)
+             ============================================================ -->
+        <mdui-dialog :open="modals.invite" @closed="modals.invite=false" close-on-esc close-on-overlay-click
+            :headline="editingInvite ? '编辑邀请码' : '生成邀请码'">
+            <div class="field-wrap">
+                <label class="field-label">邀请码 <span style="color:#9ca3af;font-weight:400;">（留空自动生成）</span></label>
+                <input class="field-input" :value="inviteForm.code"
+                    @input="inviteForm.code=$event.target.value.toUpperCase()" placeholder="留空自动生成">
+            </div>
+            <div class="field-wrap">
+                <label class="field-label">可用次数 <span style="color:#9ca3af;font-weight:400;">（留空不限）</span></label>
+                <input class="field-input" type="number" min="1" :value="inviteForm.max_uses"
+                    @input="inviteForm.max_uses=$event.target.value ? parseInt($event.target.value) : null"
+                    placeholder="不限">
+            </div>
+            <div class="field-wrap">
+                <label class="field-label">有效期（小时）<span style="color:#9ca3af;font-weight:400;">（留空永久）</span></label>
+                <input class="field-input" type="number" min="1" :value="inviteForm.expires_in"
+                    @input="inviteForm.expires_in=$event.target.value ? parseInt($event.target.value) : null"
+                    placeholder="永久有效">
+            </div>
+            <div class="field-wrap">
+                <label class="field-label">备注</label>
+                <input class="field-input" :value="inviteForm.note" @input="inviteForm.note=$event.target.value"
+                    placeholder="用途说明">
+            </div>
+            <mdui-button slot="action" variant="text" @click="modals.invite=false">取消</mdui-button>
+            <mdui-button slot="action" variant="filled" @click="saveInviteCode">{{ editingInvite ? '保存' : '生成'
+                }}</mdui-button>
+        </mdui-dialog>
 
-              <div v-if="checkinResults.length" style="margin-top:24px;">
-                <div class="result-summary">
-                  签到结果 ·
-                  <span class="result-ok">{{ checkinSuccessCount }} 成功</span>
-                  <span class="result-divider">/</span>
-                  <span class="result-fail">{{ checkinResults.length - checkinSuccessCount }} 失败</span>
+        <!-- ============================================================
+             弹窗: 修改密码
+             ============================================================ -->
+        <mdui-dialog :open="modals.changePwd"
+            @closed="modals.changePwd=false; changePwdForm.old_password=''; changePwdForm.new_password=''; changePwdForm.confirm=''"
+            close-on-esc close-on-overlay-click headline="修改密码">
+            <div class="field-wrap">
+                <label class="field-label">旧密码</label>
+                <div class="pwd-wrap">
+                    <input class="field-input" :type="showChangeOldPwd ? 'text' : 'password'"
+                        v-model="changePwdForm.old_password" placeholder="输入当前密码" @keydown.enter="changePassword">
+                    <button class="pwd-toggle" type="button" @click="showChangeOldPwd = !showChangeOldPwd" tabindex="-1"
+                        :title="showChangeOldPwd ? '隐藏密码' : '显示密码'">
+                        <span class="material-icons">{{ showChangeOldPwd ? 'visibility_off' : 'visibility' }}</span>
+                    </button>
                 </div>
-                <div class="result-grid">
-                  <div v-for="r in checkinResults" :key="r.email"
-                    class="result-item" :class="r.success?'success':'fail'">
-                    <div class="email">{{ r.email }}</div>
-                    <div class="msg">{{ r.message }}</div>
-                  </div>
+            </div>
+            <div class="field-wrap">
+                <label class="field-label">新密码</label>
+                <div class="pwd-wrap">
+                    <input class="field-input" :type="showChangeNewPwd ? 'text' : 'password'"
+                        v-model="changePwdForm.new_password" placeholder="至少 8 位，含大小写字母和数字"
+                        @keydown.enter="changePassword">
+                    <button class="pwd-toggle" type="button" @click="showChangeNewPwd = !showChangeNewPwd" tabindex="-1"
+                        :title="showChangeNewPwd ? '隐藏密码' : '显示密码'">
+                        <span class="material-icons">{{ showChangeNewPwd ? 'visibility_off' : 'visibility' }}</span>
+                    </button>
                 </div>
-              </div>
             </div>
-          </div>
-
-          <!-- ==========================================================
-               签到日志
-               ========================================================== -->
-          <div v-if="route === 'logs'">
-            <div class="logs-toolbar">
-              <div class="log-filter-wrap">
-                <mdui-icon class="log-filter-icon" name="search"></mdui-icon>
-                <input class="log-filter-input" placeholder="按课程 ID 筛选…"
-                  :value="logFilter.course_id" @input="logFilter.course_id = $event.target.value">
-                <button class="log-filter-clear" v-if="logFilter.course_id" @click="logFilter.course_id=''">✕</button>
-              </div>
-              <mdui-button variant="outlined" icon="refresh" @click="loadLogs" size="small">刷新</mdui-button>
-              <span class="log-count" v-if="logs.length">共 {{ filteredLogs.length }} 条记录</span>
+            <div class="field-wrap">
+                <label class="field-label">确认新密码</label>
+                <div class="pwd-wrap">
+                    <input class="field-input" :type="showChangeConfirmPwd ? 'text' : 'password'"
+                        v-model="changePwdForm.confirm" placeholder="再次输入新密码" @keydown.enter="changePassword">
+                    <button class="pwd-toggle" type="button" @click="showChangeConfirmPwd = !showChangeConfirmPwd"
+                        tabindex="-1" :title="showChangeConfirmPwd ? '隐藏密码' : '显示密码'">
+                        <span class="material-icons">{{ showChangeConfirmPwd ? 'visibility_off' : 'visibility' }}</span>
+                    </button>
+                </div>
             </div>
-            <div class="table-wrap" v-if="logs.length">
-              <table>
-                <thead><tr><th>时间</th><th>账号</th><th>课程 ID</th><th>状态</th></tr></thead>
-                <tbody>
-                  <tr v-for="log in filteredLogs" :key="log.id">
-                    <td>{{ formatTime(log.created_at) }}</td>
-                    <td>{{ getAccountEmail(log.account_id) }}</td>
-                    <td>{{ log.course_id }}</td>
-                    <td><span class="status-chip" :class="log.status===1?'green':'red'">{{ log.status===1?'成功':'失败' }}</span></td>
-                  </tr>
-                </tbody>
-              </table>
+            <mdui-button slot="action" variant="text" @click="modals.changePwd=false">取消</mdui-button>
+            <mdui-button slot="action" variant="filled" @click="changePassword">确认修改</mdui-button>
+        </mdui-dialog>
+
+        <!-- ============================================================
+             弹窗: 扫码识别
+             ============================================================ -->
+        <mdui-dialog :open="modals.scanner" @closed="stopScanner" close-on-esc close-on-overlay-click
+            headline="扫描签到二维码">
+            <div class="scan-dialog-body">
+                <div class="scan-stage" :class="{ 'is-live': scanOpening || scanLiveMode }">
+                    <video ref="scanVideo" autoplay playsinline muted
+                        :style="{ display: scanLiveMode ? 'block' : 'none' }"></video>
+                    <div class="overlay" v-if="scanLiveMode">
+                        <div class="frame"></div>
+                    </div>
+                    <img v-if="!scanLiveMode && scanPhotoSrc" :src="scanPhotoSrc">
+                    <div class="empty-icon" v-else-if="!scanLiveMode && !scanPhotoSrc">
+                        <mdui-icon name="qr_code_scanner"></mdui-icon>
+                    </div>
+                </div>
+                <canvas ref="scanCanvas" style="display:none;"></canvas>
+                <p class="scan-hint" v-if="scanOpening">正在打开摄像头…</p>
+                <p class="scan-hint" v-else-if="scanLiveMode && !scanFail">将签到二维码对准框内自动识别</p>
+                <p class="scan-hint" v-else-if="scanFail" style="color:#dc2626;">{{ scanFail }}</p>
+                <p class="scan-hint" v-else>将签到二维码对准框内自动识别</p>
+                <div class="scan-actions">
+                    <mdui-button variant="filled" @click="capturePhoto" :disabled="scanOpening"
+                        :class="{ 'hidden-btn': scanOpening }">拍照扫描</mdui-button>
+                    <mdui-button variant="outlined" @click="stopScanner">关闭</mdui-button>
+                </div>
+                <input type="file" ref="scanPhotoInput" accept="image/*" capture="environment" style="display:none;"
+                    @change="onScanPhoto">
             </div>
-            <div class="empty-state" v-else><mdui-icon class="empty-icon" name="history"></mdui-icon><p>暂无签到记录</p></div>
-          </div>
-
-          <!-- ==========================================================
-               用户管理 (admin)
-               ========================================================== -->
-          <div v-if="route === 'users'">
-            <div class="toolbar">
-              <div class="left">共 {{ users.length }} 个用户</div>
-              <div class="right">
-                <mdui-button variant="filled" color="primary" @click="openUserModal()">+ 新建用户</mdui-button>
-              </div>
-            </div>
-            <div class="table-wrap" v-if="users.length">
-              <table>
-                <thead><tr><th>ID</th><th>邮箱</th><th>角色</th><th>状态</th><th>最后登录</th><th>创建时间</th><th class="actions">操作</th></tr></thead>
-                <tbody>
-                  <tr v-for="u in users" :key="u.id">
-                    <td>{{ u.id }}</td>
-                    <td>{{ u.email }}</td>
-                    <td><span class="status-chip" :class="u.role==='admin'?'blue':'green'">{{ u.role }}</span></td>
-                    <td><span class="status-chip" :class="u.is_active===false?'orange':'green'">{{ u.is_active===false?'已禁用':'正常' }}</span></td>
-                    <td>{{ u.last_login_at ? formatTime(u.last_login_at) : '-' }}</td>
-                    <td>{{ formatTime(u.created_at) }}</td>
-                    <td class="actions">
-                      <mdui-button-icon icon="edit" @click="openUserModal(u)" title="编辑"></mdui-button-icon>
-                      <mdui-button-icon icon="delete" @click="deleteUser(u)" v-if="u.id !== state.currentUser?.id" title="删除" style="color:#c62828;"></mdui-button-icon>
-                    </td>
-                  </tr>
-                </tbody>
-              </table>
-            </div>
-            <div class="empty-state" v-else><mdui-icon class="empty-icon" name="people"></mdui-icon><p>暂无用户数据</p></div>
-
-            <!-- 全部账号（管理员） -->
-            <h3 style="margin:28px 0 12px;font-size:15px;font-weight:500;padding:0 4px; background-color: rgba(255,255,255,.95); padding: 10px 16px; border-radius: 20px;">全部课堂派账号</h3>
-            <div class="table-wrap" v-if="adminAccounts.length">
-              <table>
-                <thead><tr><th>ID</th><th>账号</th><th>UID</th><th>状态</th><th>创建时间</th></tr></thead>
-                <tbody>
-                  <tr v-for="acct in adminAccounts" :key="acct.id">
-                    <td>{{ acct.id }}</td>
-                    <td>{{ acct.email }}</td>
-                    <td>{{ acct.uid }}</td>
-                    <td><span class="status-chip" :class="acct.status===1?'green':(acct.status===0?'orange':'red')">{{ acct.status===1?'正常':(acct.status===0?'未知':'不可用') }}</span></td>
-                    <td>{{ formatTime(acct.created_at) }}</td>
-                  </tr>
-                </tbody>
-              </table>
-            </div>
-            <div class="empty-state" v-else style="margin-top:12px;"><p>暂无账号数据</p></div>
-
-            <!-- 邀请码管理 -->
-            <h3 style="margin:28px 0 12px;font-size:15px;font-weight:500;padding:0 4px; background-color: rgba(255,255,255,.95); padding: 10px 16px; border-radius: 20px;">邀请码管理</h3>
-            <div class="toolbar">
-              <div class="left">
-                <mdui-switch :checked="inviteRequired" @change="toggleInviteRequired($event)"></mdui-switch>
-                <span style="margin-left:8px;font-size:13px;">{{ inviteRequired ? '必须使用邀请码注册' : '邀请码为选填（仅记录）' }}</span>
-              </div>
-              <div class="right">
-                <mdui-button variant="filled" color="primary" @click="openInviteModal()">+ 生成邀请码</mdui-button>
-              </div>
-            </div>
-            <div class="table-wrap" v-if="inviteCodes.length">
-              <table>
-                <thead><tr><th>邀请码</th><th>启用</th><th>使用次数</th><th>上限</th><th>过期时间</th><th>备注</th><th>状态</th><th>创建时间</th><th class="actions">操作</th></tr></thead>
-                <tbody>
-                  <tr v-for="c in inviteCodes" :key="c.id">
-                    <td>
-                      <code style="font-size:15px;background:#f1f5f9;padding:8px;border-radius:4px;letter-spacing:1.5px;font-weight:600;color:#6750a4;">{{ c.code }}</code>
-                      <mdui-button-icon icon="content_copy" size="small" @click="copyText(c.code)" title="复制邀请码" style="vertical-align:middle;"></mdui-button-icon>
-                    </td>
-                    <td><mdui-switch :checked="c.is_active" :disabled="codeIsExpired(c)" @change="toggleInviteActive(c, $event)"></mdui-switch></td>
-                    <td>{{ c.used_count }}{{ c.max_uses ? '/'+c.max_uses : '' }}</td>
-                    <td>{{ c.max_uses ?? '不限' }}</td>
-                    <td>{{ c.expires_at ? formatTime(c.expires_at) : '永久' }}</td>
-                    <td style="max-width:120px;overflow:hidden;text-overflow:ellipsis;">{{ c.note || '-' }}</td>
-                    <td><span class="status-chip" :class="codeStatusClass(c)">{{ codeStatusText(c) }}</span></td>
-                    <td>{{ formatTime(c.created_at) }}</td>
-                    <td class="actions">
-                      <mdui-button-icon icon="edit" @click="openInviteModal(c)" title="编辑"></mdui-button-icon>
-                      <mdui-button-icon icon="delete" @click="deleteInviteCode(c)" title="删除" style="color:#c62828;"></mdui-button-icon>
-                    </td>
-                  </tr>
-                </tbody>
-              </table>
-            </div>
-            <div class="empty-state" v-else style="margin-top:12px;"><p>暂无邀请码</p></div>
-          </div>
-
-        </div><!-- /main-body -->
-
-        <div class="dash-fab-wrap" v-if="route==='dashboard'">
-          <mdui-fab icon="how_to_reg" variant="primary" size="large" @click="navigate('checkin')" title="直达签到"></mdui-fab>
-        </div>
-      </div><!-- /main-content -->
-    </div><!-- /app-layout -->
-  </template>
-
-  <!-- ============================================================
-       弹窗: 添加 / 编辑账号
-       ============================================================ -->
-  <mdui-dialog :open="modals.account" @closed="modals.account=false" close-on-esc close-on-overlay-click
-    :headline="editingAccount ? '编辑账号' : '添加账号'">
-    <div class="field-wrap">
-      <label class="field-label">课堂派账号（邮箱/手机号）</label>
-      <input class="field-input" type="text" :value="accountForm.email" @input="accountForm.email=$event.target.value" @keydown.enter="saveAccount">
-    </div>
-    <div class="field-wrap">
-      <label class="field-label">{{ editingAccount ? '新密码 (留空不修改)' : '密码' }}</label>
-      <div class="pwd-wrap">
-        <input class="field-input" :type="showAcctPwd ? 'text' : 'password'" :value="accountForm.password" @input="accountForm.password=$event.target.value" @keydown.enter="saveAccount">
-        <button class="pwd-toggle" type="button" @click="showAcctPwd = !showAcctPwd" tabindex="-1" :title="showAcctPwd ? '隐藏密码' : '显示密码'">
-          <span class="material-icons">{{ showAcctPwd ? 'visibility_off' : 'visibility' }}</span>
-        </button>
-      </div>
-    </div>
-    <mdui-button slot="action" variant="text" @click="modals.account=false">取消</mdui-button>
-    <mdui-button slot="action" variant="filled" @click="saveAccount">{{ editingAccount ? '保存' : '添加' }}</mdui-button>
-  </mdui-dialog>
-
-  <!-- ============================================================
-       弹窗: 绑定课程
-       ============================================================ -->
-  <mdui-dialog :open="modals.binding" @closed="modals.binding=false" close-on-esc close-on-overlay-click
-    headline="绑定课程">
-    <div class="field-wrap">
-      <label class="field-label">课程 ID</label>
-      <input class="field-input" :value="bindingForm.course_id" @input="bindingForm.course_id=$event.target.value" @keydown.enter="saveBinding" placeholder="课堂派课程 ID">
-    </div>
-    <div class="field-wrap">
-      <label class="field-label">课堂派账号</label>
-      <select class="field-select" :value="bindingForm.account_id" @change="bindingForm.account_id = $event.target.value" @keydown.enter="saveBinding">
-        <option value="" disabled>请选择账号</option>
-        <option v-for="acct in accounts" :key="acct.id" :value="acct.id">{{ acct.email }}</option>
-      </select>
-    </div>
-    <mdui-button slot="action" variant="text" @click="modals.binding=false">取消</mdui-button>
-    <mdui-button slot="action" variant="filled" @click="saveBinding">绑定</mdui-button>
-  </mdui-dialog>
-
-  <!-- ============================================================
-       弹窗: 新建 / 编辑用户 (admin)
-       ============================================================ -->
-  <mdui-dialog :open="modals.user" @closed="modals.user=false" close-on-esc close-on-overlay-click
-    :headline="editingUser ? '编辑用户' : '新建用户'">
-    <div class="field-wrap">
-      <label class="field-label">邮箱</label>
-      <input class="field-input" type="email" :value="userForm.email" @input="userForm.email=$event.target.value" @keydown.enter="saveUser">
-    </div>
-    <div class="field-wrap">
-      <label class="field-label">{{ editingUser ? '新密码 (留空不修改)' : '密码' }}</label>
-      <div class="pwd-wrap">
-        <input class="field-input" :type="showUserPwd ? 'text' : 'password'" :value="userForm.password" @input="userForm.password=$event.target.value" @keydown.enter="saveUser">
-        <button class="pwd-toggle" type="button" @click="showUserPwd = !showUserPwd" tabindex="-1" :title="showUserPwd ? '隐藏密码' : '显示密码'">
-          <span class="material-icons">{{ showUserPwd ? 'visibility_off' : 'visibility' }}</span>
-        </button>
-      </div>
-    </div>
-    <div class="field-wrap" v-if="editingUser">
-      <label class="field-label">角色</label>
-      <select class="field-select" :value="userForm.role" @change="userForm.role = $event.target.value">
-        <option value="user">普通用户</option>
-        <option value="admin">管理员</option>
-      </select>
-    </div>
-    <div class="field-wrap" v-if="editingUser">
-      <label class="field-label">状态</label>
-      <select class="field-select" :value="String(userForm.is_active)" @change="userForm.is_active = $event.target.value === 'true'">
-        <option value="true">正常</option>
-        <option value="false">已禁用</option>
-      </select>
-    </div>
-    <mdui-button slot="action" variant="text" @click="modals.user=false">取消</mdui-button>
-    <mdui-button slot="action" variant="filled" @click="saveUser">{{ editingUser ? '保存' : '创建' }}</mdui-button>
-  </mdui-dialog>
-
-  <!-- ============================================================
-       弹窗: 邀请码 (admin)
-       ============================================================ -->
-  <mdui-dialog :open="modals.invite" @closed="modals.invite=false" close-on-esc close-on-overlay-click
-    :headline="editingInvite ? '编辑邀请码' : '生成邀请码'">
-    <div class="field-wrap">
-      <label class="field-label">邀请码 <span style="color:#9ca3af;font-weight:400;">（留空自动生成）</span></label>
-      <input class="field-input" :value="inviteForm.code" @input="inviteForm.code=$event.target.value.toUpperCase()" placeholder="留空自动生成">
-    </div>
-    <div class="field-wrap">
-      <label class="field-label">可用次数 <span style="color:#9ca3af;font-weight:400;">（留空不限）</span></label>
-      <input class="field-input" type="number" min="1" :value="inviteForm.max_uses" @input="inviteForm.max_uses=$event.target.value ? parseInt($event.target.value) : null" placeholder="不限">
-    </div>
-    <div class="field-wrap">
-      <label class="field-label">有效期（小时）<span style="color:#9ca3af;font-weight:400;">（留空永久）</span></label>
-      <input class="field-input" type="number" min="1" :value="inviteForm.expires_in" @input="inviteForm.expires_in=$event.target.value ? parseInt($event.target.value) : null" placeholder="永久有效">
-    </div>
-    <div class="field-wrap">
-      <label class="field-label">备注</label>
-      <input class="field-input" :value="inviteForm.note" @input="inviteForm.note=$event.target.value" placeholder="用途说明">
-    </div>
-    <mdui-button slot="action" variant="text" @click="modals.invite=false">取消</mdui-button>
-    <mdui-button slot="action" variant="filled" @click="saveInviteCode">{{ editingInvite ? '保存' : '生成' }}</mdui-button>
-  </mdui-dialog>
-
-  <!-- ============================================================
-       弹窗: 修改密码
-       ============================================================ -->
-  <mdui-dialog :open="modals.changePwd" @closed="modals.changePwd=false; changePwdForm.old_password=''; changePwdForm.new_password=''; changePwdForm.confirm=''" close-on-esc close-on-overlay-click
-    headline="修改密码">
-    <div class="field-wrap">
-      <label class="field-label">旧密码</label>
-      <div class="pwd-wrap">
-        <input class="field-input" :type="showChangeOldPwd ? 'text' : 'password'" v-model="changePwdForm.old_password" placeholder="输入当前密码" @keydown.enter="changePassword">
-        <button class="pwd-toggle" type="button" @click="showChangeOldPwd = !showChangeOldPwd" tabindex="-1" :title="showChangeOldPwd ? '隐藏密码' : '显示密码'">
-          <span class="material-icons">{{ showChangeOldPwd ? 'visibility_off' : 'visibility' }}</span>
-        </button>
-      </div>
-    </div>
-    <div class="field-wrap">
-      <label class="field-label">新密码</label>
-      <div class="pwd-wrap">
-        <input class="field-input" :type="showChangeNewPwd ? 'text' : 'password'" v-model="changePwdForm.new_password" placeholder="至少 8 位，含大小写字母和数字" @keydown.enter="changePassword">
-        <button class="pwd-toggle" type="button" @click="showChangeNewPwd = !showChangeNewPwd" tabindex="-1" :title="showChangeNewPwd ? '隐藏密码' : '显示密码'">
-          <span class="material-icons">{{ showChangeNewPwd ? 'visibility_off' : 'visibility' }}</span>
-        </button>
-      </div>
-    </div>
-    <div class="field-wrap">
-      <label class="field-label">确认新密码</label>
-      <div class="pwd-wrap">
-        <input class="field-input" :type="showChangeConfirmPwd ? 'text' : 'password'" v-model="changePwdForm.confirm" placeholder="再次输入新密码" @keydown.enter="changePassword">
-        <button class="pwd-toggle" type="button" @click="showChangeConfirmPwd = !showChangeConfirmPwd" tabindex="-1" :title="showChangeConfirmPwd ? '隐藏密码' : '显示密码'">
-          <span class="material-icons">{{ showChangeConfirmPwd ? 'visibility_off' : 'visibility' }}</span>
-        </button>
-      </div>
-    </div>
-    <mdui-button slot="action" variant="text" @click="modals.changePwd=false">取消</mdui-button>
-    <mdui-button slot="action" variant="filled" @click="changePassword">确认修改</mdui-button>
-  </mdui-dialog>
-
-  <!-- ============================================================
-       弹窗: 扫码识别
-       ============================================================ -->
-  <mdui-dialog :open="modals.scanner" @closed="stopScanner" close-on-esc close-on-overlay-click
-    headline="扫描签到二维码">
-    <div class="scan-dialog-body">
-      <div class="scan-stage" :class="{ 'is-live': scanOpening || scanLiveMode }">
-        <video ref="scanVideo" autoplay playsinline muted
-          :style="{ display: scanLiveMode ? 'block' : 'none' }"></video>
-        <div class="overlay" v-if="scanLiveMode"><div class="frame"></div></div>
-        <img v-if="!scanLiveMode && scanPhotoSrc" :src="scanPhotoSrc">
-        <div class="empty-icon" v-else-if="!scanLiveMode && !scanPhotoSrc">
-          <mdui-icon name="qr_code_scanner"></mdui-icon>
-        </div>
-      </div>
-      <canvas ref="scanCanvas" style="display:none;"></canvas>
-      <p class="scan-hint" v-if="scanOpening">正在打开摄像头…</p>
-      <p class="scan-hint" v-else-if="scanLiveMode && !scanFail">将签到二维码对准框内自动识别</p>
-      <p class="scan-hint" v-else-if="scanFail" style="color:#dc2626;">{{ scanFail }}</p>
-      <p class="scan-hint" v-else>将签到二维码对准框内自动识别</p>
-      <div class="scan-actions">
-        <mdui-button variant="filled" @click="capturePhoto"
-          :disabled="scanOpening"
-          :class="{ 'hidden-btn': scanOpening }">拍照扫描</mdui-button>
-        <mdui-button variant="outlined" @click="stopScanner">关闭</mdui-button>
-      </div>
-      <input type="file" ref="scanPhotoInput" accept="image/*" capture="environment" style="display:none;" @change="onScanPhoto">
-    </div>
-  </mdui-dialog>
-
-</div><!-- /#app -->
-
-<!-- MDUI 2 JS (先加载使组件就绪) -->
-<script src="/static/mdui.global.js"></script>
-<!-- jsQR 二维码识别 -->
-<script src="/static/jsqr.min.js"></script>
-<!-- Vue 3 -->
-<script src="/static/vue.global.prod.js"></script>
-
-<script>
-const { createApp, reactive, ref, computed } = Vue;
-
-const API_BASE = ''; // 同域
-
-// ---- HTTP 工具 ----
-let _refreshing = false;
-
-async function api(method, path, body) {
-  const headers = { 'Content-Type': 'application/json' };
-  const token = localStorage.getItem('token');
-  if (token) headers['Authorization'] = `Bearer ${token}`;
-  const opts = { method, headers };
-  if (body !== undefined) opts.body = JSON.stringify(body);
-  const res = await fetch(`${API_BASE}${path}`, opts);
-  const data = await res.json();
-  if (res.ok) return data;
-
-  // 401 时尝试刷新令牌（跳过 refresh 自身接口）
-  if (res.status === 401 && path !== '/api/refresh' && !_refreshing) {
-    _refreshing = true;
-    try {
-      const rt = localStorage.getItem('refresh_token');
-      if (!rt) throw new Error('no refresh token');
-      const rr = await fetch(`${API_BASE}/api/refresh`, {
-        method: 'POST',
-        headers: { 'Authorization': `Bearer ${rt}`, 'Content-Type': 'application/json' },
-      });
-      const rd = await rr.json();
-      if (!rr.ok) throw new Error(rd.message || 'refresh failed');
-      // 更新 localStorage
-      localStorage.setItem('token', rd.data.access_token);
-      localStorage.setItem('refresh_token', rd.data.refresh_token);
-      localStorage.setItem('user', JSON.stringify(rd.data.user));
-      _refreshing = false;
-      // 重试原始请求
-      headers['Authorization'] = `Bearer ${rd.data.access_token}`;
-      const retry = await fetch(`${API_BASE}${path}`, { method, headers, body: opts.body });
-      const retryData = await retry.json();
-      if (!retry.ok) throw new Error(retryData.message || `请求失败 (${retry.status})`);
-      return retryData;
-    } catch (e) {
-      _refreshing = false;
-      localStorage.removeItem('token');
-      localStorage.removeItem('refresh_token');
-      localStorage.removeItem('user');
-      throw new Error('登录已过期，请重新登录');
-    }
-  }
-  _refreshing = false;
-  throw new Error(data.message || `请求失败 (${res.status})`);
-}
-
-// ---- Vue 应用 ----
-createApp({
-  setup() {
-    const state = reactive({
-      token: localStorage.getItem('token') || null,
-      currentUser: JSON.parse(localStorage.getItem('user') || 'null'),
-    });
-
-    // hash 路由：从 URL 恢复状态，支持刷新保持页面
-    function hashFromURL() { return window.location.hash.replace(/^#\/?/, '') || 'dashboard'; }
-    const route = ref(hashFromURL());
-    const isMobile = () => window.innerWidth <= 768;
-    const sidebarOpen = ref(!isMobile());
-    // 窗口尺寸变化时自动调整侧栏
-    window.addEventListener('resize', () => {
-      sidebarOpen.value = !isMobile();
-    });
-    const loading = ref(false);
-    const loginView = ref('login');
-
-    // 密码显示切换
-    const showLoginPwd = ref(false);
-    const showRegPwd = ref(false);
-    const showAcctPwd = ref(false);
-    const showUserPwd = ref(false);
-    const showChangeOldPwd = ref(false);
-    const showChangeNewPwd = ref(false);
-    const showChangeConfirmPwd = ref(false);
-
-    // 表单
-    const form = reactive({ email: '', password: '', invite_code: '' });
-    const accountForm = reactive({ email: '', password: '' });
-    const bindingForm = reactive({ course_id: '', account_id: '' });
-    const userForm = reactive({ email: '', password: '', role: 'user', is_active: true });
-    const inviteForm = reactive({ code: '', max_uses: null, expires_in: null, note: '' });
-    const checkinForm = reactive({ courseid: '', ticketid: '', expire: '', sign: '', randNum: '' });
-    const checkinUrl = ref('');
-    const logFilter = reactive({ course_id: '' });
-
-    // 列表
-    const accounts = ref([]);
-    const bindings = ref([]);
-    const courses = ref([]);  // Course 表缓存
-    const logs = ref([]);
-    const inviteCodes = ref([]);
-    const inviteRequired = ref(false);
-    const adminAccounts = ref([]);
-    const editingInvite = ref(null);
-    const users = ref([]);
-    const recentLogs = computed(() => logs.value.slice(-10).reverse());
-
-    // 弹窗
-    const modals = reactive({ account: false, binding: false, user: false, invite: false, scanner: false, changePwd: false });
-    const editingAccount = ref(null);
-    const editingUser = ref(null);
-
-    // 修改密码
-    const changePwdForm = reactive({ old_password: '', new_password: '', confirm: '' });
-
-    // 签到
-    const checkinLoading = ref(false);
-    const checkinResults = ref([]);
-
-    // 扫码
-    const scanOpening = ref(false);
-    const scanLiveMode = ref(false);
-    const scanFail = ref('');
-    const scanPhotoSrc = ref(null);
-    const scanVideo = ref(null);
-    const scanCanvas = ref(null);
-    const scanPhotoInput = ref(null);
-    let scanStream = null;
-    let scanTimer = null;
-    let lastScannedText = '';
-    let lastScannedTime = 0;
-
-    // ---- 计算属性 ----
-    const pageTitle = computed(() => ({
-      dashboard: '首页', accounts: '账号管理', courses: '课程绑定',
-      checkin: '签到', logs: '签到日志', users: '用户管理',
-    })[route.value] || '');
-
-    const pageSubtitle = computed(() => ({
-      dashboard: '概览', accounts: '管理课堂派账号', courses: '绑定课程与账号',
-      checkin: '执行批量签到', logs: '查看历史记录', users: '管理平台用户',
-    })[route.value] || '');
-
-    const filteredLogs = computed(() =>
-      logFilter.course_id
-        ? logs.value.filter(l => l.course_id.includes(logFilter.course_id))
-        : logs.value
-    );
-
-    const stats = computed(() => {
-      const today = new Date();
-      return {
-        accountCount: accounts.value.length,
-        bindingCount: bindings.value.length,
-        todayCheckins: logs.value.filter(l => {
-          if (!l.created_at) return false;
-          const d = new Date(l.created_at);
-          return d.getDate() === today.getDate() && d.getMonth() === today.getMonth() && d.getFullYear() === today.getFullYear();
-        }).length,
-        totalLogs: logs.value.length,
-      };
-    });
-
-    const checkinSuccessCount = computed(() =>
-      checkinResults.value.filter(r => r.success).length
-    );
-
-    // ---- Toast (MDUI 2 snackbar) ----
-    function showToast(msg, delay) {
-      try { mdui.snackbar({ message: msg, autoCloseDelay: delay || 1500 }); } catch { /* fallback */ }
-    }
-
-    // ---- 工具 ----
-    function copyText(text) {
-      if (navigator.clipboard) {
-        navigator.clipboard.writeText(text).then(() => showToast('已复制'), () => {});
-      }
-    }
-    // 邀请码三种状态辅助
-    function codeIsExpired(c) {
-      if (c.max_uses !== null && c.max_uses !== undefined && c.used_count >= c.max_uses) return true;
-      if (c.expires_at && new Date(c.expires_at) < new Date()) return true;
-      return false;
-    }
-    function codeStatusClass(c) {
-      if (codeIsExpired(c)) return 'red';
-      if (!c.is_active) return 'orange';
-      return 'green';
-    }
-    function codeStatusText(c) {
-      if (codeIsExpired(c)) return '失效';
-      if (!c.is_active) return '停用';
-      return '有效';
-    }
-    function formatTime(ts) {
-      if (!ts) return '-';
-      try {
-        // 服务端时间无时区后缀 → 视为 UTC，补 Z 转换为本地时间
-        const src = typeof ts === 'string' && ts.indexOf('T') > 0 && /[+-]\d{2}:\d{2}$/.test(ts) === false && ts.slice(-1) !== 'Z'
-          ? ts + 'Z' : ts;
-        const d = new Date(src);
-        if (isNaN(d.getTime())) return ts;
-        return d.toLocaleString('zh-CN', { hour12: false });
-      } catch { return ts; }
-    }
-
-    function getAccountEmail(id) {
-      const a = accounts.value.find(a => a.id === id);
-      return a ? a.email : `#${id}`;
-    }
-
-    function getCourseName(courseId) {
-      const c = courses.value.find(c => c.id === courseId);
-      return c ? c.course_name : courseId;
-    }
-
-    function getCourseSemester(courseId) {
-      const c = courses.value.find(c => c.id === courseId);
-      return c ? `${c.semester}·${c.term==='1'?'上学期':c.term==='2'?'下学期':c.term}` : '';
-    }
-
-    function getCourseCode(courseId) {
-      const c = courses.value.find(c => c.id === courseId);
-      return c ? c.code : '';
-    }
-
-    // ---- 导航 ----
-    function navigate(to) {
-      if (route.value === to) return;
-      if (modals.scanner) stopScanner();
-      route.value = to;
-      window.location.hash = '#' + to;
-      if (isMobile()) sidebarOpen.value = false;
-      loadPageData(to);
-    }
-
-    // ---- 认证 ----
-    async function login() {
-      if (!form.email || !form.password) { showToast('请填写邮箱和密码'); return; }
-      loading.value = true;
-      try {
-        const res = await api('POST', '/api/login', { email: form.email, password: form.password });
-        state.token = res.data.access_token;
-        state.currentUser = res.data.user;
-        localStorage.setItem('token', res.data.access_token);
-        localStorage.setItem('refresh_token', res.data.refresh_token);
-        localStorage.setItem('user', JSON.stringify(res.data.user));
-        route.value = 'dashboard';
-        showToast('登录成功');
-        loadPageData('dashboard');
-      } catch (e) {
-        showToast(e.message || '登录失败');
-      } finally { loading.value = false; }
-    }
-
-    async function register() {
-      if (!form.email || !form.password) { showToast('请填写邮箱和密码'); return; }
-      loading.value = true;
-      try {
-        const res = await api('POST', '/api/register', { email: form.email, password: form.password, invite_code: form.invite_code });
-        state.token = res.data.access_token;
-        state.currentUser = res.data.user;
-        localStorage.setItem('token', res.data.access_token);
-        localStorage.setItem('refresh_token', res.data.refresh_token);
-        localStorage.setItem('user', JSON.stringify(res.data.user));
-        route.value = 'dashboard';
-        showToast('注册成功');
-        loadPageData('dashboard');
-      } catch (e) {
-        showToast(e.message || '注册失败');
-      } finally { loading.value = false; }
-    }
-
-    async function logout() {
-      try { await api('POST', '/api/logout'); } catch {}
-      state.token = null;
-      state.currentUser = null;
-      localStorage.removeItem('token');
-      localStorage.removeItem('refresh_token');
-      localStorage.removeItem('user');
-      window.location.reload();
-    }
-
-    // ---- 账号 ----
-    let _accountsPromise = null;
-    function invalidateAccounts() { _accountsPromise = null; }
-    async function loadAccounts() {
-      if (_accountsPromise) return _accountsPromise;
-      _accountsPromise = (async () => {
-        try { const res = await api('GET', '/api/accounts'); accounts.value = res.data || []; }
-        catch (e) { showToast(e.message); }
-      })();
-      return _accountsPromise;
-    }
-
-    function openAccountModal(acct) {
-      editingAccount.value = acct || null;
-      accountForm.email = acct ? acct.email : '';
-      accountForm.password = '';
-      modals.account = true;
-    }
-
-    async function saveAccount() {
-      if (!accountForm.email) { showToast('请填写课堂派账号'); return; }
-      try {
-        if (editingAccount.value) {
-          const body = { email: accountForm.email };
-          if (accountForm.password) body.password = accountForm.password;
-          await api('PUT', `/api/accounts/${editingAccount.value.id}`, body);
-          showToast('账号已更新');
-          invalidateAccounts();
-        } else {
-          if (!accountForm.password) { showToast('请填写密码'); return; }
-          await api('POST', '/api/accounts', { email: accountForm.email, password: accountForm.password });
-          showToast('账号已添加');
-          invalidateAccounts();
-        }
-        modals.account = false;
-        loadAccounts();
-      } catch (e) { showToast(e.message); }
-    }
-
-    async function deleteAccount(acct) {
-      if (!confirm(`确定删除账号 ${acct.email}？`)) return;
-      try {
-        await api('DELETE', `/api/accounts/${acct.id}`);
-        showToast('账号已删除');
-        loadAccounts();
-      } catch (e) { showToast(e.message); }
-    }
-
-    // ---- 课程绑定 ----
-    async function loadBindings() {
-      try {
-        const [bRes, cRes] = await Promise.all([
-          api('GET', '/api/courses/bindings'),
-          api('GET', '/api/courses'),
-        ]);
-        bindings.value = bRes.data || [];
-        courses.value = cRes.data || [];
-      } catch (e) { showToast(e.message); }
-    }
-
-    function openBindingModal() {
-      if (accounts.value.length === 0) { showToast('请先添加课堂派账号'); return; }
-      bindingForm.course_id = '';
-      bindingForm.account_id = accounts.value[0]?.id || '';
-      modals.binding = true;
-    }
-
-    async function saveBinding() {
-      if (!bindingForm.course_id || !bindingForm.account_id) { showToast('请填写完整信息'); return; }
-      try {
-        await api('POST', '/api/courses/bindings', { course_id: bindingForm.course_id, account_id: bindingForm.account_id });
-        showToast('课程绑定成功');
-        modals.binding = false;
-        loadBindings();
-      } catch (e) { showToast(e.message); }
-    }
-
-    async function deleteBinding(b) {
-      if (!confirm(`确定解绑课程 ${b.course_id}？`)) return;
-      try {
-        await api('DELETE', `/api/courses/bindings/${b.id}`);
-        showToast('课程已解绑');
-        loadBindings();
-      } catch (e) { showToast(e.message); }
-    }
-
-    async function toggleBinding(b, event) {
-      const target = event.target;
-      const newState = target.checked;
-      try {
-        await api('PUT', `/api/courses/bindings/${b.id}`, { is_active: newState });
-        b.is_active = newState;
-        showToast(newState ? '已启用' : '已禁用');
-      } catch (e) {
-        target.checked = !newState;  // 回滚 DOM 状态
-        showToast(e.message);
-      }
-    }
-
-    // ---- 签到 ----
-    function parseCheckinUrl(url) {
-      checkinUrl.value = url;
-      if (!url) return;
-      try {
-        const parsed = new URL(url);
-        const params = parsed.searchParams;
-        const ticketid = params.get('ticketid');
-        if (!ticketid) return; // 不是有效的签到链接
-        checkinForm.ticketid = ticketid;
-        checkinForm.expire = params.get('expire') || '';
-        checkinForm.sign = params.get('sign') || '';
-        checkinForm.courseid = params.get('courseid') || '';
-        checkinForm.randNum = params.get('randNum') || '';
-        showToast('参数已自动填充');
-      } catch {
-        // 不是合法 URL，忽略
-      }
-    }
-
-    // 验证签到 URL 并自动执行（不处理 UI 提示，由调用方负责）
-    function validateAndExecuteQR(text) {
-      try {
-        const url = new URL(text);
-        if (url.hostname.indexOf('ketangpai.com') === -1 ||
-            url.pathname.indexOf('checkIn') === -1) {
-          return false;
-        }
-        const p = url.searchParams;
-        const type = p.get('type');
-        const ticketid = p.get('ticketid');
-        const expire = p.get('expire');
-        const sign = p.get('sign');
-        const courseid = p.get('courseid');
-        const randNum = p.get('randNum');
-        if (!ticketid || !expire || !sign || !courseid || !randNum || !type) {
-          return false;
-        }
-        checkinForm.courseid = courseid;
-        checkinForm.ticketid = ticketid;
-        checkinForm.expire = expire;
-        checkinForm.sign = sign;
-        checkinForm.randNum = randNum;
-        checkinUrl.value = text;
-        if (route.value !== 'checkin') navigate('checkin');
-        Vue.nextTick().then(() => executeCheckin());
-        return true;
-      } catch {
-        return false;
-      }
-    }
-
-    // ---- 扫码识别 (jsQR 实时视频 + 拍照降级) ----
-    function startScanner() {
-      scanPhotoSrc.value = null;
-      scanFail.value = '';
-      scanOpening.value = false;
-      scanLiveMode.value = false;
-      modals.scanner = true;
-      Vue.nextTick().then(() => new Promise(r => setTimeout(r, 300))).then(() => {
-        if (modals.scanner) tryOpenCamera();
-      });
-    }
-
-    async function tryOpenCamera() {
-      if (scanStream || scanLiveMode.value) return;
-      if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
-        scanFail.value = '当前浏览器不支持摄像头';
-        return;
-      }
-      scanOpening.value = true;
-      await Vue.nextTick();
-      const tries = [
-        { video: { facingMode: { ideal: 'environment' } } },
-        { video: { facingMode: 'user' } },
-        { video: true },
-      ];
-      for (const c of tries) {
-        try {
-          scanStream = await navigator.mediaDevices.getUserMedia(c);
-          if (scanStream) break;
-        } catch (e) {
-          if (e.name === 'NotAllowedError' || e.name === 'NotFoundError') break;
-        }
-      }
-      // 用户可能在 getUserMedia 期间关闭了对话框
-      if (!modals.scanner) {
-        if (scanStream) { scanStream.getTracks().forEach(t => t.stop()); scanStream = null; }
-        return;
-      }
-      if (!scanStream) {
-        scanOpening.value = false;
-        scanFail.value = '无法打开摄像头，可使用拍照扫描';
-        return;
-      }
-      const video = scanVideo.value;
-      if (!video) { stopStream(); return; }
-      video.srcObject = scanStream;
-      try { await video.play(); } catch (e) {
-        scanOpening.value = false;
-        scanFail.value = '摄像头启动失败，可使用拍照扫描';
-        stopStream();
-        return;
-      }
-      // play 过程中也可能已关闭
-      if (!modals.scanner) { stopStream(); return; }
-      scanOpening.value = false;
-      scanLiveMode.value = true;
-      liveLoop();
-    }
-
-    function liveLoop() {
-      if (!modals.scanner || !scanLiveMode.value || !scanVideo.value) return;
-      const video = scanVideo.value;
-      const canvas = scanCanvas.value;
-      if (!canvas || video.readyState < 2) {
-        scanTimer = setTimeout(liveLoop, 200);
-        return;
-      }
-      const w = Math.min(video.videoWidth || 640, 560);
-      const h = Math.min(video.videoHeight || 480, 420);
-      if (canvas.width !== w || canvas.height !== h) { canvas.width = w; canvas.height = h; }
-      const ctx = canvas.getContext('2d', { willReadFrequently: true });
-      ctx.drawImage(video, 0, 0, w, h);
-      const imageData = ctx.getImageData(0, 0, w, h);
-      try {
-        // 先尝试不反转，失败再尝试两种反转模式（提高多码场景检出率）
-        let code = jsQR(imageData.data, w, h, { inversionAttempts: 'dontInvert' });
-        if (!code) {
-          code = jsQR(imageData.data, w, h, { inversionAttempts: 'attemptBoth' });
-        }
-        if (code && code.data) {
-          const text = code.data;
-          const now = Date.now();
-          // 同一二维码 2 秒内不重复提示
-          if (text === lastScannedText && now - lastScannedTime < 2000) {
-            scanTimer = setTimeout(liveLoop, 100);
-            return;
-          }
-          lastScannedText = text;
-          lastScannedTime = now;
-          if (validateAndExecuteQR(text)) {
-            stopScanner();
-            showToast('二维码识别成功 ✓');
-            return;
-          }
-          // 无效二维码 → 短暂提示后继续扫描
-          showToast('无效二维码');
-        }
-      } catch (e) { console.log('[liveLoop] jsQR error:', e); }
-      scanTimer = setTimeout(liveLoop, 100);
-    }
-
-    // ---- 拍照扫描 ----
-    function capturePhoto() {
-      const input = scanPhotoInput.value;
-      if (!input) return;
-      input.value = '';
-      input.click();
-    }
-
-    function onScanPhoto(event) {
-      const files = event.target && event.target.files;
-      const file = files && files[0];
-      if (!file) return;
-      let url;
-      try { url = URL.createObjectURL(file); } catch { url = null; }
-      if (url) scanPhotoSrc.value = url;
-      const img = new Image();
-      img.onload = function() {
-        const canvas = scanCanvas.value;
-        if (!canvas) { if (url) URL.revokeObjectURL(url); return; }
-        const w = Math.min(img.naturalWidth || 800, 800);
-        const h = Math.min(img.naturalHeight || 800, 800);
-        if (w === 0 || h === 0) { showToast('图片无效，请重试'); if (url) URL.revokeObjectURL(url); return; }
-        canvas.width = w; canvas.height = h;
-        const ctx = canvas.getContext('2d', { willReadFrequently: true });
-        ctx.drawImage(img, 0, 0, w, h);
-        let imageData;
-        try { imageData = ctx.getImageData(0, 0, w, h); } catch { imageData = null; }
-        if (!imageData) { showToast('图片解析失败，请重试'); if (url) URL.revokeObjectURL(url); return; }
-        try {
-          const code = jsQR(imageData.data, w, h, { inversionAttempts: 'dontInvert' });
-          if (code && code.data) {
-            const text = code.data;
-            stopScanner();
-            if (validateAndExecuteQR(text)) showToast('二维码识别成功 ✓');
-            else showToast('无效二维码');
-            if (url) URL.revokeObjectURL(url);
-            return;
-          }
-          showToast('未识别到签到二维码，请重新拍照');
-        } catch { showToast('图片解析失败，请重试'); }
-        if (url) URL.revokeObjectURL(url);
-      };
-      img.onerror = function() { showToast('图片加载失败，请重试'); if (url) URL.revokeObjectURL(url); };
-      img.src = url || '';
-    }
-
-    function stopStream() {
-      if (scanStream) { scanStream.getTracks().forEach(t => t.stop()); scanStream = null; }
-      if (scanVideo.value) { scanVideo.value.srcObject = null; }
-      if (scanTimer) { clearTimeout(scanTimer); scanTimer = null; }
-    }
-
-    function stopScanner() {
-      stopStream();
-      modals.scanner = false;
-      scanOpening.value = false;
-      scanLiveMode.value = false;
-      scanPhotoSrc.value = null;
-    }
-
-    async function executeCheckin() {
-      if (!checkinForm.courseid || !checkinForm.ticketid || !checkinForm.expire || !checkinForm.sign || !checkinForm.randNum) {
-        showToast('所有参数均为必填项');
-        return;
-      }
-      checkinLoading.value = true;
-      checkinResults.value = [];
-      try {
-        const res = await api('POST', '/api/checkin', {
-          type: 2,
-          courseid: checkinForm.courseid,
-          ticketid: checkinForm.ticketid,
-          expire: parseInt(checkinForm.expire) || 0,
-          sign: checkinForm.sign || '',
-          randNum: checkinForm.randNum || '',
-        });
-        const data = res.data || {};
-        checkinResults.value = data.results || [];
-        showToast(data.message || `签到完成 (${checkinSuccessCount.value}/${checkinResults.value.length})`);
-      } catch (e) { showToast(e.message || '签到失败'); }
-      finally { checkinLoading.value = false; }
-    }
-
-    // ---- 日志 ----
-    async function loadLogs() {
-      try { const res = await api('GET', '/api/checkin/logs'); logs.value = res.data || []; }
-      catch (e) { showToast(e.message); }
-    }
-
-    // ---- 用户管理 ----
-    async function loadUsers() {
-      if (state.currentUser?.role !== 'admin') return;
-      try { const res = await api('GET', '/api/users'); users.value = res.data || []; }
-      catch (e) { showToast(e.message); }
-    }
-
-    function openUserModal(u) {
-      editingUser.value = u || null;
-      userForm.email = u ? u.email : '';
-      userForm.password = '';
-      userForm.role = u ? u.role : 'user';
-      userForm.is_active = u ? u.is_active : true;
-      modals.user = true;
-    }
-
-    async function saveUser() {
-      if (!userForm.email) { showToast('请填写邮箱'); return; }
-      try {
-        if (editingUser.value) {
-          const body = { email: userForm.email, role: userForm.role, is_active: userForm.is_active };
-          if (userForm.password) body.password = userForm.password;
-          await api('PUT', `/api/users/${editingUser.value.id}`, body);
-          showToast('用户已更新');
-        } else {
-          if (!userForm.password) { showToast('请填写密码'); return; }
-          await api('POST', '/api/users', { email: userForm.email, password: userForm.password, role: userForm.role });
-          showToast('用户已创建');
-        }
-        modals.user = false;
-        loadUsers();
-      } catch (e) { showToast(e.message); }
-    }
-
-    async function deleteUser(u) {
-      if (!confirm(`确定删除用户 ${u.email}？`)) return;
-      try {
-        await api('DELETE', `/api/users/${u.id}`);
-        showToast('用户已删除');
-        loadUsers();
-      } catch (e) { showToast(e.message); }
-    }
-
-    // ---- 修改密码 ----
-    async function changePassword() {
-      if (!changePwdForm.old_password) { showToast('请输入旧密码'); return; }
-      if (!changePwdForm.new_password) { showToast('请输入新密码'); return; }
-      if (changePwdForm.new_password !== changePwdForm.confirm) { showToast('两次输入的新密码不一致'); return; }
-      try {
-        await api('PUT', '/api/user/password', {
-          old_password: changePwdForm.old_password,
-          new_password: changePwdForm.new_password,
-        });
-        showToast('密码修改成功');
-        modals.changePwd = false;
-        changePwdForm.old_password = '';
-        changePwdForm.new_password = '';
-        changePwdForm.confirm = '';
-      } catch (e) { showToast(e.message); }
-    }
-
-    // 根据当前路由加载数据
-    // ---- 管理员全部账号 ----
-    async function loadAdminAccounts() {
-      if (state.currentUser?.role !== 'admin') return;
-      try { const r = await api('GET', '/api/admin/accounts'); adminAccounts.value = r.data || []; }
-      catch {}
-    }
-
-    // ---- 邀请码管理 ----
-    async function loadInviteRequired() {
-      try { const r = await api('GET', '/api/settings/invite-required'); inviteRequired.value = r.data?.invite_required === true; }
-      catch {}
-    }
-    async function loadInviteCodes() {
-      try { const r = await api('GET', '/api/invite-codes'); inviteCodes.value = r.data || []; }
-      catch { }
-    }
-    function openInviteModal(c) {
-      editingInvite.value = c || null;
-      inviteForm.code = c ? c.code : '';
-      inviteForm.max_uses = c ? c.max_uses : null;
-      inviteForm.expires_in = null;
-      inviteForm.note = c ? c.note : '';
-      modals.invite = true;
-    }
-    async function saveInviteCode() {
-      if (editingInvite.value) {
-        try {
-          await api('PUT', `/api/invite-codes/${editingInvite.value.id}`, {
-            is_active: editingInvite.value.is_active,
-            max_uses: inviteForm.max_uses,
-            note: inviteForm.note,
-          });
-          showToast('邀请码已更新');
-        } catch (e) { showToast(e.message); }
-      } else {
-        try {
-          await api('POST', '/api/invite-codes', {
-            code: inviteForm.code,
-            max_uses: inviteForm.max_uses,
-            expires_in_hours: inviteForm.expires_in,
-            note: inviteForm.note,
-          });
-          showToast('邀请码已生成');
-        } catch (e) { showToast(e.message); }
-      }
-      modals.invite = false;
-      loadInviteCodes();
-    }
-    async function toggleInviteActive(c, event) {
-      const target = event.target;
-      const newVal = target.checked;
-      try {
-        await api('PUT', `/api/invite-codes/${c.id}`, { is_active: newVal, max_uses: c.max_uses, note: c.note || '' });
-        c.is_active = newVal;
-        showToast(newVal ? '邀请码已启用' : '邀请码已停用');
-      } catch (e) {
-        target.checked = !newVal;
-        showToast(e.message);
-      }
-    }
-    async function deleteInviteCode(c) {
-      if (!confirm(`确定删除邀请码 ${c.code}？`)) return;
-      try { await api('DELETE', `/api/invite-codes/${c.id}`); showToast('邀请码已删除'); loadInviteCodes(); }
-      catch (e) { showToast(e.message); }
-    }
-    async function toggleInviteRequired(event) {
-      const target = event.target;
-      const newVal = target.checked;
-      try {
-        await api('PUT', '/api/settings/invite-required', { invite_required: newVal });
-        inviteRequired.value = newVal;
-        showToast(newVal ? '已开启邀请码验证' : '已关闭邀请码验证');
-      } catch (e) {
-        target.checked = !newVal;
-        showToast(e.message);
-      }
-    }
-
-    async function loadPageData(page) {
-      switch (page) {
-        case 'dashboard': await Promise.all([loadAccounts(), loadBindings(), loadLogs()]); break;
-        case 'accounts': await loadAccounts(); break;
-        case 'courses': await Promise.all([loadAccounts(), loadBindings()]); break;
-        case 'logs': await loadLogs(); break;
-        case 'users': await Promise.all([loadUsers(), loadAdminAccounts(), loadInviteRequired(), loadInviteCodes()]); break;
-      }
-    }
-
-    // 监听 hashchange 自动加载数据
-    window.addEventListener('hashchange', () => {
-      const to = hashFromURL();
-      if (route.value === to) return;
-      route.value = to;
-      loadPageData(to);
-    });
-
-    // ---- 初始化 ----
-    loadInviteRequired();
-    if (state.token) {
-      loadPageData(route.value).catch(() => {
-        state.token = null;
-        state.currentUser = null;
-        localStorage.removeItem('token');
-        localStorage.removeItem('refresh_token');
-        localStorage.removeItem('user');
-      });
-    }
-
-    return {
-      state, route, sidebarOpen, loading, loginView,
-      showLoginPwd, showRegPwd, showAcctPwd, showUserPwd,
-      showChangeOldPwd, showChangeNewPwd, showChangeConfirmPwd,
-      form, accountForm, bindingForm, userForm, checkinForm, logFilter,
-      changePwdForm,
-      accounts, bindings, logs, users, recentLogs,
-      modals, editingAccount, editingUser,
-      checkinLoading, checkinResults,
-      pageTitle, pageSubtitle, filteredLogs, stats, checkinSuccessCount,
-      formatTime, getAccountEmail, getCourseName, getCourseSemester, getCourseCode, showToast,
-      navigate, login, register, logout,
-      loadAccounts, openAccountModal, saveAccount, deleteAccount,
-      loadBindings, openBindingModal, saveBinding, deleteBinding, toggleBinding,
-      executeCheckin, parseCheckinUrl, checkinUrl, loadLogs,
-      loadUsers, openUserModal, saveUser, deleteUser, changePassword,
-      inviteRequired, inviteCodes, editingInvite, inviteForm, adminAccounts,
-      loadInviteCodes, openInviteModal, saveInviteCode, deleteInviteCode, toggleInviteActive, toggleInviteRequired,
-      copyText, codeIsExpired, codeStatusClass, codeStatusText,
-      startScanner, stopScanner, tryOpenCamera, capturePhoto, onScanPhoto,
-      scanOpening, scanLiveMode, scanFail,
-      scanPhotoSrc, scanVideo, scanCanvas, scanPhotoInput,
-    };
-  }
-}).mount('#app');
-</script>
+        </mdui-dialog>
+
+    </div><!-- /#app -->
+
+    <!-- MDUI 2 JS (先加载使组件就绪) -->
+    <script src="/static/mdui.global.js"></script>
+    <!-- jsQR 二维码识别 -->
+    <script src="/static/jsqr.min.js"></script>
+    <!-- Vue 3 -->
+    <script src="/static/vue.global.prod.js"></script>
+
+    <!-- 应用逻辑 -->
+    <script src="/static/index.js"></script>
 </body>
+
 </html>
