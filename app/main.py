@@ -743,6 +743,21 @@ async def set_invite_required(
     return BaseResponse(message="设置已更新", data={"invite_required": invite_required})
 
 
+@app.get("/api/admin/accounts")
+async def admin_list_accounts(
+    current_user: User = Depends(get_current_user),
+    session: Session = Depends(get_session_with),
+):
+    """查询所有账号信息（仅管理员）"""
+    if current_user.role != Role.admin:
+        raise HTTPException(status_code=403, detail="权限不足")
+    accounts = session.exec(select(Account).order_by(Account.created_at.desc())).all()
+    return BaseResponse(
+        message="success",
+        data=[account.model_dump(exclude=["password"]) for account in accounts],
+    )
+
+
 # ================================
 #          Account CRUD
 # ================================
@@ -753,14 +768,7 @@ async def list_accounts(
     current_user: User = Depends(get_current_user),
     session: Session = Depends(get_session_with),
 ):
-    """获取账号列表。管理员查看全部，普通用户查看自己关联的账号。"""
-    if current_user.role == Role.admin:
-        accounts = session.exec(select(Account).order_by(Account.created_at.desc())).all()
-        return BaseResponse(
-            message="success",
-            data=[account.model_dump(exclude=["password"]) for account in accounts],
-        )
-    # 普通用户通过 UserAccount 关联查询
+    """获取当前用户关联的账号"""
     user_accounts = session.exec(
         select(UserAccount).where(UserAccount.user_id == current_user.id)
     ).all()
