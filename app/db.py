@@ -31,7 +31,7 @@ def _get_redis_pool() -> "ConnectionPool | None":
     global _redis_pool
     if _redis_pool is None:
         try:
-            _redis_pool = ConnectionPool.from_url(REDIS_URL)
+            _redis_pool = ConnectionPool.from_url(REDIS_URL, protocol=2)
         except Exception:
             import logging
             logging.getLogger(__name__).warning(

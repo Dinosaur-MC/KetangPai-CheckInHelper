@@ -213,11 +213,14 @@ def get_current_user(
         raise HTTPException(status_code=403, detail="账号已被禁用")
 
     if redis:
-        redis.set(
-            f"user:{user_id}",
-            json.dumps(user.model_dump(exclude_none=True, mode="json")),
-            86400,
-        )
+        try:
+            redis.set(
+                f"user:{user_id}",
+                json.dumps(user.model_dump(exclude_none=True, mode="json")),
+                86400,
+            )
+        except Exception:
+            logger.warning("Failed to cache user %s in Redis", user_id)
     return user
 
 
