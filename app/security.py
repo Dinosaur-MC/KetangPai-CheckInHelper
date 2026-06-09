@@ -60,7 +60,8 @@ def _get_cipher() -> Fernet:
                 key = raw_key.encode("utf-8") if isinstance(raw_key, str) else raw_key
                 _CREDENTIAL_CIPHER = Fernet(key)
             except Exception:
-                raise ValueError("CREDENTIAL_KEY 不是有效的 Fernet 密钥（需 32 字节 base64）")
+                logger.warning("CREDENTIAL_KEY 不是有效的 Fernet 密钥（需 32 字节 base64），课堂派凭据将明文存储。")
+                _CREDENTIAL_CIPHER = None
         else:
             logger.warning(
                 "CREDENTIAL_KEY 未设置，课堂派凭据将明文存储。"
