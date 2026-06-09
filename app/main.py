@@ -823,38 +823,56 @@ async def create_account(
     """创建新账号并关联到当前用户"""
     # 1. 检查是否已存在
     existing = session.exec(select(Account).where(Account.email == email)).first()
+
     if existing:
-        raise HTTPException(status_code=400, detail="该账号已存在")
+        # 账号已存在 — 直接关联到当前用户（不重复验证）
+        account = existing
+        # 检查当前用户是否已关联此账号
+        existing_link = session.exec(
+            select(UserAccount).where(
+                UserAccount.user_id == current_user.id,
+                UserAccount.account_id == account.id,
+            )
+        ).first()
+        if existing_link:
+            raise HTTPException(status_code=400, detail="该账号已关联到当前用户")
+    else:
+        # 2. 先通过课堂派 API 验证凭据有效性（不入库）
+        from app.api import KetangPaiAPI
 
-    # 2. 先通过课堂派 API 验证凭据有效性（不入库）
-    from app.api import KetangPaiAPI
+        uid = None
+        token = None
+        try:
+            client = KetangPaiAPI(email, password)
+            response = client.login()
+            token = response.data.token
+            uid = response.data.uid
+            client.close()
+            if not token:
+                raise HTTPException(status_code=400, detail="账号验证失败")
+        except Exception as e:
+            logger.warning("Account verification failed for %s: %s", email, e)
+            raise HTTPException(status_code=400, detail=f"账号验证失败：{e}")
 
-    uid = None
-    token = None
-    try:
-        client = KetangPaiAPI(email, password)
-        response = client.login()
-        token = response.data.token
-        uid = response.data.uid
-        client.close()
-        if not token:
-            raise HTTPException(status_code=400, detail="账号验证失败")
-    except Exception as e:
-        logger.warning("Account verification failed for %s: %s", email, e)
-        raise HTTPException(status_code=400, detail=f"账号验证失败：{e}")
+        # 3. 验证通过再入库
+        account = Account(
+            email=email,
+            password=encrypt_credential(password),
+            uid=uid,
+            status=1,
+        )
+        session.add(account)
+        session.flush()
+        if redis:
+            redis.set(f"account:{account.id}:token", token)
 
-    # 3. 验证通过再入库
-    account = Account(
-        email=email,
-        password=encrypt_credential(password),
-        uid=uid,
-        status=1,
-    )
-    session.add(account)
-    session.flush()
-    if redis:
-        redis.set(f"account:{account.id}:token", token)
+        # 4. 加入会话池
+        import asyncio
+        from app.sessions import session_pool
 
+        await asyncio.to_thread(session_pool.create, [account], False)
+
+    # 建立用户-账号关联
     user_account = UserAccount(
         user_id=current_user.id,
         account_id=account.id,
@@ -862,14 +880,11 @@ async def create_account(
     session.add(user_account)
     session.flush()
 
-    # 4. 加入会话池
-    import asyncio
-    from app.sessions import session_pool
-
-    await asyncio.to_thread(session_pool.create, [account], False)
-
     # 5. 拉取课程列表并自动绑定（不启用）
     try:
+        import asyncio
+        from app.sessions import session_pool
+
         courses = await asyncio.to_thread(
             session_pool.get_course_list, account.id
         )
