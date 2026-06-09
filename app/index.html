@@ -331,6 +331,18 @@
     .field-input::placeholder { color: #9ca3af; }
     .field-select { cursor: pointer; appearance: none; background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 24 24' fill='none' stroke='%239ca3af' stroke-width='2'%3E%3Cpath d='M6 9l6 6 6-6'/%3E%3C/svg%3E"); background-repeat: no-repeat; background-position: right 10px center; padding-right: 32px; }
 
+    /* ---- 密码显示切换 ---- */
+    .pwd-wrap { position: relative; }
+    .pwd-wrap .field-input { padding-right: 40px; box-sizing: border-box; }
+    .pwd-toggle {
+      position: absolute; right: 6px; top: 50%; transform: translateY(-50%);
+      background: none; border: none; cursor: pointer; color: #9ca3af;
+      display: flex; align-items: center; justify-content: center;
+      width: 32px; height: 32px; border-radius: 4px; padding: 0;
+    }
+    .pwd-toggle:hover { color: #6b7280; background: rgba(0,0,0,.04); }
+    .pwd-toggle .material-icons { font-size: 20px; }
+
     /* ============================================================
        签到结果
        ============================================================ */
@@ -414,7 +426,12 @@
             </div>
             <div class="field-wrap">
               <label class="field-label">密码</label>
-              <input class="field-input" type="password" :value="form.password" @input="form.password=$event.target.value" placeholder="至少 8 位">
+              <div class="pwd-wrap">
+                <input class="field-input" :type="showLoginPwd ? 'text' : 'password'" :value="form.password" @input="form.password=$event.target.value" placeholder="至少 8 位">
+                <button class="pwd-toggle" type="button" @click="showLoginPwd = !showLoginPwd" tabindex="-1" :title="showLoginPwd ? '隐藏密码' : '显示密码'">
+                  <span class="material-icons">{{ showLoginPwd ? 'visibility_off' : 'visibility' }}</span>
+                </button>
+              </div>
             </div>
             <mdui-button variant="filled" type="submit" :disabled="loading" style="width:100%;margin-top:8px;height:44px;">{{ loading ? '登录中…' : '登 录' }}</mdui-button>
           </form>
@@ -432,7 +449,12 @@
             </div>
             <div class="field-wrap">
               <label class="field-label">密码<span class="req">*</span></label>
-              <input class="field-input" type="password" :value="form.password" @input="form.password=$event.target.value" placeholder="至少 8 位">
+              <div class="pwd-wrap">
+                <input class="field-input" :type="showRegPwd ? 'text' : 'password'" :value="form.password" @input="form.password=$event.target.value" placeholder="至少 8 位">
+                <button class="pwd-toggle" type="button" @click="showRegPwd = !showRegPwd" tabindex="-1" :title="showRegPwd ? '隐藏密码' : '显示密码'">
+                  <span class="material-icons">{{ showRegPwd ? 'visibility_off' : 'visibility' }}</span>
+                </button>
+              </div>
             </div>
             <div class="field-wrap">
               <label class="field-label">邀请码 <span v-if="!inviteRequired" style="color:#9ca3af;font-weight:400;">（选填）</span><span v-else class="req">*</span></label>
@@ -815,7 +837,12 @@
     </div>
     <div class="field-wrap">
       <label class="field-label">{{ editingAccount ? '新密码 (留空不修改)' : '密码' }}</label>
-      <input class="field-input" type="password" :value="accountForm.password" @input="accountForm.password=$event.target.value" @keydown.enter="saveAccount">
+      <div class="pwd-wrap">
+        <input class="field-input" :type="showAcctPwd ? 'text' : 'password'" :value="accountForm.password" @input="accountForm.password=$event.target.value" @keydown.enter="saveAccount">
+        <button class="pwd-toggle" type="button" @click="showAcctPwd = !showAcctPwd" tabindex="-1" :title="showAcctPwd ? '隐藏密码' : '显示密码'">
+          <span class="material-icons">{{ showAcctPwd ? 'visibility_off' : 'visibility' }}</span>
+        </button>
+      </div>
     </div>
     <mdui-button slot="action" variant="text" @click="modals.account=false">取消</mdui-button>
     <mdui-button slot="action" variant="filled" @click="saveAccount">{{ editingAccount ? '保存' : '添加' }}</mdui-button>
@@ -852,7 +879,12 @@
     </div>
     <div class="field-wrap">
       <label class="field-label">{{ editingUser ? '新密码 (留空不修改)' : '密码' }}</label>
-      <input class="field-input" type="password" :value="userForm.password" @input="userForm.password=$event.target.value" @keydown.enter="saveUser">
+      <div class="pwd-wrap">
+        <input class="field-input" :type="showUserPwd ? 'text' : 'password'" :value="userForm.password" @input="userForm.password=$event.target.value" @keydown.enter="saveUser">
+        <button class="pwd-toggle" type="button" @click="showUserPwd = !showUserPwd" tabindex="-1" :title="showUserPwd ? '隐藏密码' : '显示密码'">
+          <span class="material-icons">{{ showUserPwd ? 'visibility_off' : 'visibility' }}</span>
+        </button>
+      </div>
     </div>
     <div class="field-wrap" v-if="editingUser">
       <label class="field-label">角色</label>
@@ -1008,6 +1040,12 @@ createApp({
     });
     const loading = ref(false);
     const loginView = ref('login');
+
+    // 密码显示切换
+    const showLoginPwd = ref(false);
+    const showRegPwd = ref(false);
+    const showAcctPwd = ref(false);
+    const showUserPwd = ref(false);
 
     // 表单
     const form = reactive({ email: '', password: '', invite_code: '' });
@@ -1699,6 +1737,7 @@ createApp({
 
     return {
       state, route, sidebarOpen, loading, loginView,
+      showLoginPwd, showRegPwd, showAcctPwd, showUserPwd,
       form, accountForm, bindingForm, userForm, checkinForm, logFilter,
       accounts, bindings, logs, users, recentLogs,
       modals, editingAccount, editingUser,
