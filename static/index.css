@@ -33,8 +33,7 @@ body {
    ============================================================ */
 .app-layout {
     display: flex;
-    height: 100vh;
-    overflow: hidden;
+    height: 100dvh;
 }
 
 /* ── 侧边栏 ── */
@@ -231,6 +230,7 @@ body {
     flex: 1;
     overflow-y: auto;
     padding: 24px;
+    padding-bottom: calc(24px + env(safe-area-inset-bottom, 0px));
     overscroll-behavior: contain;
 }
 
@@ -447,7 +447,7 @@ body {
 /* 首页直达签到 FAB — 固定底部居中 */
 .dash-fab-wrap {
     position: fixed;
-    bottom: 28px;
+    bottom: calc(28px + env(safe-area-inset-bottom, 0px));
     left: 50%;
     transform: translateX(-50%);
     display: none;
@@ -825,6 +825,7 @@ mdui-dialog::part(headline) {
     }
     .main-body {
         padding: 16px;
+        padding-bottom: calc(16px + env(safe-area-inset-bottom, 0px) + 12px);
     }
     .login-card {
         padding: 32px 20px 24px;
