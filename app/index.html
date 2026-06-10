@@ -45,7 +45,8 @@
                                     </button>
                                 </div>
                             </div>
-                            <mdui-button variant="filled" type="submit" :disabled="loading"
+                            <button type="submit" style="display:none"></button>
+                            <mdui-button variant="filled" @click="login" :disabled="loading"
                                 style="width:100%;margin-top:8px;height:44px;">{{ loading ? '登录中…' : '登 录'
                                 }}</mdui-button>
                         </form>
@@ -82,7 +83,8 @@
                                 <input class="field-input" :value="form.invite_code"
                                     @input="form.invite_code=$event.target.value" placeholder="邀请码">
                             </div>
-                            <mdui-button variant="filled" type="submit" :disabled="loading"
+                            <button type="submit" style="display:none"></button>
+                            <mdui-button variant="filled" @click="register" :disabled="loading"
                                 style="width:100%;margin-top:8px;height:44px;">{{ loading ? '注册中…' : '注 册'
                                 }}</mdui-button>
                         </form>
