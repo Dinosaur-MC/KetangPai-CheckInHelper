@@ -15,8 +15,8 @@ async function api(method, path, body) {
     const data = await res.json();
     if (res.ok) return data;
 
-    // 401 时尝试刷新令牌（跳过 refresh 自身接口）
-    if (res.status === 401 && path !== "/api/refresh" && !_refreshing) {
+    // 401 时尝试刷新令牌（跳过 auth 接口自身）
+    if (res.status === 401 && !["/api/refresh", "/api/login"].includes(path) && !_refreshing) {
         _refreshing = true;
         try {
             const rt = localStorage.getItem("refresh_token");
@@ -1010,6 +1010,18 @@ createApp({
             route.value = "login";
             window.location.hash = "#login";
         } else {
+            // 获取最新用户信息
+            const userId = state.currentUser?.id;
+            if (userId) {
+                api("GET", `/api/users/${userId}`).then((res) => {
+                    if (res.data) {
+                        state.currentUser = res.data;
+                        localStorage.setItem("user", JSON.stringify(res.data));
+                    }
+                }).catch(() => {
+                    // 获取失败时不清除登录状态，保持 localStorage 数据
+                });
+            }
             loadPageData(route.value).catch(() => {
                 state.token = null;
                 state.currentUser = null;
