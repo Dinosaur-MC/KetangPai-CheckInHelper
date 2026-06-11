@@ -4,14 +4,14 @@
 
 ## 功能
 
-- **用户系统** — 注册 / 登录 / 登出，JWT 认证 + Refresh Token 轮换，管理员角色
+- **用户系统** — 注册 / 登录 / 登出，JWT 认证 + Refresh Token 轮换，管理员角色，修改密码
 - **邀请码注册** — 管理员生成和管理邀请码，可选强制注册验证；三态：有效/停用/失效
-- **账号管理** — 添加课堂派账号（支持手机号/邮箱），自动校验有效性并加密存储密码
+- **账号管理** — 添加课堂派账号（支持手机号/邮箱），自动校验有效性并加密存储密码；已存在账号自动关联
 - **课程绑定** — 添加账号后自动拉取学期课程并绑定，支持一键启用/禁用
 - **批量签到** — 粘贴签到 URL 自动解析参数，并发处理多账号签到（Canary 模式）
-- **扫码签到** — 调用摄像头实时扫描二维码，自动校验并执行签到（jsQR）
+- **扫码签到** — 调用摄像头实时扫描二维码（jsQR），自动校验并执行签到；HTTP 环境降级为拍照识别
 - **签到日志** — 课程维度筛选，单次签到成功/失败明细
-- **用户管理** — 管理员可创建/编辑/删除/禁用用户
+- **用户管理** — 管理员可创建/编辑/删除/禁用用户，查看全部课堂派账号
 - **会话池** — 30 分钟过期，token 缓存于 Redis，按需自动重建
 - **安全机制** — 密码哈希（Argon2）、JWT 吊销 + Refresh Token Rotation、速率限制、CORS 白名单、凭据加密（Fernet）
 
@@ -20,7 +20,7 @@
 | 层级 | 技术 |
 |------|------|
 | 后端 | Python 3.13, FastAPI, SQLModel, uvicorn |
-| 数据库 | MySQL + Redis |
+| 数据库 | MySQL + Redis 5.x (RESP2) |
 | 前端 | Vue 3, MDUI 2 (Web Components)，静态资源本地化 |
 | 安全 | Passlib (Argon2), PyJWT, Cryptography (Fernet) |
 | 包管理 | uv |
@@ -33,19 +33,21 @@ CheckInHelper/
 ├── pyproject.toml       # 依赖管理
 ├── .env                 # 环境变量（MySQL/Redis/JWT）
 ├── favicon.ico          # 网站图标
-└── app/
-    ├── main.py          # FastAPI 应用、路由、中间件、异常处理
-    ├── models.py        # SQLModel 数据模型
-    ├── api.py           # 课堂派第三方 API 客户端
-    ├── security.py      # 密码哈希、JWT 签发/验证、凭据加密
-    ├── sessions.py      # 会话池（异步签到、并发限流）
-    ├── db.py            # MySQL + Redis 连接池
-    └── index.html       # 前端 SPA（Vue 3 + MDUI 2）
-├── static/
-│   ├── mdui.css / mdui.global.js    # MDUI 2（本地化）
-│   ├── vue.global.prod.js            # Vue 3（本地化）
-│   ├── material-icons.css / .ttf     # Material Icons
-│   └── jsqr.min.js                   # QR 码解码库
+├── app/
+│   ├── main.py          # FastAPI 应用、路由、中间件、异常处理
+│   ├── models.py        # SQLModel 数据模型
+│   ├── api.py           # 课堂派第三方 API 客户端
+│   ├── security.py      # 密码哈希、JWT 签发/验证、凭据加密
+│   ├── sessions.py      # 会话池（异步签到、并发限流）
+│   ├── db.py            # MySQL + Redis 连接池
+│   └── index.html       # 前端 SPA 模板（Vue 3 + MDUI 2）
+└── static/
+    ├── index.css        # 前端样式
+    ├── index.js         # 前端逻辑
+    ├── mdui.css / mdui.global.js    # MDUI 2（本地化）
+    ├── vue.global.prod.js            # Vue 3（本地化）
+    ├── material-icons.css / .ttf     # Material Icons
+    └── jsqr.min.js                   # QR 码解码库
 ```
 
 ## 快速开始
@@ -102,12 +104,14 @@ uv run main.py
 | POST | `/api/login` | 用户登录（返回 access_token + refresh_token） |
 | POST | `/api/refresh` | 刷新令牌（Rotation 防重用） |
 | POST | `/api/logout` | Token 吊销 |
+| PUT | `/api/user/password` | 修改当前用户密码 |
 
 ### 账号管理
 | 方法 | 路径 | 说明 |
 |------|------|------|
 | GET | `/api/accounts` | 当前用户的课堂派账号列表 |
-| POST | `/api/accounts` | 添加课堂派账号（自动验证并拉取课程） |
+| POST | `/api/accounts` | 添加课堂派账号（已存在则自动关联） |
+| GET | `/api/accounts/{id}` | 获取指定账号信息 |
 | PUT | `/api/accounts/{id}` | 更新账号信息 |
 | DELETE | `/api/accounts/{id}` | 删除账号 |
 
@@ -134,10 +138,11 @@ uv run main.py
 | 方法 | 路径 | 说明 |
 |------|------|------|
 | GET | `/api/users` | 用户列表 |
-| GET | `/api/users/{id}` | 用户详情 |
+| GET | `/api/users/{id}` | 用户详情（也可查自己） |
 | POST | `/api/users` | 创建用户 |
 | PUT | `/api/users/{id}` | 更新用户 |
 | DELETE | `/api/users/{id}` | 删除用户 |
+| GET | `/api/admin/accounts` | 全部课堂派账号 |
 
 ### 邀请码（管理员）
 | 方法 | 路径 | 说明 |
@@ -153,13 +158,22 @@ uv run main.py
 
 ### 认证流程
 
-登录/注册返回 `access_token`（短期）和 `refresh_token`（30 天）。前端拦截 401 自动用 `refresh_token` 换取新令牌（Rotation 策略，旧 token 一次使用后废弃）。
+登录/注册返回 `access_token`（短期）和 `refresh_token`（30 天）。前端拦截 401 自动用 `refresh_token` 换取新令牌（Rotation 策略，旧 token 一次使用后废弃）。页面刷新时本地解码 JWT `exp` 字段，过期 token 直接清除，不发起无效请求。
+
+### 前端路由
+
+- `#/login` / `#/register` — 登录 / 注册（独立 hash 路由）
+- `#/dashboard` / `#/accounts` / `#/courses` / `#/checkin` / `#/logs` — 已登录页面
+- `#/users` — 用户管理（仅管理员）
+- 未登录直接访问需登录页面自动跳回 `#/login`
+- 页面级滚动适配移动端 Edge 浮动工具栏
 
 ### 扫码签到
 
 支持两种模式：
 - **实时扫码**：打开摄像头 → jsQR 逐帧分析 → 校验域名和参数 → 自动填充并执行签到
 - **拍照扫码**：实时扫码不可用时（HTTP 环境）降级为拍照识别
+- 双模式扫描（dontInvert + attemptBoth 两遍扫描），去重防抖
 
 ### 邀请码三态
 
@@ -169,6 +183,8 @@ uv run main.py
 | 停用 | `is_active=false`，未过期，未超限 | 可恢复为有效 |
 | 失效 | 已过期或用尽次数 | 不可恢复 |
 
+注册流程先验证邀请码再查用户，成功注册才计入使用次数。
+
 ## 安全特性
 
 - **凭据加密** — 课堂派账号密码使用 Fernet (AES-128-CBC + HMAC) 加密存储
@@ -176,6 +192,7 @@ uv run main.py
 - **JWT 吊销** — 登出时将 `jti` 加入 Redis 黑名单
 - **速率限制** — 登录/注册 5 次/分钟（Redis 滑动窗口）
 - **密码哈希** — Argon2 哈希存储
+- **密码强度** — 8-128 字符，含大小写字母和数字
 - **CORS** — `ALLOWED_ORIGINS` 白名单机制
 
 ## 许可

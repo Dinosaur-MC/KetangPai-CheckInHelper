@@ -511,6 +511,65 @@ createApp({
         }
 
         // ---- 扫码识别 (jsQR 实时视频 + 拍照降级) ----
+        // 图像预处理 — 对比度增强，帮助 jsQR 识别边缘模糊/带装饰的二维码
+        function preprocessQR(imageData) {
+            const d = imageData.data;
+            // 转灰度 + 自动对比度拉伸
+            let min = 255, max = 0;
+            for (let i = 0; i < d.length; i += 4) {
+                const gray = d[i] * 0.299 + d[i + 1] * 0.587 + d[i + 2] * 0.114;
+                d[i] = d[i + 1] = d[i + 2] = gray;
+                if (gray < min) min = gray;
+                if (gray > max) max = gray;
+            }
+            const range = max - min;
+            if (range > 10) {
+                const scale = 255 / range;
+                for (let i = 0; i < d.length; i += 4) {
+                    const v = (d[i] - min) * scale;
+                    d[i] = d[i + 1] = d[i + 2] = Math.max(0, Math.min(255, v));
+                }
+            }
+            return imageData;
+        }
+
+        // 原生 BarcodeDetector 降级 — 处理能力远强于 jsQR
+        async function tryBarcodeDetector(imageData, w, h) {
+            if (!window.BarcodeDetector) return null;
+            try {
+                const detector = new BarcodeDetector({ formats: ["qr_code"] });
+                let bitmap;
+                try { bitmap = await createImageBitmap(imageData); } catch { return null; }
+                const results = await detector.detect(bitmap);
+                if (bitmap.close) bitmap.close();
+                if (results && results.length > 0 && results[0].rawValue) {
+                    return { data: results[0].rawValue };
+                }
+            } catch (e) {
+                // BarcodeDetector 可能不支持 QR
+            }
+            return null;
+        }
+
+        // 多策略扫描: BarcodeDetector(原生) → jsQR 原图 → jsQR 增强
+        async function scanQR(imageData, w, h) {
+            // 策略 1: 原生 BarcodeDetector — 更快、更准，优先使用
+            let code = await tryBarcodeDetector(imageData, w, h);
+            if (code && code.data) return code;
+
+            // 策略 2: jsQR 原图 — dontInvert + attemptBoth
+            code = jsQR(imageData.data, w, h, { inversionAttempts: "dontInvert" });
+            if (!code) code = jsQR(imageData.data, w, h, { inversionAttempts: "attemptBoth" });
+            if (code && code.data) return code;
+
+            // 策略 3: jsQR 增强对比度后
+            const enhanced = new ImageData(new Uint8ClampedArray(imageData.data), w, h);
+            preprocessQR(enhanced);
+            code = jsQR(enhanced.data, w, h, { inversionAttempts: "dontInvert" });
+            if (!code) code = jsQR(enhanced.data, w, h, { inversionAttempts: "attemptBoth" });
+            return code;
+        }
+
         function startScanner() {
             scanPhotoSrc.value = null;
             scanFail.value = "";
@@ -582,7 +641,7 @@ createApp({
             liveLoop();
         }
 
-        function liveLoop() {
+        async function liveLoop() {
             if (!modals.scanner || !scanLiveMode.value || !scanVideo.value) return;
             const video = scanVideo.value;
             const canvas = scanCanvas.value;
@@ -590,8 +649,9 @@ createApp({
                 scanTimer = setTimeout(liveLoop, 200);
                 return;
             }
-            const w = Math.min(video.videoWidth || 640, 560);
-            const h = Math.min(video.videoHeight || 480, 420);
+            // 用更高分辨率扫描，提升带装饰/裁剪二维码的识别率
+            const w = Math.min(video.videoWidth || 640, 960);
+            const h = Math.min(video.videoHeight || 480, 720);
             if (canvas.width !== w || canvas.height !== h) {
                 canvas.width = w;
                 canvas.height = h;
@@ -600,11 +660,7 @@ createApp({
             ctx.drawImage(video, 0, 0, w, h);
             const imageData = ctx.getImageData(0, 0, w, h);
             try {
-                // 先尝试不反转，失败再尝试两种反转模式（提高多码场景检出率）
-                let code = jsQR(imageData.data, w, h, { inversionAttempts: "dontInvert" });
-                if (!code) {
-                    code = jsQR(imageData.data, w, h, { inversionAttempts: "attemptBoth" });
-                }
+                const code = await scanQR(imageData, w, h);
                 if (code && code.data) {
                     const text = code.data;
                     const now = Date.now();
@@ -637,7 +693,7 @@ createApp({
             input.click();
         }
 
-        function onScanPhoto(event) {
+        async function onScanPhoto(event) {
             const files = event.target && event.target.files;
             const file = files && files[0];
             if (!file) return;
@@ -649,14 +705,14 @@ createApp({
             }
             if (url) scanPhotoSrc.value = url;
             const img = new Image();
-            img.onload = function () {
+            img.onload = async function () {
                 const canvas = scanCanvas.value;
                 if (!canvas) {
                     if (url) URL.revokeObjectURL(url);
                     return;
                 }
-                const w = Math.min(img.naturalWidth || 800, 800);
-                const h = Math.min(img.naturalHeight || 800, 800);
+                const w = Math.min(img.naturalWidth || 1200, 1200);
+                const h = Math.min(img.naturalHeight || 1200, 1200);
                 if (w === 0 || h === 0) {
                     showToast("图片无效，请重试");
                     if (url) URL.revokeObjectURL(url);
@@ -678,7 +734,9 @@ createApp({
                     return;
                 }
                 try {
-                    const code = jsQR(imageData.data, w, h, { inversionAttempts: "dontInvert" });
+                    // 先尝试 jsQR（原图 + 增强 + BarcodeDetector）
+                    const code = await scanQR(imageData, w, h);
+                    console.log("[onScanPhoto] scanQR:", code);
                     if (code && code.data) {
                         const text = code.data;
                         stopScanner();
