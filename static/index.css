@@ -758,6 +758,15 @@ body {
     align-items: center;
     gap: 12px;
 }
+/* 扫码用 canvas — 移出屏幕而非 display:none，避免浏览器降级渲染 */
+.scan-canvas {
+    position: fixed;
+    left: -100vw;
+    top: 0;
+    width: 1px;
+    height: 1px;
+    pointer-events: none;
+}
 .scan-stage {
     position: relative;
     width: 100%;

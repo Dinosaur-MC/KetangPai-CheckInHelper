@@ -770,7 +770,7 @@
                         <mdui-icon name="qr_code_scanner"></mdui-icon>
                     </div>
                 </div>
-                <canvas ref="scanCanvas" style="display:none;"></canvas>
+                <canvas ref="scanCanvas" class="scan-canvas"></canvas>
                 <p class="scan-hint" v-if="scanOpening">正在打开摄像头…</p>
                 <p class="scan-hint" v-else-if="scanLiveMode && !scanFail">将签到二维码对准框内自动识别</p>
                 <p class="scan-hint" v-else-if="scanFail" style="color:#dc2626;">{{ scanFail }}</p>
