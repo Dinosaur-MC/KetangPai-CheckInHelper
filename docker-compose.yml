@@ -1,0 +1,76 @@
+# ============================================================
+# CheckInHelper — docker compose
+# 启动：docker compose up -d
+# 停止：docker compose down
+# ============================================================
+name: checkinhelper
+
+networks:
+  checkinhelper:
+    driver: bridge
+
+services:
+  # --- MySQL 数据库 ---
+  mysql:
+    image: mysql:8.0
+    container_name: ch-mysql
+    restart: unless-stopped
+    environment:
+      MYSQL_ROOT_PASSWORD: ${MYSQL_ROOT_PASSWORD:-root123}
+      MYSQL_DATABASE: ${MYSQL_DATABASE:-checkinhelper}
+      MYSQL_USER: ${MYSQL_USER:-checkinhelper}
+      MYSQL_PASSWORD: ${MYSQL_PASSWORD:-checkinhelper}
+    volumes:
+      - mysql_data:/var/lib/mysql
+    networks:
+      - checkinhelper
+    healthcheck:
+      test: ["CMD", "mysqladmin", "ping", "-h", "localhost"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  # --- Redis 缓存 ---
+  redis:
+    image: redis:7-alpine
+    container_name: ch-redis
+    restart: unless-stopped
+    volumes:
+      - redis_data:/data
+    networks:
+      - checkinhelper
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 3s
+      retries: 5
+
+  # --- 应用 ---
+  app:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: ch-app
+    restart: unless-stopped
+    ports:
+      - "${PORT:-8765}:8765"
+    environment:
+      # 覆写默认连接串，指向 compose 内服务名
+      DATABASE_URL: mysql+pymysql://${MYSQL_USER:-checkinhelper}:${MYSQL_PASSWORD:-checkinhelper}@mysql:3306/${MYSQL_DATABASE:-checkinhelper}?charset=utf8mb4
+      REDIS_URL: redis://redis:6379/0
+      JWT_SECRET: ${JWT_SECRET:?请设置 JWT_SECRET 环境变量}
+      CREDENTIAL_KEY: ${CREDENTIAL_KEY:-}
+      ALLOWED_ORIGINS: ${ALLOWED_ORIGINS:-http://localhost:8765}
+      PORT: "8765"
+      DEBUG: ${DEBUG:-false}
+    networks:
+      - checkinhelper
+    depends_on:
+      mysql:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+
+volumes:
+  mysql_data:
+  redis_data:
