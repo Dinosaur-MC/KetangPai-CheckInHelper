@@ -368,17 +368,15 @@ class SessionPool:
                 )
 
                 if not first_result.success:
-                    # 缓存全局性失败标记（任意失败 hint 即认为整批次均不可用）
-                    if (
-                        "已过期" in first_result.message
-                        or "已结束" in first_result.message
-                    ):
+                    # 缓存全局性失败标记（code 30319/30322 表明整批次均不可用）
+                    if first_result.code in (30319, 30322):
                         if r:
                             r.set(invalid_key, "1", 3600)
                         logger.info(
                             "Ticket %s marked as globally invalid "
-                            "(reason: %s)",
-                            data.ticketid, first_result.message,
+                            "(code=%s reason=%s)",
+                            data.ticketid, first_result.code,
+                            first_result.message,
                         )
 
                     # 其余账号标记为"跳过"，但仍写入日志

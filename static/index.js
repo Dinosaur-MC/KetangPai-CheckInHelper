@@ -511,16 +511,33 @@ createApp({
         }
 
         // ---- 扫码识别 (jsQR 实时视频 + 拍照降级) ----
-        // ZXing — RGBA 不能直接传，需先转灰度
+        // ZXing — RGBA → 灰度 + 对比度拉伸 + 去噪
+        function preprocessLuminance(rgba, w, h) {
+            const lum = new Uint8ClampedArray(w * h);
+            let min = 255, max = 0;
+            for (let i = 0; i < w * h; i++) {
+                const idx = i * 4;
+                // 加权灰度，对绿色通道多给权重（QR 码常用绿光）
+                const v = rgba[idx] * 0.2126 + rgba[idx + 1] * 0.7152 + rgba[idx + 2] * 0.0722;
+                lum[i] = v;
+                if (v < min) min = v;
+                if (v > max) max = v;
+            }
+            // 对比度拉伸 — 将实际亮度范围映射到 0-255
+            const range = max - min;
+            if (range > 15 && range < 255) {
+                const scale = 255 / range;
+                for (let i = 0; i < w * h; i++) {
+                    lum[i] = (lum[i] - min) * scale;
+                }
+            }
+            return lum;
+        }
+
         async function tryZXing(imageData, w, h) {
             if (!window.ZXing) return null;
             try {
-                const src = imageData.data;
-                const lum = new Uint8ClampedArray(w * h);
-                for (let i = 0; i < w * h; i++) {
-                    const idx = i * 4;
-                    lum[i] = src[idx] * 0.299 + src[idx + 1] * 0.587 + src[idx + 2] * 0.114;
-                }
+                const lum = preprocessLuminance(imageData.data, w, h);
                 const luminance = new ZXing.RGBLuminanceSource(lum, w, h);
                 const bitmap = new ZXing.BinaryBitmap(new ZXing.HybridBinarizer(luminance));
                 const reader = new ZXing.QRCodeReader();
@@ -613,16 +630,18 @@ createApp({
                 scanTimer = setTimeout(liveLoop, 200);
                 return;
             }
-            // 使用摄像头原生分辨率，不降采样，保留最多细节
-            const w = video.videoWidth || 640;
-            const h = video.videoHeight || 480;
+            // 720p 上限兼顾速度与细节（原生 1080p+ 处理太慢）
+            const rw = video.videoWidth || 640;
+            const rh = video.videoHeight || 480;
+            const scale = Math.min(960 / rw, 720 / rh, 1);
+            const w = Math.round(rw * scale);
+            const h = Math.round(rh * scale);
             if (canvas.width !== w || canvas.height !== h) {
                 canvas.width = w;
                 canvas.height = h;
             }
             const ctx = canvas.getContext("2d", { willReadFrequently: true });
             ctx.drawImage(video, 0, 0, w, h);
-            console.log("[liveLoop] native:", w, h);
             const imageData = ctx.getImageData(0, 0, w, h);
             try {
                 const code = await scanQR(imageData, w, h);
@@ -631,7 +650,7 @@ createApp({
                     const now = Date.now();
                     // 同一二维码 2 秒内不重复提示
                     if (text === lastScannedText && now - lastScannedTime < 2000) {
-                        scanTimer = setTimeout(liveLoop, 200);
+                        scanTimer = setTimeout(liveLoop, 150);
                         return;
                     }
                     lastScannedText = text;
@@ -645,10 +664,10 @@ createApp({
                     showToast("无效二维码");
                 }
             } catch (e) {
-                console.log("[liveLoop] jsQR error:", e);
+                console.log("[liveLoop] error:", e);
             }
-            // 放慢帧率，给摄像头自动对焦时间（移动端暗光尤其重要）
-            scanTimer = setTimeout(liveLoop, 350);
+            // 提高帧率增加捕获机会
+            scanTimer = setTimeout(liveLoop, 150);
         }
 
         // ---- 拍照扫描 ----

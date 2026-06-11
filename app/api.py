@@ -115,6 +115,7 @@ class CheckInResult(BaseModel):
     email: str
     success: bool
     message: str
+    code: int = 0  # 课堂派业务码: 30319=二维码过期, 30322=考勤已结束, 30324=重复签到
 
 
 # 5. 获取课程列表接口
@@ -252,12 +253,18 @@ class KetangPaiAPI:
 
             if status == 1:
                 return CheckInResult(
-                    email=self.email, success=True, message="签到成功",
+                    email=self.email, success=True, message="签到成功", code=0,
                 )
-            # status != 1 → 失败，message 已有可读文本
+            # 重复签到 (30324) 视同成功
+            if code == 30324:
+                return CheckInResult(
+                    email=self.email, success=True,
+                    message=message or "重复签到（已成功）", code=code,
+                )
+            # 其他业务错误 → 失败，message 已有可读文本
             return CheckInResult(
                 email=self.email, success=False,
-                message=message or f"签到失败 (code={code})",
+                message=message or f"签到失败 (code={code})", code=code,
             )
         except requests.exceptions.RequestException as e:
             return CheckInResult(
