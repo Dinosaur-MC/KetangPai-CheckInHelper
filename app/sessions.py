@@ -313,7 +313,7 @@ class SessionPool:
                     for aid, cr in cached.items():
                         self._record(
                             db, r, user_id, aid, data.courseid,
-                            cr.client_email, cr,
+                            cr.email, cr,
                         )
                     try:
                         db.commit()
