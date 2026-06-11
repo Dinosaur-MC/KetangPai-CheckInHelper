@@ -511,63 +511,27 @@ createApp({
         }
 
         // ---- 扫码识别 (jsQR 实时视频 + 拍照降级) ----
-        // 图像预处理 — 对比度增强，帮助 jsQR 识别边缘模糊/带装饰的二维码
-        function preprocessQR(imageData) {
-            const d = imageData.data;
-            // 转灰度 + 自动对比度拉伸
-            let min = 255, max = 0;
-            for (let i = 0; i < d.length; i += 4) {
-                const gray = d[i] * 0.299 + d[i + 1] * 0.587 + d[i + 2] * 0.114;
-                d[i] = d[i + 1] = d[i + 2] = gray;
-                if (gray < min) min = gray;
-                if (gray > max) max = gray;
-            }
-            const range = max - min;
-            if (range > 10) {
-                const scale = 255 / range;
-                for (let i = 0; i < d.length; i += 4) {
-                    const v = (d[i] - min) * scale;
-                    d[i] = d[i + 1] = d[i + 2] = Math.max(0, Math.min(255, v));
-                }
-            }
-            return imageData;
-        }
-
-        // 原生 BarcodeDetector 降级 — 处理能力远强于 jsQR
-        async function tryBarcodeDetector(imageData, w, h) {
-            if (!window.BarcodeDetector) return null;
+        // ZXing — RGBA 不能直接传，需先转灰度
+        async function tryZXing(imageData, w, h) {
+            if (!window.ZXing) return null;
             try {
-                const detector = new BarcodeDetector({ formats: ["qr_code"] });
-                let bitmap;
-                try { bitmap = await createImageBitmap(imageData); } catch { return null; }
-                const results = await detector.detect(bitmap);
-                if (bitmap.close) bitmap.close();
-                if (results && results.length > 0 && results[0].rawValue) {
-                    return { data: results[0].rawValue };
+                const src = imageData.data;
+                const lum = new Uint8ClampedArray(w * h);
+                for (let i = 0; i < w * h; i++) {
+                    const idx = i * 4;
+                    lum[i] = src[idx] * 0.299 + src[idx + 1] * 0.587 + src[idx + 2] * 0.114;
                 }
-            } catch (e) {
-                // BarcodeDetector 可能不支持 QR
-            }
+                const luminance = new ZXing.RGBLuminanceSource(lum, w, h);
+                const bitmap = new ZXing.BinaryBitmap(new ZXing.HybridBinarizer(luminance));
+                const reader = new ZXing.QRCodeReader();
+                const result = reader.decode(bitmap);
+                if (result && result.getText) return { data: result.getText() };
+            } catch (_) {}
             return null;
         }
 
-        // 多策略扫描: BarcodeDetector(原生) → jsQR 原图 → jsQR 增强
         async function scanQR(imageData, w, h) {
-            // 策略 1: 原生 BarcodeDetector — 更快、更准，优先使用
-            let code = await tryBarcodeDetector(imageData, w, h);
-            if (code && code.data) return code;
-
-            // 策略 2: jsQR 原图 — dontInvert + attemptBoth
-            code = jsQR(imageData.data, w, h, { inversionAttempts: "dontInvert" });
-            if (!code) code = jsQR(imageData.data, w, h, { inversionAttempts: "attemptBoth" });
-            if (code && code.data) return code;
-
-            // 策略 3: jsQR 增强对比度后
-            const enhanced = new ImageData(new Uint8ClampedArray(imageData.data), w, h);
-            preprocessQR(enhanced);
-            code = jsQR(enhanced.data, w, h, { inversionAttempts: "dontInvert" });
-            if (!code) code = jsQR(enhanced.data, w, h, { inversionAttempts: "attemptBoth" });
-            return code;
+            return await tryZXing(imageData, w, h);
         }
 
         function startScanner() {
@@ -649,15 +613,16 @@ createApp({
                 scanTimer = setTimeout(liveLoop, 200);
                 return;
             }
-            // 用更高分辨率扫描，提升带装饰/裁剪二维码的识别率
-            const w = Math.min(video.videoWidth || 640, 960);
-            const h = Math.min(video.videoHeight || 480, 720);
+            // 使用摄像头原生分辨率，不降采样，保留最多细节
+            const w = video.videoWidth || 640;
+            const h = video.videoHeight || 480;
             if (canvas.width !== w || canvas.height !== h) {
                 canvas.width = w;
                 canvas.height = h;
             }
             const ctx = canvas.getContext("2d", { willReadFrequently: true });
             ctx.drawImage(video, 0, 0, w, h);
+            console.log("[liveLoop] native:", w, h);
             const imageData = ctx.getImageData(0, 0, w, h);
             try {
                 const code = await scanQR(imageData, w, h);
@@ -666,7 +631,7 @@ createApp({
                     const now = Date.now();
                     // 同一二维码 2 秒内不重复提示
                     if (text === lastScannedText && now - lastScannedTime < 2000) {
-                        scanTimer = setTimeout(liveLoop, 100);
+                        scanTimer = setTimeout(liveLoop, 200);
                         return;
                     }
                     lastScannedText = text;
@@ -682,7 +647,8 @@ createApp({
             } catch (e) {
                 console.log("[liveLoop] jsQR error:", e);
             }
-            scanTimer = setTimeout(liveLoop, 100);
+            // 放慢帧率，给摄像头自动对焦时间（移动端暗光尤其重要）
+            scanTimer = setTimeout(liveLoop, 350);
         }
 
         // ---- 拍照扫描 ----
@@ -733,8 +699,8 @@ createApp({
                     if (url) URL.revokeObjectURL(url);
                     return;
                 }
+                console.log("[onScanPhoto] getImageData:", imageData);
                 try {
-                    // 先尝试 jsQR（原图 + 增强 + BarcodeDetector）
                     const code = await scanQR(imageData, w, h);
                     console.log("[onScanPhoto] scanQR:", code);
                     if (code && code.data) {
@@ -1045,7 +1011,9 @@ createApp({
             try {
                 const payload = JSON.parse(atob(token.split(".")[1]));
                 return payload.exp * 1000 < Date.now();
-            } catch { return true; }
+            } catch {
+                return true;
+            }
         }
 
         // ---- 初始化 ----
@@ -1071,14 +1039,16 @@ createApp({
             // 获取最新用户信息
             const userId = state.currentUser?.id;
             if (userId) {
-                api("GET", `/api/users/${userId}`).then((res) => {
-                    if (res.data) {
-                        state.currentUser = res.data;
-                        localStorage.setItem("user", JSON.stringify(res.data));
-                    }
-                }).catch(() => {
-                    // 获取失败时不清除登录状态，保持 localStorage 数据
-                });
+                api("GET", `/api/users/${userId}`)
+                    .then((res) => {
+                        if (res.data) {
+                            state.currentUser = res.data;
+                            localStorage.setItem("user", JSON.stringify(res.data));
+                        }
+                    })
+                    .catch(() => {
+                        // 获取失败时不清除登录状态，保持 localStorage 数据
+                    });
             }
             loadPageData(route.value).catch(() => {
                 state.token = null;
