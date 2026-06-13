@@ -787,10 +787,21 @@
 
     </div><!-- /#app -->
 
-    <!-- MDUI 2 JS (先加载使组件就绪) -->
+    <!-- Module 必须在 opencv.js 加载前定义 -->
+    <script>var Module = {
+      locateFile: function (path, prefix) {
+        if (path === 'wechat_qrcode_files.data') return '/static/wechat_qrcode_files.data';
+        return prefix + path;
+      },
+    };</script>
+    <!-- 微信二维码引擎模型文件（Emscripten 虚拟 FS，必须在 opencv.js 前加载） -->
+    <script src="/static/wechat_qrcode_files.js"></script>
+    <!-- MDUI 2 JS -->
     <script src="/static/mdui.global.js"></script>
-    <!-- ZXing (v0.23, RGBLuminanceSource + QRCodeReader) -->
+    <!-- ZXing (v0.23) -->
     <script src="/static/zxing.min.js"></script>
+    <!-- OpenCV.js + WeChat QR 引擎（含 WASM，通过 GZip 压缩传输） -->
+    <script async src="/static/opencv.js"></script>
     <!-- Vue 3 -->
     <script src="/static/vue.global.prod.js"></script>
 

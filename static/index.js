@@ -510,45 +510,166 @@ createApp({
             }
         }
 
-        // ---- 扫码识别 (jsQR 实时视频 + 拍照降级) ----
-        // ZXing — RGBA → 灰度 + 对比度拉伸 + 去噪
-        function preprocessLuminance(rgba, w, h) {
-            const lum = new Uint8ClampedArray(w * h);
-            let min = 255, max = 0;
-            for (let i = 0; i < w * h; i++) {
-                const idx = i * 4;
-                // 加权灰度，对绿色通道多给权重（QR 码常用绿光）
-                const v = rgba[idx] * 0.2126 + rgba[idx + 1] * 0.7152 + rgba[idx + 2] * 0.0722;
-                lum[i] = v;
-                if (v < min) min = v;
-                if (v > max) max = v;
-            }
-            // 对比度拉伸 — 将实际亮度范围映射到 0-255
-            const range = max - min;
-            if (range > 15 && range < 255) {
-                const scale = 255 / range;
-                for (let i = 0; i < w * h; i++) {
-                    lum[i] = (lum[i] - min) * scale;
-                }
-            }
-            return lum;
+        // ---- 扫码识别 ----
+        // 解码管线：OpenCV WeChat QR（主）→ ZXing（备）→ 多尺度 → 分块
+
+        // 微信二维码引擎用的是 opencv_contrib/wechat_qrcode 模块
+        // 结合深度学习进行二维码定位和识别，对畸变/模糊/小码/装饰码鲁棒性极强
+
+        // OpenCV 就绪状态跟踪（opencv.js 是 async 加载的）
+        let _cvReady = false;
+        let _wechatDetector = null;
+        const _cvReadyPromise = new Promise((resolve) => {
+            const poll = () => {
+                if (window.cv && cv.wechat_qrcode_WeChatQRCode) { _cvReady = true; resolve(); return; }
+                setTimeout(poll, 80);
+            };
+            // 拦截 cv 全局赋值
+            Object.defineProperty(window, 'cv', {
+                configurable: true,
+                set(v) {
+                    Object.defineProperty(window, 'cv', { configurable: true, writable: true, value: v });
+                    if (v?.onRuntimeInitialized) {
+                        const orig = v.onRuntimeInitialized;
+                        v.onRuntimeInitialized = () => {
+                            orig?.();
+                            try {
+                                _wechatDetector = new cv.wechat_qrcode_WeChatQRCode(
+                                    "/wechat_qrcode/detect.prototxt",
+                                    "/wechat_qrcode/detect.caffemodel",
+                                    "/wechat_qrcode/sr.prototxt",
+                                    "/wechat_qrcode/sr.caffemodel"
+                                );
+                            } catch (e) { console.warn("[WeChatQR] init error:", e); }
+                            _cvReady = true; resolve();
+                        };
+                    } else { poll(); }
+                },
+                get() { return undefined; },
+            });
+            poll();
+        });
+
+        // 1. WeChat QR 引擎解码（从 canvas 检测并解码 QR 码）
+        async function _decodeWithOpenCV(canvas) {
+            if (!_cvReady || !_wechatDetector) return null;
+            try {
+                const src = cv.imread(canvas);
+                const pointsVec = new cv.MatVector();
+                const results = _wechatDetector.detectAndDecode(src, pointsVec);
+                src.delete();
+                pointsVec.delete();
+                let text = null;
+                if (results.size() > 0) text = results.get(0);
+                results.delete();
+                if (text && text.length > 0) return { data: text };
+            } catch (e) { console.warn("[WeChatQR]", e); }
+            return null;
         }
 
-        async function tryZXing(imageData, w, h) {
+        // 2. ZXing 备选（灰度+对比度拉伸+锐化 → Hybrid/GlobalHistogram 二值化）
+        function _lumPreprocess(rgba, w, h) {
+            const n = w * h;
+            const l = new Uint8ClampedArray(n);
+            let mn = 255, mx = 0;
+            for (let i = 0; i < n; i++) {
+                const p = i * 4, v = rgba[p] * 0.2126 + rgba[p + 1] * 0.7152 + rgba[p + 2] * 0.0722;
+                l[i] = Math.round(v);
+                if (v < mn) mn = v;
+                if (v > mx) mx = v;
+            }
+            const rng = mx - mn;
+            if (rng > 15 && rng < 240) { const s = 255 / rng; for (let i = 0; i < n; i++) l[i] = (l[i] - mn) * s; }
+            const sh = new Uint8ClampedArray(n);
+            for (let y = 1; y < h - 1; y++) {
+                const r = y * w, ru = (y - 1) * w, rd = (y + 1) * w;
+                for (let x = 1; x < w - 1; x++) {
+                    const v = (l[r + x] * 5) - l[ru + x] - l[rd + x] - l[r + x - 1] - l[r + x + 1];
+                    sh[r + x] = v < 0 ? 0 : v > 255 ? 255 : v;
+                }
+                sh[r] = l[r]; sh[r + w - 1] = l[r + w - 1];
+            }
+            for (let x = 0; x < w; x++) { sh[x] = l[x]; sh[(h - 1) * w + x] = l[(h - 1) * w + x]; }
+            return sh;
+        }
+        function _decodeZXing(lum, w, h, globalBin) {
             if (!window.ZXing) return null;
             try {
-                const lum = preprocessLuminance(imageData.data, w, h);
-                const luminance = new ZXing.RGBLuminanceSource(lum, w, h);
-                const bitmap = new ZXing.BinaryBitmap(new ZXing.HybridBinarizer(luminance));
-                const reader = new ZXing.QRCodeReader();
-                const result = reader.decode(bitmap);
-                if (result && result.getText) return { data: result.getText() };
+                const src = new ZXing.RGBLuminanceSource(lum, w, h);
+                const bin = globalBin ? new ZXing.GlobalHistogramBinarizer(src) : new ZXing.HybridBinarizer(src);
+                const r = new ZXing.QRCodeReader().decode(new ZXing.BinaryBitmap(bin));
+                if (r?.getText) return { data: r.getText() };
             } catch (_) {}
             return null;
         }
 
-        async function scanQR(imageData, w, h) {
-            return await tryZXing(imageData, w, h);
+        // 3. canvas → OpenCV 优先 → ZXing 备选
+        async function _tryDecode(ctx, canvas, img, dw, dh) {
+            canvas.width = dw; canvas.height = dh;
+            ctx.drawImage(img, 0, 0, dw, dh);
+            const r1 = await _decodeWithOpenCV(canvas);
+            if (r1) return r1;
+            if (!window.ZXing) return null;
+            const d = ctx.getImageData(0, 0, dw, dh);
+            const lum = _lumPreprocess(d.data, dw, dh);
+            return _decodeZXing(lum, dw, dh, 0) || _decodeZXing(lum, dw, dh, 1);
+        }
+
+        // 4. 实时循环用（只用 WeChatQR，确保识别精度）
+        async function scanQR(canvas) {
+            return await _decodeWithOpenCV(canvas);
+        }
+
+        // 5. 照片解码 — 多策略：OpenCV → ZXing、多尺度、分块
+        async function _decodePhoto(img, canvas) {
+            const ctx = canvas.getContext("2d", { willReadFrequently: true });
+            const nw = img.naturalWidth, nh = img.naturalHeight;
+            if (!nw || !nh) return null;
+            // 等待 OpenCV 就绪（最多等 15 秒）
+            if (!_cvReady) await Promise.race([_cvReadyPromise, new Promise(r => setTimeout(r, 15000))]);
+
+            // A: ~1000px 快速扫描
+            const sA = Math.min(1000 / nw, 1000 / nh, 1);
+            const r = await _tryDecode(ctx, canvas, img, Math.round(nw * sA), Math.round(nh * sA));
+            if (r) return r;
+
+            // B: 原生分辨率（上限 3000px）— 密集/小 QR 码
+            const cap = Math.min(nw, nh, 3000);
+            const sB = Math.min(cap / nw, cap / nh, 1);
+            if (sB > sA + 0.08) {
+                const r2 = await _tryDecode(ctx, canvas, img, Math.round(nw * sB), Math.round(nh * sB));
+                if (r2) return r2;
+            }
+            // C: 0.5x 中分辨率
+            if (0.5 > sA + 0.05 && sB > 0.55) {
+                const r3 = await _tryDecode(ctx, canvas, img, Math.round(nw * 0.5), Math.round(nh * 0.5));
+                if (r3) return r3;
+            }
+            // D: 分块扫描 — QR 只占画面小部分的大图
+            if (nw * nh > 1500 * 1500) {
+                const T = 1000, ST = Math.round(T * 0.7);
+                const cols = Math.max(1, Math.ceil((nw - T) / ST) + 1);
+                const rows = Math.max(1, Math.ceil((nh - T) / ST) + 1);
+                for (let r = 0; r < rows; r++) {
+                    for (let c = 0; c < cols; c++) {
+                        const sx = c === cols - 1 ? nw - T : c * ST;
+                        const sy = r === rows - 1 ? nh - T : r * ST;
+                        const tw = Math.min(T, nw - sx), th = Math.min(T, nh - sy);
+                        if (tw < 150 || th < 150) continue;
+                        canvas.width = tw; canvas.height = th;
+                        ctx.drawImage(img, sx, sy, tw, th, 0, 0, tw, th);
+                        const rr = await _decodeWithOpenCV(canvas);
+                        if (rr) return rr;
+                        if (window.ZXing) {
+                            const d = ctx.getImageData(0, 0, tw, th);
+                            const lum = _lumPreprocess(d.data, tw, th);
+                            const zr = _decodeZXing(lum, tw, th, 0) || _decodeZXing(lum, tw, th, 1);
+                            if (zr) return zr;
+                        }
+                    }
+                }
+            }
+            return null;
         }
 
         function startScanner() {
@@ -630,25 +751,23 @@ createApp({
                 scanTimer = setTimeout(liveLoop, 200);
                 return;
             }
-            // 720p 上限兼顾速度与细节（原生 1080p+ 处理太慢）
+            // 640px 上限兼顾速度与细节（WeChat QR 内部会处理缩放）
             const rw = video.videoWidth || 640;
             const rh = video.videoHeight || 480;
-            const scale = Math.min(960 / rw, 720 / rh, 1);
+            const scale = Math.min(640 / rw, 480 / rh, 1);
             const w = Math.round(rw * scale);
             const h = Math.round(rh * scale);
             if (canvas.width !== w || canvas.height !== h) {
                 canvas.width = w;
                 canvas.height = h;
             }
-            const ctx = canvas.getContext("2d", { willReadFrequently: true });
+            const ctx = canvas.getContext("2d");
             ctx.drawImage(video, 0, 0, w, h);
-            const imageData = ctx.getImageData(0, 0, w, h);
             try {
-                const code = await scanQR(imageData, w, h);
+                const code = await scanQR(canvas);
                 if (code && code.data) {
                     const text = code.data;
                     const now = Date.now();
-                    // 同一二维码 2 秒内不重复提示
                     if (text === lastScannedText && now - lastScannedTime < 2000) {
                         scanTimer = setTimeout(liveLoop, 150);
                         return;
@@ -660,14 +779,12 @@ createApp({
                         showToast("二维码识别成功 ✓");
                         return;
                     }
-                    // 无效二维码 → 短暂提示后继续扫描
                     showToast("无效二维码");
                 }
             } catch (e) {
                 console.log("[liveLoop] error:", e);
             }
-            // 提高帧率增加捕获机会
-            scanTimer = setTimeout(liveLoop, 150);
+            scanTimer = setTimeout(liveLoop, 200);
         }
 
         // ---- 拍照扫描 ----
@@ -683,45 +800,14 @@ createApp({
             const file = files && files[0];
             if (!file) return;
             let url;
-            try {
-                url = URL.createObjectURL(file);
-            } catch {
-                url = null;
-            }
+            try { url = URL.createObjectURL(file); } catch { url = null; }
             if (url) scanPhotoSrc.value = url;
             const img = new Image();
             img.onload = async function () {
                 const canvas = scanCanvas.value;
-                if (!canvas) {
-                    if (url) URL.revokeObjectURL(url);
-                    return;
-                }
-                const w = Math.min(img.naturalWidth || 1200, 1200);
-                const h = Math.min(img.naturalHeight || 1200, 1200);
-                if (w === 0 || h === 0) {
-                    showToast("图片无效，请重试");
-                    if (url) URL.revokeObjectURL(url);
-                    return;
-                }
-                canvas.width = w;
-                canvas.height = h;
-                const ctx = canvas.getContext("2d", { willReadFrequently: true });
-                ctx.drawImage(img, 0, 0, w, h);
-                let imageData;
+                if (!canvas) { if (url) URL.revokeObjectURL(url); return; }
                 try {
-                    imageData = ctx.getImageData(0, 0, w, h);
-                } catch {
-                    imageData = null;
-                }
-                if (!imageData) {
-                    showToast("图片解析失败，请重试");
-                    if (url) URL.revokeObjectURL(url);
-                    return;
-                }
-                console.log("[onScanPhoto] getImageData:", imageData);
-                try {
-                    const code = await scanQR(imageData, w, h);
-                    console.log("[onScanPhoto] scanQR:", code);
+                    const code = await _decodePhoto(img, canvas);
                     if (code && code.data) {
                         const text = code.data;
                         stopScanner();
@@ -731,15 +817,13 @@ createApp({
                         return;
                     }
                     showToast("未识别到签到二维码，请重新拍照");
-                } catch {
+                } catch (e) {
+                    console.error("[onScanPhoto]", e);
                     showToast("图片解析失败，请重试");
                 }
                 if (url) URL.revokeObjectURL(url);
             };
-            img.onerror = function () {
-                showToast("图片加载失败，请重试");
-                if (url) URL.revokeObjectURL(url);
-            };
+            img.onerror = function () { showToast("图片加载失败，请重试"); if (url) URL.revokeObjectURL(url); };
             img.src = url || "";
         }
 

@@ -12,6 +12,8 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse, FileResponse
 from fastapi.staticfiles import StaticFiles
 
+from starlette.middleware.gzip import GZipMiddleware
+
 from app.security import (
     configure_jwt,
     create_access_token,
@@ -93,6 +95,9 @@ app.add_middleware(
     allow_methods=["GET", "POST", "PUT", "DELETE", "HEAD", "OPTIONS"],
     allow_headers=["*"],
 )
+
+# GZip 压缩 — 对 opencv.js (~6.6MB) 尤其重要，可压缩至 ~2.2MB
+app.add_middleware(GZipMiddleware, minimum_size=1000)
 
 # 挂载静态文件目录
 static_dir = Path(__file__).parent.parent / "static"
