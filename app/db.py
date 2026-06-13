@@ -3,9 +3,15 @@ SQLModel + MySQL + Redis
 """
 
 import os
+import time
+import threading
+import logging
 from sqlmodel import create_engine, SQLModel, Session
-from redis import Redis, ConnectionPool, ConnectionError
+from redis import Redis, ConnectionPool
+
 from app.models import *
+
+logger = logging.getLogger(__name__)
 
 DATABASE_URL = os.getenv(
     "DATABASE_URL",
@@ -23,23 +29,149 @@ engine = create_engine(
     pool_recycle=int(os.getenv("DB_POOL_RECYCLE", "3600")),
 )
 
+# ── Redis 连接管理（断路器模式）──────────────────────────────────────────
+#
+# 设计要点：
+#   - 正常路径不做 ping，避免额外网络往返（每请求开销 ≈1μs）
+#   - check_redis_health() 每 30s 执行一次后台 ping，更新 _redis_available
+#   - get_redis() / get_redis_client() 调用 check_redis_health() 获取缓存标志
+#   - Redis 恢复后最多 30s 自动重新启用
+
+_REDIS_SOCKET_TIMEOUT = 3  # 连接/读写超时（秒），避免 TCP 级卡死
+_REDIS_HEALTH_INTERVAL = 60 * 5  # 健康检查最小间隔（秒）
 _redis_pool: "ConnectionPool | None" = None
+_redis_available: bool = False  # 断路器：首次健康检查后设为 True/False
+_redis_pool_lock = threading.Lock()
+_redis_health_lock = threading.Lock()
+_last_health_check: float = 0.0
 
 
 def _get_redis_pool() -> "ConnectionPool | None":
-    """懒初始化 Redis 连接池。连接失败返回 None。"""
+    """懒初始化 Redis 连接池，含短超时参数。线程安全（双重检查锁定）。"""
     global _redis_pool
     if _redis_pool is None:
-        try:
-            _redis_pool = ConnectionPool.from_url(REDIS_URL, protocol=2)
-        except Exception:
-            import logging
-            logging.getLogger(__name__).warning(
-                "Redis 连接失败，缓存与速率限制将不可用。请检查 REDIS_URL=%s",
-                REDIS_URL,
-            )
-            return None
+        with _redis_pool_lock:
+            if _redis_pool is None:
+                try:
+                    _redis_pool = ConnectionPool.from_url(
+                        REDIS_URL,
+                        protocol=2,
+                        socket_connect_timeout=_REDIS_SOCKET_TIMEOUT,
+                        socket_timeout=_REDIS_SOCKET_TIMEOUT,
+                    )
+                except Exception:
+                    logger.exception("Redis 连接池创建失败，缓存与速率限制将不可用")
+                    return None
     return _redis_pool
+
+
+def check_redis_health() -> bool:
+    """检查 Redis 可用性，更新断路器标志。线程安全，30 秒内不重复 ping。
+
+    速率限制
+        - 距上次检查 < 30s → 直接返回缓存标志（零网络开销）
+        - 距上次检查 ≥ 30s → 执行一次 ping（约 1ms），更新标志
+
+    返回值可直接用于 ``if check_redis_health():`` 判断。
+    """
+    global _redis_available, _last_health_check
+
+    with _redis_health_lock:
+        now = time.time()
+
+        # 速率限制：距上次检查不足间隔 → 返回缓存标志
+        if now - _last_health_check < _REDIS_HEALTH_INTERVAL:
+            return _redis_available
+
+        pool = _get_redis_pool()
+        if pool is None:
+            _redis_available = False
+            _last_health_check = now
+            return False
+
+        r: Redis | None = None
+        was_available = _redis_available
+        try:
+            r = Redis(connection_pool=pool)
+            r.ping()
+            _redis_available = True
+            if not was_available:
+                logger.info("Redis 连接已恢复")
+        except Exception:
+            _redis_available = False
+            if was_available:
+                logger.warning("Redis 连接异常，已熔断")
+        finally:
+            _last_health_check = now
+            if r is not None:
+                try:
+                    r.close()
+                except Exception:
+                    pass
+
+        return _redis_available
+
+
+def get_redis():
+    """FastAPI 依赖：获取 Redis 客户端。
+
+    **正常路径（Redis 正常）**
+        每 30s 窗口内第一次调用触发 ping（约 1ms），后续调用直接返回缓存标志。
+        同 30s 内所有后续请求零额外网络开销。
+
+    **熔断路径（Redis 不可用）**
+        - 熔断后连续 30s 返回 ``None``，不执行任何 Redis 操作。
+        - 30s 后自动尝试 ping 恢复检查。
+
+    所有连接异常集中捕获，调用方无需重复 try/except::
+
+        @router.get("/foo")
+        async def foo(redis: Redis = Depends(get_redis)):
+            if redis is None:
+                return {"cached": False}
+            val = redis.get("key")
+    """
+    if not check_redis_health():
+        yield None
+        return
+
+    pool = _get_redis_pool()
+    if pool is None:
+        yield None
+        return
+
+    try:
+        r = Redis(connection_pool=pool)
+        yield r
+    except Exception as e:
+        logger.error("获取 Redis 客户端异常: %s", e)
+        _redis_available = False
+        yield None
+
+
+def get_redis_client() -> "Redis | None":
+    """获取 Redis 客户端（非 FastAPI DI 场景）。
+
+    内部集成断路器，不含额外网络往返。
+    返回 ``None`` 表示不可用::
+
+        r = get_redis_client()
+        if r is not None:
+            val = r.get("key")
+    """
+    if not check_redis_health():
+        return None
+
+    pool = _get_redis_pool()
+    if pool is None:
+        return None
+
+    try:
+        return Redis(connection_pool=pool)
+    except Exception as e:
+        logger.error("获取 Redis 客户端异常: %s", e)
+        _redis_available = False
+        return None
 
 
 def init_db():
@@ -59,26 +191,3 @@ def get_session_with():
         except Exception:
             session.rollback()
             raise
-
-
-def get_redis():
-    pool = _get_redis_pool()
-    if pool is None:
-        yield None
-        return
-    r = Redis(connection_pool=pool)
-    try:
-        yield r
-    finally:
-        r.close()
-
-
-def get_redis_client() -> "Redis | None":
-    """Return a Redis client directly (non-generator, for use outside FastAPI DI).
-
-    如果 Redis 不可用，返回 None。调用方需自行处理。
-    """
-    pool = _get_redis_pool()
-    if pool is None:
-        return None
-    return Redis(connection_pool=pool)

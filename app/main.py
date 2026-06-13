@@ -27,7 +27,7 @@ from app.security import (
     blacklist_token,
     encrypt_credential,
 )
-from app.db import Session, Redis, ConnectionError, get_session_with, get_redis
+from app.db import Session, Redis, get_session_with, get_redis
 from sqlmodel import select
 from app.models import *
 from app.api import CheckInRequest, CheckInResult
@@ -152,8 +152,8 @@ class RateLimiter:
             current = redis.incr(key)
             if current == 1:
                 redis.expire(key, self.seconds)
-        except ConnectionError:
-            return  # Redis 不可用时放行
+        except Exception:
+            return  # Redis 不可用或 connection=None 时放行
         if current > self.times:
             raise HTTPException(status_code=429, detail="请求过于频繁，请稍后再试")
 
@@ -175,7 +175,7 @@ def get_user_cache(redis: Redis, user_id: int) -> User | None:
         data = json.loads(user_cache)
         # 安全：仅校验必要字段，忽略 injected 字段
         return User.model_validate(data)
-    except (ConnectionError, json.JSONDecodeError, Exception):
+    except Exception:
         logger.warning("Redis unavailable — user cache miss for %s", user_id)
         return None
 
