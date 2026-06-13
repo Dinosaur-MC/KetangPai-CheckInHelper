@@ -50,8 +50,8 @@ class Account(SQLModel, table=True):
 
 class UserAccount(SQLModel, table=True):
     id: Optional[int] = Field(default=None, primary_key=True)
-    user_id: int = Field(default=None, foreign_key="user.id")
-    account_id: int = Field(default=None, foreign_key="account.id")
+    user_id: int = Field(default=None, foreign_key="user.id", index=True)
+    account_id: int = Field(default=None, foreign_key="account.id", index=True)
 
 
 class Course(SQLModel, table=True):
@@ -64,8 +64,8 @@ class Course(SQLModel, table=True):
 
 class CourseBinding(SQLModel, table=True):
     id: Optional[int] = Field(default=None, primary_key=True)
-    course_id: str = Field(default=None, foreign_key="course.id")
-    account_id: int = Field(default=None, foreign_key="account.id")
+    course_id: str = Field(default=None, foreign_key="course.id", index=True)
+    account_id: int = Field(default=None, foreign_key="account.id", index=True)
     is_active: bool = True
 
 

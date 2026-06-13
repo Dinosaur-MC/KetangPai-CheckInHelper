@@ -112,18 +112,45 @@ def check_redis_health() -> bool:
         return _redis_available
 
 
+class _RedisWrapper:
+    """Redis client 的薄包装层。
+
+    所有操作透明委托给 Redis 客户端。若任一操作抛出异常，自动熔断
+    （将 ``_redis_available`` 置为 ``False``），避免后续请求继续等待超时。
+    """
+
+    def __init__(self, client: Redis):
+        self._client = client
+
+    def __getattr__(self, name: str):
+        attr = getattr(self._client, name)
+        if not callable(attr):
+            return attr
+
+        def wrapper(*args: object, **kwargs: object):
+            try:
+                return attr(*args, **kwargs)
+            except Exception:
+                global _redis_available
+                _redis_available = False
+                raise
+
+        return wrapper
+
+
 def get_redis():
     """FastAPI 依赖：获取 Redis 客户端。
 
     **正常路径（Redis 正常）**
-        每 30s 窗口内第一次调用触发 ping（约 1ms），后续调用直接返回缓存标志。
-        同 30s 内所有后续请求零额外网络开销。
+        每 5min 窗口内第一次调用触发 ping（约 1ms），后续调用直接返回缓存标志。
+        同 5min 内所有后续请求零额外网络开销。
 
     **熔断路径（Redis 不可用）**
-        - 熔断后连续 30s 返回 ``None``，不执行任何 Redis 操作。
-        - 30s 后自动尝试 ping 恢复检查。
+        - 客户端操作首次失败后立即将 *\_redis\_available* 翻转为 ``False``，
+          后续请求立即返回 ``None``。
+        - 每 5min 自动尝试一次 ping 恢复检查。
 
-    所有连接异常集中捕获，调用方无需重复 try/except::
+    返回的客户端已是 *\_RedisWrapper* 包装，调用方无需重复 try/except::
 
         @router.get("/foo")
         async def foo(redis: Redis = Depends(get_redis)):
@@ -131,6 +158,8 @@ def get_redis():
                 return {"cached": False}
             val = redis.get("key")
     """
+    global _redis_available
+
     if not check_redis_health():
         yield None
         return
@@ -142,7 +171,7 @@ def get_redis():
 
     try:
         r = Redis(connection_pool=pool)
-        yield r
+        yield _RedisWrapper(r)
     except Exception as e:
         logger.error("获取 Redis 客户端异常: %s", e)
         _redis_available = False
@@ -152,13 +181,14 @@ def get_redis():
 def get_redis_client() -> "Redis | None":
     """获取 Redis 客户端（非 FastAPI DI 场景）。
 
-    内部集成断路器，不含额外网络往返。
-    返回 ``None`` 表示不可用::
+    内部集成断路器，操作失败自动熔断。返回 ``None`` 表示不可用::
 
         r = get_redis_client()
         if r is not None:
             val = r.get("key")
     """
+    global _redis_available
+
     if not check_redis_health():
         return None
 
@@ -167,7 +197,8 @@ def get_redis_client() -> "Redis | None":
         return None
 
     try:
-        return Redis(connection_pool=pool)
+        r = Redis(connection_pool=pool)
+        return _RedisWrapper(r)
     except Exception as e:
         logger.error("获取 Redis 客户端异常: %s", e)
         _redis_available = False
