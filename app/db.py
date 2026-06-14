@@ -188,7 +188,7 @@ def get_redis():
             try:
                 r.close()
             except Exception:
-                pass
+                _redis_available = False
 
 
 def get_redis_client() -> "Redis | None":
