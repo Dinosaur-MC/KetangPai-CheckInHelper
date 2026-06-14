@@ -169,13 +169,26 @@ def get_redis():
         yield None
         return
 
+    # 拆分为两个块：
+    # - 块 A：Redis 客户端创建，异常仅限于连接失败
+    # - 块 B：yield 给调用方（不捕获外部异常，否则会吞掉路由抛出的 HTTPException）
+    r: Redis | None = None
     try:
         r = Redis(connection_pool=pool)
-        yield _RedisWrapper(r)
     except Exception as e:
         logger.error("获取 Redis 客户端异常: %s", e)
         _redis_available = False
         yield None
+        return
+
+    try:
+        yield _RedisWrapper(r)
+    finally:
+        if r is not None:
+            try:
+                r.close()
+            except Exception:
+                pass
 
 
 def get_redis_client() -> "Redis | None":
