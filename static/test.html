@@ -1,0 +1,268 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, user-scalable=no, minimum-scale=1.0, maximum-scale=1.0">
+    <title>WeChat QR 识别测试</title>
+    <style>
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+            max-width: 800px;
+            margin: 0 auto;
+            padding: 24px 16px;
+            background: #f8fafc;
+        }
+        h1 { font-size: 20px; margin-bottom: 4px; }
+        p { color: #64748b; font-size: 14px; margin-top: 4px; }
+        .card {
+            background: #fff;
+            border-radius: 12px;
+            padding: 20px;
+            box-shadow: 0 1px 3px rgba(0,0,0,.1);
+            margin-top: 16px;
+        }
+        canvas {
+            max-width: 100%;
+            border-radius: 8px;
+            border: 1px solid #e2e8f0;
+            margin-top: 12px;
+        }
+        .stats {
+            display: flex;
+            gap: 16px;
+            flex-wrap: wrap;
+            font-family: 'Courier New', monospace;
+            font-size: 13px;
+            margin-top: 12px;
+        }
+        .stats span {
+            background: #f1f5f9;
+            padding: 4px 10px;
+            border-radius: 6px;
+        }
+        .result-text {
+            margin-top: 12px;
+            padding: 10px 14px;
+            background: #f0fdf4;
+            border-radius: 8px;
+            word-break: break-all;
+            font-size: 14px;
+        }
+        .result-none {
+            color: #dc2626;
+            margin-top: 12px;
+        }
+        .status {
+            margin-top: 12px;
+            font-size: 14px;
+            color: #6366f1;
+        }
+        .status.error { color: #dc2626; }
+        button {
+            background: #6366f1;
+            color: #fff;
+            border: none;
+            padding: 10px 20px;
+            border-radius: 8px;
+            font-size: 14px;
+            cursor: pointer;
+        }
+        button:disabled {
+            opacity: .6;
+            cursor: not-allowed;
+        }
+        .hidden { display: none; }
+    </style>
+</head>
+<body>
+    <h1>🔬 WeChat QR 识别测试</h1>
+    <p>选择二维码图片 → 直接调用 WeChat QR 引擎解码（纯 OpenCV，无 ZXing 回退）</p>
+
+    <div class="card">
+        <input id="fileInput" type="file" accept="image/*" class="hidden">
+        <button id="selectBtn">选择二维码图片</button>
+        <span id="status" class="status">就绪</span>
+
+        <canvas id="preview"></canvas>
+
+        <div id="stats" class="stats hidden"></div>
+        <div id="resultText" class="result-text hidden"></div>
+        <div id="resultNone" class="result-none hidden">未识别到二维码</div>
+    </div>
+
+    <script>
+        // ---- 加载开放猫 ----
+        var Module = {
+            locateFile: function (path, prefix) {
+                if (path === 'wechat_qrcode_files.data') return '/static/wechat_qrcode_files.data';
+                return prefix + path;
+            },
+            onRuntimeInitialized: function () {
+                if (window.cv instanceof Promise) {
+                    window.cv.then(function (target) {
+                        window.cv = target;
+                        onCvReady();
+                    });
+                }
+            },
+        };
+
+        var detector = null;
+        var cvReady = false;
+
+        function onCvReady() {
+            try {
+                detector = new cv.wechat_qrcode_WeChatQRCode(
+                    "wechat_qrcode/detect.prototxt",
+                    "wechat_qrcode/detect.caffemodel",
+                    "wechat_qrcode/sr.prototxt",
+                    "wechat_qrcode/sr.caffemodel"
+                );
+                cvReady = true;
+                document.getElementById('status').textContent = '✅ WeChat QR 就绪';
+                document.getElementById('status').className = 'status';
+            } catch (e) {
+                document.getElementById('status').textContent = '❌ 探测器初始化失败: ' + e.message;
+                document.getElementById('status').className = 'status error';
+            }
+        }
+
+        // ---- 等待 cv 就绪（处理同步/异步两种 build） ----
+        function waitForCv() {
+            if (window.cv && cv.wechat_qrcode_WeChatQRCode) {
+                if (!cvReady) onCvReady();
+                return Promise.resolve();
+            }
+            if (window.cv instanceof Promise) {
+                return window.cv.then(function () {
+                    if (!cvReady) onCvReady();
+                });
+            }
+            // 同步模式：onRuntimeInitialized 会触发
+            return new Promise(function (resolve) {
+                var check = function () {
+                    if (cvReady) { resolve(); return; }
+                    setTimeout(check, 100);
+                };
+                check();
+            });
+        }
+
+        // ---- 解码 ----
+        document.getElementById('selectBtn').addEventListener('click', function () {
+            document.getElementById('fileInput').click();
+        });
+
+        document.getElementById('fileInput').addEventListener('change', async function (e) {
+            var file = e.target.files && e.target.files[0];
+            if (!file) return;
+
+            var statusEl = document.getElementById('status');
+            statusEl.textContent = '⏳ 等待 OpenCV 就绪…';
+            statusEl.className = 'status';
+
+            // 等待 cv + 探测器就绪（带 30s 超时）
+            var ok = await Promise.race([
+                waitForCv().then(function () { return cvReady; }),
+                new Promise(function (r) { setTimeout(function () { r(false); }, 30000); }),
+            ]);
+
+            if (!ok || !detector) {
+                statusEl.textContent = '❌ 引擎未就绪，查看控制台';
+                statusEl.className = 'status error';
+                return;
+            }
+
+            statusEl.textContent = '⏳ 加载图片…';
+
+            // 读文件
+            var img = new Image();
+            var url = URL.createObjectURL(file);
+            img.src = url;
+            await new Promise(function (resolve, reject) {
+                img.onload = resolve;
+                img.onerror = function () { reject(new Error('图片加载失败')); };
+            });
+
+            statusEl.textContent = '⏳ 解码中…';
+
+            // ---- 纯 WeChat QR 解码（与 demo.html 完全一致） ----
+            var t0 = performance.now();
+            try {
+                var src = cv.imread(img);
+                var t1 = performance.now();
+                var out = new cv.MatVector();
+                var results = detector.detectAndDecode(src, out);
+                var t2 = performance.now();
+
+                // 提取文本
+                var texts = [];
+                for (var i = 0; i < results.size(); i++) texts.push(results.get(i));
+                results.delete();
+
+                // 画检测框
+                var canvas = document.getElementById('preview');
+                canvas.width = img.naturalWidth;
+                canvas.height = img.naturalHeight;
+                for (var j = 0; j < out.size(); j++) {
+                    var rect = cv.boundingRect(out.get(j));
+                    cv.rectangle(src,
+                        new cv.Point(rect.x, rect.y),
+                        new cv.Point(rect.x + rect.width, rect.y + rect.height),
+                        new cv.Scalar(255, 0, 0), 2, cv.LINE_AA, 0);
+                }
+                cv.imshow(canvas, src);
+                src.delete();
+                out.delete();
+
+                // 显示结果
+                var imreadMs = Math.round(t1 - t0);
+                var decodeMs = Math.round(t2 - t1);
+
+                document.getElementById('stats').className = 'stats';
+                document.getElementById('stats').innerHTML =
+                    '<span>📖 imread: ' + imreadMs + 'ms</span>' +
+                    '<span>🔍 decode: ' + decodeMs + 'ms</span>' +
+                    '<span>⏱ 总计: ' + (imreadMs + decodeMs) + 'ms</span>' +
+                    '<span>📐 ' + img.naturalWidth + '×' + img.naturalHeight + '</span>' +
+                    '<span>🔢 结果: ' + texts.length + ' 个</span>';
+
+                if (texts.length) {
+                    document.getElementById('resultText').className = 'result-text';
+                    document.getElementById('resultText').innerHTML = texts.map(function (t, i) {
+                        return (i + 1) + '. ' + t;
+                    }).join('<br>');
+                    document.getElementById('resultNone').className = 'result-none hidden';
+                } else {
+                    document.getElementById('resultText').className = 'result-text hidden';
+                    document.getElementById('resultNone').className = 'result-none';
+                }
+
+                statusEl.textContent = '✅ 完成';
+                statusEl.className = 'status';
+
+                console.log('[Test]', { imread: imreadMs, decode: decodeMs, w: img.naturalWidth, h: img.naturalHeight });
+            } catch (e) {
+                console.error('[Test]', e);
+                statusEl.textContent = '❌ 解码失败: ' + e.message;
+                statusEl.className = 'status error';
+            }
+
+            URL.revokeObjectURL(url);
+        });
+
+        // 初始状态提示
+        (function () {
+            var s = document.getElementById('status');
+            if (window.cv) {
+                s.textContent = '⏳ OpenCV 已加载，等待初始化…';
+            } else {
+                s.textContent = '⏳ 加载 OpenCV (6.6MB) + WeChat QR 模型…';
+            }
+        })();
+    </script>
+
+    <script src="/static/wechat_qrcode_files.js"></script>
+    <script async src="/static/opencv.js"></script>
+</body>
+</html>
