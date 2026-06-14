@@ -521,6 +521,7 @@ createApp({
         // Module.onRuntimeInitialized 在 WASM 就绪后设 window._cvReady / window._wechatDetector。
         let _cvReady = false;
         let _wechatDetector = null;
+        let _checkCount = 0;
         const _cvReadyPromise = new Promise((resolve) => {
             const check = () => {
                 // 优先用 Module.onRuntimeInitialized 设置的全局变量
@@ -543,6 +544,13 @@ createApp({
                         window._cvReady = true;
                         resolve(); return;
                     } catch (e) { console.warn("[WeChatQR] init error:", e); }
+                }
+                // 放弃：30 秒后停止轮询（opencv.js 可能未加载或初始化失败）
+                _checkCount++;
+                if (_checkCount > 300) {
+                    console.error("[WeChatQR] 引擎加载超时（30s），WeChat QR 不可用");
+                    // 不 resolve — 调用方 Promise.race 超时自行降级
+                    return;
                 }
                 setTimeout(check, 100);
             };

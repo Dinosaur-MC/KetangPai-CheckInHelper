@@ -803,7 +803,10 @@
               "/wechat_qrcode/sr.caffemodel"
             );
             window._cvReady = true;
-          } catch (e) { console.warn("[WeChatQR] init:", e); }
+          } catch (e) {
+            console.warn("[WeChatQR] init:", e);
+            window._cvReady = false;
+          }
         }
         if (window.cv instanceof Promise) {
           window.cv.then(function (target) { window.cv = target; ready(); });
