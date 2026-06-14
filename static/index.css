@@ -10,9 +10,9 @@ html,
 body {
     margin: 0;
     padding: 0;
-    height: auto;
+    height: 100%;
     min-height: 100dvh;
-    overflow: auto;
+    overscroll-behavior: none;
     background: #e8eaed;
     font-family:
         "Roboto",
@@ -194,6 +194,8 @@ body {
     display: flex;
     flex-direction: column;
     min-width: 0;
+    min-height: 0;
+    overflow-y: auto;
     padding-top: 56px;
     background: #e8eaed url("https://blog.dmcstudio.top/assets/image/img/img(32).webp") no-repeat center;
     background-size: cover;
