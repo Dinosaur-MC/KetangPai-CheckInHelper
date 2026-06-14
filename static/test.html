@@ -186,34 +186,36 @@
 
             statusEl.textContent = '⏳ 解码中…';
 
-            // ---- 纯 WeChat QR 解码（与 demo.html 完全一致） ----
+            var src = null, out = null;
             var t0 = performance.now();
             try {
-                var src = cv.imread(img);
+                src = cv.imread(img);
                 var t1 = performance.now();
-                var out = new cv.MatVector();
+                out = new cv.MatVector();
                 var results = detector.detectAndDecode(src, out);
                 var t2 = performance.now();
 
-                // 提取文本
+                // 提取文本 (results 可能是空 MatVector 或 null)
                 var texts = [];
-                for (var i = 0; i < results.size(); i++) texts.push(results.get(i));
-                results.delete();
+                if (results) {
+                    for (var i = 0; i < results.size(); i++) texts.push(results.get(i));
+                    results.delete();
+                }
 
                 // 画检测框
                 var canvas = document.getElementById('preview');
                 canvas.width = img.naturalWidth;
                 canvas.height = img.naturalHeight;
-                for (var j = 0; j < out.size(); j++) {
-                    var rect = cv.boundingRect(out.get(j));
-                    cv.rectangle(src,
-                        new cv.Point(rect.x, rect.y),
-                        new cv.Point(rect.x + rect.width, rect.y + rect.height),
-                        new cv.Scalar(255, 0, 0), 2, cv.LINE_AA, 0);
+                if (out) {
+                    for (var j = 0; j < out.size(); j++) {
+                        var rect = cv.boundingRect(out.get(j));
+                        cv.rectangle(src,
+                            new cv.Point(rect.x, rect.y),
+                            new cv.Point(rect.x + rect.width, rect.y + rect.height),
+                            new cv.Scalar(255, 0, 0), 2, cv.LINE_AA, 0);
+                    }
                 }
                 cv.imshow(canvas, src);
-                src.delete();
-                out.delete();
 
                 // 显示结果
                 var imreadMs = Math.round(t1 - t0);
@@ -240,15 +242,17 @@
 
                 statusEl.textContent = '✅ 完成';
                 statusEl.className = 'status';
-
                 console.log('[Test]', { imread: imreadMs, decode: decodeMs, w: img.naturalWidth, h: img.naturalHeight });
             } catch (e) {
                 console.error('[Test]', e);
                 statusEl.textContent = '❌ 解码失败: ' + e.message;
                 statusEl.className = 'status error';
+            } finally {
+                // WASM 内存清理（必须执行，否则泄漏）
+                if (src) try { src.delete(); } catch (_) {}
+                if (out) try { out.delete(); } catch (_) {}
+                URL.revokeObjectURL(url);
             }
-
-            URL.revokeObjectURL(url);
         });
 
         // 初始状态提示

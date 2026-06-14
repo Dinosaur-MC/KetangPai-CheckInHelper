@@ -516,38 +516,37 @@ createApp({
         // 微信二维码引擎用的是 opencv_contrib/wechat_qrcode 模块
         // 结合深度学习进行二维码定位和识别，对畸变/模糊/小码/装饰码鲁棒性极强
 
-        // OpenCV 就绪状态跟踪（opencv.js 是 async 加载的）
+        // OpenCV / WeChat QR 就绪检查
+        // opencv.js + wechat_qrcode_files.js 通过 HTML 中的 <script async> 加载，
+        // Module.onRuntimeInitialized 在 WASM 就绪后设 window._cvReady / window._wechatDetector。
         let _cvReady = false;
         let _wechatDetector = null;
         const _cvReadyPromise = new Promise((resolve) => {
-            const poll = () => {
-                if (window.cv && cv.wechat_qrcode_WeChatQRCode) { _cvReady = true; resolve(); return; }
-                setTimeout(poll, 80);
+            const check = () => {
+                // 优先用 Module.onRuntimeInitialized 设置的全局变量
+                if (window._cvReady && window._wechatDetector) {
+                    _cvReady = true;
+                    _wechatDetector = window._wechatDetector;
+                    resolve(); return;
+                }
+                // 兜底：openCV 已加载但 onRuntimeInitialized 已跑过的情况
+                if (window.cv && cv.wechat_qrcode_WeChatQRCode && !window._wechatDetector) {
+                    try {
+                        _wechatDetector = new cv.wechat_qrcode_WeChatQRCode(
+                            "/wechat_qrcode/detect.prototxt",
+                            "/wechat_qrcode/detect.caffemodel",
+                            "/wechat_qrcode/sr.prototxt",
+                            "/wechat_qrcode/sr.caffemodel"
+                        );
+                        window._wechatDetector = _wechatDetector;
+                        _cvReady = true;
+                        window._cvReady = true;
+                        resolve(); return;
+                    } catch (e) { console.warn("[WeChatQR] init error:", e); }
+                }
+                setTimeout(check, 100);
             };
-            // 拦截 cv 全局赋值
-            Object.defineProperty(window, 'cv', {
-                configurable: true,
-                set(v) {
-                    Object.defineProperty(window, 'cv', { configurable: true, writable: true, value: v });
-                    if (v?.onRuntimeInitialized) {
-                        const orig = v.onRuntimeInitialized;
-                        v.onRuntimeInitialized = () => {
-                            orig?.();
-                            try {
-                                _wechatDetector = new cv.wechat_qrcode_WeChatQRCode(
-                                    "/wechat_qrcode/detect.prototxt",
-                                    "/wechat_qrcode/detect.caffemodel",
-                                    "/wechat_qrcode/sr.prototxt",
-                                    "/wechat_qrcode/sr.caffemodel"
-                                );
-                            } catch (e) { console.warn("[WeChatQR] init error:", e); }
-                            _cvReady = true; resolve();
-                        };
-                    } else { poll(); }
-                },
-                get() { return undefined; },
-            });
-            poll();
+            check();
         });
 
         // 1. WeChat QR 引擎解码（从 canvas 检测并解码 QR 码）

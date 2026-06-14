@@ -793,6 +793,24 @@
         if (path === 'wechat_qrcode_files.data') return '/static/wechat_qrcode_files.data';
         return prefix + path;
       },
+      onRuntimeInitialized: function () {
+        function ready() {
+          try {
+            window._wechatDetector = new cv.wechat_qrcode_WeChatQRCode(
+              "/wechat_qrcode/detect.prototxt",
+              "/wechat_qrcode/detect.caffemodel",
+              "/wechat_qrcode/sr.prototxt",
+              "/wechat_qrcode/sr.caffemodel"
+            );
+            window._cvReady = true;
+          } catch (e) { console.warn("[WeChatQR] init:", e); }
+        }
+        if (window.cv instanceof Promise) {
+          window.cv.then(function (target) { window.cv = target; ready(); });
+        } else {
+          ready();
+        }
+      },
     };</script>
     <!-- 微信二维码引擎模型文件（Emscripten 虚拟 FS，必须在 opencv.js 前加载） -->
     <script src="/static/wechat_qrcode_files.js"></script>
