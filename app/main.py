@@ -141,6 +141,17 @@ async def unhandled_exception_handler(request: Request, exc: Exception):
 # ================================
 
 
+def _client_ip(request: Request) -> str:
+    """获取客户端真实 IP，优先信任反向代理的 X-Forwarded-For 头。"""
+    forwarded = request.headers.get("X-Forwarded-For")
+    if forwarded:
+        return forwarded.split(",")[0].strip()
+    real_ip = request.headers.get("X-Real-IP")
+    if real_ip:
+        return real_ip.strip()
+    return request.client.host if request.client else "unknown"
+
+
 class RateLimiter:
     """Redis-based rate limiter dependency."""
 
@@ -149,7 +160,7 @@ class RateLimiter:
         self.seconds = seconds
 
     async def __call__(self, request: Request, redis: Redis = Depends(get_redis)):
-        client_ip = request.client.host if request.client else "unknown"
+        client_ip = _client_ip(request)
         key = f"rate_limit:{request.url.path}:{client_ip}"
         try:
             current = redis.incr(key)
