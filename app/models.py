@@ -62,6 +62,7 @@ class Account(SQLModel, table=True):
     mobile: str = ""             # 手机号
     ktp_account: str = ""        # 课堂派账号名
     status: int = Field(default=0)
+    status_message: str = ""     # 状态说明（如失败原因）
     created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
 
 

@@ -229,6 +229,7 @@ def _migrate():
             "ADD COLUMN department VARCHAR(255) NOT NULL DEFAULT ''",
             "ADD COLUMN mobile VARCHAR(64) NOT NULL DEFAULT ''",
             "ADD COLUMN ktp_account VARCHAR(128) NOT NULL DEFAULT ''",
+            "ADD COLUMN status_message VARCHAR(255) NOT NULL DEFAULT ''",
         ],
         "checkinlog": [
             "ADD COLUMN message VARCHAR(255) NOT NULL DEFAULT ''",
