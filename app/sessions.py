@@ -101,11 +101,12 @@ class SessionPool:
                         if update_status:
                             self._set_account_status(account.id, 1)
                     except Exception as e:
+                        msg = str(e) or "登录失败"
                         logger.warning(
-                            "Failed to login account %s: %s", account.email, e
+                            "Failed to login account %s: %s", account.email, msg
                         )
                         if update_status:
-                            self._set_account_status(account.id, -1)
+                            self._set_account_status(account.id, -1, msg)
                         all_ok = False
                         continue
                 self.clients[account.id] = (client, time.time())
@@ -249,17 +250,23 @@ class SessionPool:
 
         return result[account_ids] if single else result
 
-    def _set_account_status(self, account_id: int, status: int):
-        """更新账号状态字段。"""
+    def _set_account_status(
+        self, account_id: int, status: int, message: str = ""
+    ):
+        """更新账号状态字段，可选附带状态说明。"""
         try:
             with get_session() as db:
                 acct = db.get(Account, account_id)
-                if acct is not None and acct.status != status:
+                if acct is not None and (
+                    acct.status != status or acct.status_message != message
+                ):
                     acct.status = status
+                    acct.status_message = message
                     db.add(acct)
                     db.commit()
                     logger.info(
-                        "Account %s status updated to %s", account_id, status
+                        "Account %s status updated to %s: %s",
+                        account_id, status, message,
                     )
         except Exception as e:
             logger.error(
