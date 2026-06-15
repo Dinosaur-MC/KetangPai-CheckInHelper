@@ -1120,6 +1120,49 @@ async def update_account(
     )
 
 
+@app.post("/api/accounts/{account_id}/verify")
+async def verify_account(
+    account_id: int,
+    current_user: User = Depends(get_current_user),
+    session: Session = Depends(get_session_with),
+):
+    """重新验证课堂派账号凭据有效性"""
+    # 验证权限
+    user_account = session.exec(
+        select(UserAccount).where(
+            UserAccount.user_id == current_user.id,
+            UserAccount.account_id == account_id,
+        )
+    ).first()
+    if user_account is None and current_user.role != Role.admin:
+        raise HTTPException(status_code=404, detail="账号不存在或无权限访问")
+
+    account = session.get(Account, account_id)
+    if account is None:
+        raise HTTPException(status_code=404, detail="账号不存在")
+
+    from app.api import KetangPaiAPI
+    from app.security import decrypt_credential
+
+    password = decrypt_credential(account.password)
+    try:
+        client = KetangPaiAPI(account.email, password)
+        client.login()
+        client.close()
+        account.status = 1
+        account.status_message = ""
+        session.add(account)
+        session.flush()
+        return BaseResponse(message="验证成功，账号正常")
+    except Exception as e:
+        msg = str(e) or "验证失败"
+        account.status = -1
+        account.status_message = msg
+        session.add(account)
+        session.flush()
+        return BaseResponse(code=400, message=f"验证失败：{msg}")
+
+
 @app.delete("/api/accounts/{account_id}")
 async def delete_account(
     account_id: int,
