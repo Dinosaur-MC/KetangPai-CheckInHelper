@@ -1106,7 +1106,30 @@ async def update_account(
         account.email = email
 
     if password is not None:
-        account.password = encrypt_credential(password)  # 课堂派 API 凭据加密存储
+        account.password = encrypt_credential(password)
+        # 密码更新后重置状态，并尝试登录刷新用户详情
+        account.status = 1
+        account.status_message = ""
+        try:
+            from app.api import KetangPaiAPI
+            client = KetangPaiAPI(
+                email if email is not None else account.email, password
+            )
+            client.login()
+            try:
+                info = client.get_user_info().data
+                account.username = info.username
+                account.avatar = info.avatar
+                account.school = info.school
+                account.stno = info.stno
+                account.department = info.department or ""
+                account.mobile = info.mobile
+                account.ktp_account = info.account
+            except Exception:
+                pass
+            client.close()
+        except Exception as e:
+            logger.warning("Password updated but re-login failed: %s", e)
 
     if status is not None:
         account.status = status
