@@ -218,31 +218,53 @@ def get_redis_client() -> "Redis | None":
         return None
 
 
+def _existing_columns(table: str) -> set[str]:
+    """查询 MySQL 表现有的列名。"""
+    try:
+        with engine.connect() as conn:
+            rows = conn.execute(
+                text(
+                    "SELECT COLUMN_NAME FROM INFORMATION_SCHEMA.COLUMNS "
+                    "WHERE TABLE_SCHEMA = (SELECT DATABASE()) AND TABLE_NAME = :t"
+                ),
+                {"t": table},
+            ).all()
+            return {r[0].lower() for r in rows}
+    except Exception:
+        return set()
+
+
 def _migrate():
-    """增量迁移：为已有表添加新列（幂等，重复执行安全）。"""
-    additions = {
+    """增量迁移：对比模型字段与数据库实际列，自动补缺。"""
+    wanted: dict[str, list[tuple[str, str]]] = {
         "account": [
-            "ADD COLUMN username VARCHAR(255) NOT NULL DEFAULT ''",
-            "ADD COLUMN avatar VARCHAR(512) NOT NULL DEFAULT ''",
-            "ADD COLUMN school VARCHAR(255) NOT NULL DEFAULT ''",
-            "ADD COLUMN stno VARCHAR(128) NOT NULL DEFAULT ''",
-            "ADD COLUMN department VARCHAR(255) NOT NULL DEFAULT ''",
-            "ADD COLUMN mobile VARCHAR(64) NOT NULL DEFAULT ''",
-            "ADD COLUMN ktp_account VARCHAR(128) NOT NULL DEFAULT ''",
-            "ADD COLUMN status_message VARCHAR(255) NOT NULL DEFAULT ''",
+            ("username", "VARCHAR(255) NOT NULL DEFAULT ''"),
+            ("avatar", "VARCHAR(512) NOT NULL DEFAULT ''"),
+            ("school", "VARCHAR(255) NOT NULL DEFAULT ''"),
+            ("stno", "VARCHAR(128) NOT NULL DEFAULT ''"),
+            ("department", "VARCHAR(255) NOT NULL DEFAULT ''"),
+            ("mobile", "VARCHAR(64) NOT NULL DEFAULT ''"),
+            ("ktp_account", "VARCHAR(128) NOT NULL DEFAULT ''"),
+            ("status_message", "VARCHAR(255) NOT NULL DEFAULT ''"),
         ],
         "checkinlog": [
-            "ADD COLUMN message VARCHAR(255) NOT NULL DEFAULT ''",
+            ("message", "VARCHAR(255) NOT NULL DEFAULT ''"),
         ],
     }
-    for table, cols in additions.items():
-        for col in cols:
+    for table, columns in wanted.items():
+        existing = _existing_columns(table)
+        for name, definition in columns:
+            if name.lower() in existing:
+                logger.debug("Column %s.%s already exists", table, name)
+                continue
+            sql = f"ALTER TABLE {table} ADD COLUMN {name} {definition}"
             try:
                 with engine.connect() as conn:
-                    conn.execute(text(f"ALTER TABLE {table} {col}"))
+                    conn.execute(text(sql))
                     conn.commit()
-            except Exception:
-                pass  # 列已存在则静默跳过
+                logger.info("Added column %s.%s", table, name)
+            except Exception as e:
+                logger.warning("Failed to add %s.%s: %s", table, name, e)
 
 
 def init_db():
