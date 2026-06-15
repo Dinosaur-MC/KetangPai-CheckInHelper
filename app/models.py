@@ -18,6 +18,16 @@ class BaseResponse(BaseModel):
     data: Optional[dict | list] = None
 
 
+class PaginatedResponse(BaseModel):
+    """分页响应模型，包装 items + 分页元数据。"""
+    code: int = 200
+    message: str
+    data: list
+    total: int
+    page: int
+    page_size: int
+
+
 class ErrorResponse(BaseModel):
     code: int
     message: str

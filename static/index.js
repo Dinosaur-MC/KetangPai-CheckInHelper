@@ -1,4 +1,4 @@
-const { createApp, reactive, ref, computed } = Vue;
+const { createApp, reactive, ref, computed, watch } = Vue;
 
 const API_BASE = ""; // 同域
 
@@ -102,6 +102,22 @@ createApp({
         const users = ref([]);
         const recentLogs = computed(() => logs.value.slice(-10).reverse());
 
+        // 分页状态
+        const PAGE_SIZE = 20;
+        const logPage = ref(1);
+        const logTotal = ref(0);
+        const userPage = ref(1);
+        const userTotal = ref(0);
+        const adminAcctPage = ref(1);
+        const adminAcctTotal = ref(0);
+        const invitePage = ref(1);
+        const inviteTotal = ref(0);
+
+        const logTotalPages = computed(() => Math.ceil(logTotal.value / PAGE_SIZE) || 1);
+        const userTotalPages = computed(() => Math.ceil(userTotal.value / PAGE_SIZE) || 1);
+        const adminAcctTotalPages = computed(() => Math.ceil(adminAcctTotal.value / PAGE_SIZE) || 1);
+        const inviteTotalPages = computed(() => Math.ceil(inviteTotal.value / PAGE_SIZE) || 1);
+
         // 弹窗
         const modals = reactive({
             account: false,
@@ -159,9 +175,6 @@ createApp({
                 })[route.value] || "",
         );
 
-        const filteredLogs = computed(() =>
-            logFilter.course_id ? logs.value.filter((l) => l.course_id.includes(logFilter.course_id)) : logs.value,
-        );
 
         const stats = computed(() => {
             const today = new Date();
@@ -177,7 +190,7 @@ createApp({
                         d.getFullYear() === today.getFullYear()
                     );
                 }).length,
-                totalLogs: logs.value.length,
+                totalLogs: logTotal.value || logs.value.length,
             };
         });
 
@@ -337,11 +350,12 @@ createApp({
         function invalidateAccounts() {
             _accountsPromise = null;
         }
+        const _LARGE_PAGE = "page=1&page_size=200";
         async function loadAccounts() {
             if (_accountsPromise) return _accountsPromise;
             _accountsPromise = (async () => {
                 try {
-                    const res = await api("GET", "/api/accounts");
+                    const res = await api("GET", `/api/accounts?${_LARGE_PAGE}`);
                     accounts.value = res.data || [];
                 } catch (e) {
                     showToast(e.message);
@@ -399,7 +413,10 @@ createApp({
         // ---- 课程绑定 ----
         async function loadBindings() {
             try {
-                const [bRes, cRes] = await Promise.all([api("GET", "/api/courses/bindings"), api("GET", "/api/courses")]);
+                const [bRes, cRes] = await Promise.all([
+                    api("GET", `/api/courses/bindings?${_LARGE_PAGE}`),
+                    api("GET", `/api/courses?${_LARGE_PAGE}`),
+                ]);
                 bindings.value = bRes.data || [];
                 courses.value = cRes.data || [];
             } catch (e) {
@@ -891,19 +908,38 @@ createApp({
         // ---- 日志 ----
         async function loadLogs() {
             try {
-                const res = await api("GET", "/api/checkin/logs");
+                const params = new URLSearchParams();
+                params.set("page", logPage.value);
+                params.set("page_size", PAGE_SIZE);
+                if (logFilter.course_id) params.set("course_id", logFilter.course_id);
+                const res = await api("GET", `/api/checkin/logs?${params}`);
                 logs.value = res.data || [];
+                logTotal.value = res.total || 0;
             } catch (e) {
                 showToast(e.message);
             }
         }
 
+        // 日志筛选防抖 — 输入 course_id 后自动重载（300ms 防抖）
+        let _logFilterTimer = null;
+        watch(() => logFilter.course_id, () => {
+            clearTimeout(_logFilterTimer);
+            _logFilterTimer = setTimeout(() => {
+                logPage.value = 1;
+                loadLogs();
+            }, 300);
+        });
+
         // ---- 用户管理 ----
         async function loadUsers() {
             if (state.currentUser?.role !== "admin") return;
             try {
-                const res = await api("GET", "/api/users");
+                const params = new URLSearchParams();
+                params.set("page", userPage.value);
+                params.set("page_size", PAGE_SIZE);
+                const res = await api("GET", `/api/users?${params}`);
                 users.value = res.data || [];
+                userTotal.value = res.total || 0;
             } catch (e) {
                 showToast(e.message);
             }
@@ -993,8 +1029,12 @@ createApp({
         async function loadAdminAccounts() {
             if (state.currentUser?.role !== "admin") return;
             try {
-                const r = await api("GET", "/api/admin/accounts");
+                const params = new URLSearchParams();
+                params.set("page", adminAcctPage.value);
+                params.set("page_size", PAGE_SIZE);
+                const r = await api("GET", `/api/admin/accounts?${params}`);
                 adminAccounts.value = r.data || [];
+                adminAcctTotal.value = r.total || 0;
             } catch {}
         }
 
@@ -1007,8 +1047,12 @@ createApp({
         }
         async function loadInviteCodes() {
             try {
-                const r = await api("GET", "/api/invite-codes");
+                const params = new URLSearchParams();
+                params.set("page", invitePage.value);
+                params.set("page_size", PAGE_SIZE);
+                const r = await api("GET", `/api/invite-codes?${params}`);
                 inviteCodes.value = r.data || [];
+                inviteTotal.value = r.total || 0;
             } catch {}
         }
         function openInviteModal(c) {
@@ -1085,6 +1129,7 @@ createApp({
         async function loadPageData(page) {
             switch (page) {
                 case "dashboard":
+                    logPage.value = 1;
                     await Promise.all([loadAccounts(), loadBindings(), loadLogs()]);
                     break;
                 case "accounts":
@@ -1094,9 +1139,13 @@ createApp({
                     await Promise.all([loadAccounts(), loadBindings()]);
                     break;
                 case "logs":
+                    logPage.value = 1;
                     await loadLogs();
                     break;
                 case "users":
+                    userPage.value = 1;
+                    adminAcctPage.value = 1;
+                    invitePage.value = 1;
                     await Promise.all([loadUsers(), loadAdminAccounts(), loadInviteCodes()]);
                     break;
             }
@@ -1200,7 +1249,6 @@ createApp({
             checkinResults,
             pageTitle,
             pageSubtitle,
-            filteredLogs,
             stats,
             checkinSuccessCount,
             formatTime,
@@ -1259,6 +1307,20 @@ createApp({
             scanVideo,
             scanCanvas,
             scanPhotoInput,
+            // 分页
+            PAGE_SIZE,
+            logPage,
+            logTotal,
+            logTotalPages,
+            userPage,
+            userTotal,
+            userTotalPages,
+            adminAcctPage,
+            adminAcctTotal,
+            adminAcctTotalPages,
+            invitePage,
+            inviteTotal,
+            inviteTotalPages,
         };
     },
 }).mount("#app");

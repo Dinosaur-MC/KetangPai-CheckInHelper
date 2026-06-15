@@ -30,7 +30,8 @@
                             <div class="field-wrap">
                                 <label class="field-label">邮箱</label>
                                 <input class="field-input" type="email" :value="form.email"
-                                    @input="form.email=$event.target.value" placeholder="your@email.com" autocomplete="username">
+                                    @input="form.email=$event.target.value" placeholder="your@email.com"
+                                    autocomplete="username">
                             </div>
                             <div class="field-wrap">
                                 <label class="field-label">密码</label>
@@ -61,7 +62,8 @@
                             <div class="field-wrap">
                                 <label class="field-label">邮箱<span class="req">*</span></label>
                                 <input class="field-input" type="email" :value="form.email"
-                                    @input="form.email=$event.target.value" placeholder="your@email.com" autocomplete="username">
+                                    @input="form.email=$event.target.value" placeholder="your@email.com"
+                                    autocomplete="username">
                             </div>
                             <div class="field-wrap">
                                 <label class="field-label">密码<span class="req">*</span></label>
@@ -401,7 +403,7 @@
                                 </div>
                                 <mdui-button variant="outlined" icon="refresh" @click="loadLogs"
                                     size="small">刷新</mdui-button>
-                                <span class="log-count" v-if="logs.length">共 {{ filteredLogs.length }} 条记录</span>
+                                <span class="log-count" v-if="logTotal">共 {{ logTotal }} 条记录</span>
                             </div>
                             <div class="table-wrap" v-if="logs.length">
                                 <table>
@@ -414,7 +416,7 @@
                                         </tr>
                                     </thead>
                                     <tbody>
-                                        <tr v-for="log in filteredLogs" :key="log.id">
+                                        <tr v-for="log in logs" :key="log.id">
                                             <td>{{ formatTime(log.created_at) }}</td>
                                             <td>{{ getAccountEmail(log.account_id) }}</td>
                                             <td>{{ log.course_id }}</td>
@@ -427,6 +429,13 @@
                             <div class="empty-state" v-else><mdui-icon class="empty-icon" name="history"></mdui-icon>
                                 <p>暂无签到记录</p>
                             </div>
+                            <div class="pagination" v-if="logTotal > PAGE_SIZE">
+                                <button class="page-btn" :disabled="logPage <= 1"
+                                    @click="logPage--; loadLogs()">‹</button>
+                                <span class="page-info">{{ logPage }} / {{ logTotalPages }}</span>
+                                <button class="page-btn" :disabled="logPage >= logTotalPages"
+                                    @click="logPage++; loadLogs()">›</button>
+                            </div>
                         </div>
 
                         <!-- ==========================================================
@@ -434,7 +443,7 @@
                              ========================================================== -->
                         <div v-if="route === 'users'">
                             <div class="toolbar">
-                                <div class="left">共 {{ users.length }} 个用户</div>
+                                <div class="left">共 {{ userTotal }} 个用户</div>
                                 <div class="right">
                                     <mdui-button variant="filled" color="primary" @click="openUserModal()">+
                                         新建用户</mdui-button>
@@ -478,11 +487,21 @@
                             <div class="empty-state" v-else><mdui-icon class="empty-icon" name="people"></mdui-icon>
                                 <p>暂无用户数据</p>
                             </div>
+                            <div class="pagination" v-if="userTotal > PAGE_SIZE">
+                                <button class="page-btn" :disabled="userPage <= 1"
+                                    @click="userPage--; loadUsers()">‹</button>
+                                <span class="page-info">{{ userPage }} / {{ userTotalPages }}</span>
+                                <button class="page-btn" :disabled="userPage >= userTotalPages"
+                                    @click="userPage++; loadUsers()">›</button>
+                            </div>
 
                             <!-- 全部账号（管理员） -->
                             <h3
                                 style="margin:28px 0 12px;font-size:15px;font-weight:500;padding:0 4px; background-color: rgba(255,255,255,.95); padding: 10px 16px; border-radius: 20px;">
-                                全部课堂派账号</h3>
+                                全部课堂派账号
+                                <span style="font-weight:400;font-size:13px;color:#666;margin-left:8px;"
+                                    v-if="adminAcctTotal">共 {{ adminAcctTotal }} 个</span>
+                            </h3>
                             <div class="table-wrap" v-if="adminAccounts.length">
                                 <table>
                                     <thead>
@@ -509,6 +528,13 @@
                             </div>
                             <div class="empty-state" v-else style="margin-top:12px;">
                                 <p>暂无账号数据</p>
+                            </div>
+                            <div class="pagination" v-if="adminAcctTotal > PAGE_SIZE">
+                                <button class="page-btn" :disabled="adminAcctPage <= 1"
+                                    @click="adminAcctPage--; loadAdminAccounts()">‹</button>
+                                <span class="page-info">{{ adminAcctPage }} / {{ adminAcctTotalPages }}</span>
+                                <button class="page-btn" :disabled="adminAcctPage >= adminAcctTotalPages"
+                                    @click="adminAcctPage++; loadAdminAccounts()">›</button>
                             </div>
 
                             <!-- 邀请码管理 -->
@@ -574,6 +600,13 @@
                             <div class="empty-state" v-else style="margin-top:12px;">
                                 <p>暂无邀请码</p>
                             </div>
+                            <div class="pagination" v-if="inviteTotal > PAGE_SIZE">
+                                <button class="page-btn" :disabled="invitePage <= 1"
+                                    @click="invitePage--; loadInviteCodes()">‹</button>
+                                <span class="page-info">{{ invitePage }} / {{ inviteTotalPages }}</span>
+                                <button class="page-btn" :disabled="invitePage >= inviteTotalPages"
+                                    @click="invitePage++; loadInviteCodes()">›</button>
+                            </div>
                         </div>
 
                     </div><!-- /main-body -->
@@ -600,7 +633,8 @@
                 <label class="field-label">{{ editingAccount ? '新密码 (留空不修改)' : '密码' }}</label>
                 <div class="pwd-wrap">
                     <input class="field-input" :type="showAcctPwd ? 'text' : 'password'" :value="accountForm.password"
-                        @input="accountForm.password=$event.target.value" @keydown.enter="saveAccount" autocomplete="new-password">
+                        @input="accountForm.password=$event.target.value" @keydown.enter="saveAccount"
+                        autocomplete="new-password">
                     <button class="pwd-toggle" type="button" @click="showAcctPwd = !showAcctPwd" tabindex="-1"
                         :title="showAcctPwd ? '隐藏密码' : '显示密码'">
                         <span class="material-icons">{{ showAcctPwd ? 'visibility_off' : 'visibility' }}</span>
@@ -649,7 +683,8 @@
                 <label class="field-label">{{ editingUser ? '新密码 (留空不修改)' : '密码' }}</label>
                 <div class="pwd-wrap">
                     <input class="field-input" :type="showUserPwd ? 'text' : 'password'" :value="userForm.password"
-                        @input="userForm.password=$event.target.value" @keydown.enter="saveUser" autocomplete="new-password">
+                        @input="userForm.password=$event.target.value" @keydown.enter="saveUser"
+                        autocomplete="new-password">
                     <button class="pwd-toggle" type="button" @click="showUserPwd = !showUserPwd" tabindex="-1"
                         :title="showUserPwd ? '隐藏密码' : '显示密码'">
                         <span class="material-icons">{{ showUserPwd ? 'visibility_off' : 'visibility' }}</span>
@@ -789,32 +824,32 @@
 
     <!-- Module 必须在 opencv.js 加载前定义 -->
     <script>var Module = {
-      locateFile: function (path, prefix) {
-        if (path === 'wechat_qrcode_files.data') return '/static/wechat_qrcode_files.data';
-        return prefix + path;
-      },
-      onRuntimeInitialized: function () {
-        function ready() {
-          try {
-            window._wechatDetector = new cv.wechat_qrcode_WeChatQRCode(
-              "/wechat_qrcode/detect.prototxt",
-              "/wechat_qrcode/detect.caffemodel",
-              "/wechat_qrcode/sr.prototxt",
-              "/wechat_qrcode/sr.caffemodel"
-            );
-            window._cvReady = true;
-          } catch (e) {
-            console.warn("[WeChatQR] init:", e);
-            window._cvReady = false;
-          }
-        }
-        if (window.cv instanceof Promise) {
-          window.cv.then(function (target) { window.cv = target; ready(); });
-        } else {
-          ready();
-        }
-      },
-    };</script>
+            locateFile: function (path, prefix) {
+                if (path === 'wechat_qrcode_files.data') return '/static/wechat_qrcode_files.data';
+                return prefix + path;
+            },
+            onRuntimeInitialized: function () {
+                function ready() {
+                    try {
+                        window._wechatDetector = new cv.wechat_qrcode_WeChatQRCode(
+                            "/wechat_qrcode/detect.prototxt",
+                            "/wechat_qrcode/detect.caffemodel",
+                            "/wechat_qrcode/sr.prototxt",
+                            "/wechat_qrcode/sr.caffemodel"
+                        );
+                        window._cvReady = true;
+                    } catch (e) {
+                        console.warn("[WeChatQR] init:", e);
+                        window._cvReady = false;
+                    }
+                }
+                if (window.cv instanceof Promise) {
+                    window.cv.then(function (target) { window.cv = target; ready(); });
+                } else {
+                    ready();
+                }
+            },
+        };</script>
     <!-- 微信二维码引擎模型文件（Emscripten 虚拟 FS，必须在 opencv.js 前加载） -->
     <script src="/static/wechat_qrcode_files.js"></script>
     <!-- MDUI 2 JS -->

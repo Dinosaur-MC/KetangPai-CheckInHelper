@@ -103,11 +103,14 @@
 
 ### 📷 扫码签到
 
-- 调用摄像头实时扫描二维码（**ZXing WASM** 解码引擎）
+- 调用摄像头实时扫描二维码（**OpenCV WeChat QR** 主解码引擎 + **ZXing WASM** 备用）
+- WeChat QR 引擎基于 C++ WASM，对倾斜 / 畸变 / 低光照二维码识别率更高
 - 自动校验签到链接域名和参数完整性
 - 识别成功后自动填充参数并执行签到
 - **HTTP 环境降级**：摄像头不可用时支持拍照识别
 - 原生分辨率扫描 + 图像预处理（灰度加权、对比度拉伸）
+- 轮询超时机制，避免长时间无结果卡死
+- WASM 内存泄漏和 Blob URL 泄漏自动清理
 
 ### 📊 签到日志
 
@@ -120,6 +123,7 @@
 - Argon2 密码哈希
 - JWT 吊销 + Refresh Token Rotation（防止重放攻击）
 - 速率限制（Redis 滑动窗口）
+- Redis 断路器模式（健康检查 + 自动恢复）
 - CORS 白名单
 - Fernet 凭据加密
 
@@ -192,7 +196,8 @@ graph TB
 | **前端**   | **Vue 3** (Composition API)                  | 响应式 SPA                                            |
 | UI 框架    | **MDUI 2** (Web Components)                  | Material Design 界面                                  |
 | 图标       | **Material Icons**                           | 图标系统                                              |
-| 扫码       | **ZXing WASM**                               | QR 码解码引擎                                         |
+| 扫码(主)  | **OpenCV.js (WeChat QR)**                    | C++ WASM 解码引擎，抗畸变倾斜，识别率更高             |
+| 扫码(备)  | **ZXing WASM**                               | WASM 备用 QR 解码引擎                                |
 | **安全**   | **Passlib (Argon2)**                         | 密码哈希                                              |
 |            | **PyJWT**                                    | JWT 签发与验证                                        |
 |            | **Cryptography (Fernet)**                    | 凭据加密                                              |
@@ -306,6 +311,8 @@ uv run python main.py
 - Swagger UI：[`http://localhost:8765/docs`](http://localhost:8765/docs)
 - ReDoc：[`http://localhost:8765/redoc`](http://localhost:8765/redoc)
 
+> **分页说明**：所有列表接口均支持 `page` 和 `page_size` 查询参数（默认 `page=1, page_size=20`），响应额外返回 `total`、`page`、`page_size` 字段。
+
 ### 认证
 
 | 方法 | 路径                 | 说明                                          | 权限   |
@@ -318,9 +325,9 @@ uv run python main.py
 
 ### 账号管理
 
-| 方法   | 路径                 | 说明                               |
-| ------ | -------------------- | ---------------------------------- |
-| GET    | `/api/accounts`      | 当前用户的课堂派账号列表           |
+| 方法   | 路径                 | 说明                                    |
+| ------ | -------------------- | --------------------------------------- |
+| GET    | `/api/accounts`      | 当前用户的课堂派账号列表（分页）       |
 | GET    | `/api/accounts/{id}` | 获取指定账号信息                   |
 | POST   | `/api/accounts`      | 添加课堂派账号（已存在则自动关联） |
 | PUT    | `/api/accounts/{id}` | 更新账号信息                       |
@@ -328,12 +335,12 @@ uv run python main.py
 
 ### 课程管理
 
-| 方法   | 路径                         | 说明                       |
-| ------ | ---------------------------- | -------------------------- |
-| GET    | `/api/courses`               | 课程列表（管理员查看全部） |
+| 方法   | 路径                         | 说明                           |
+| ------ | ---------------------------- | ------------------------------ |
+| GET    | `/api/courses`               | 课程列表，管理员查看全部（分页） |
 | GET    | `/api/courses/{id}`          | 课程详情                   |
 | DELETE | `/api/courses/{id}`          | 删除课程（管理员）         |
-| GET    | `/api/courses/bindings`      | 当前用户的课程绑定         |
+| GET    | `/api/courses/bindings`      | 当前用户的课程绑定（分页） |
 | POST   | `/api/courses/bindings`      | 创建课程绑定               |
 | PUT    | `/api/courses/bindings/{id}` | 切换绑定启用状态           |
 | DELETE | `/api/courses/bindings/{id}` | 解绑                       |
@@ -343,7 +350,7 @@ uv run python main.py
 | 方法   | 路径                     | 说明                                                |
 | ------ | ------------------------ | --------------------------------------------------- |
 | POST   | `/api/checkin`           | 批量签到（Canary 模式）                             |
-| GET    | `/api/checkin/logs`      | 签到日志列表（支持 `account_id`、`course_id` 筛选） |
+| GET    | `/api/checkin/logs`      | 签到日志列表，支持 `account_id`/`course_id` 筛选 + 分页 |
 | GET    | `/api/checkin/logs/{id}` | 签到日志详情                                        |
 | DELETE | `/api/checkin/logs/{id}` | 删除签到日志（管理员）                              |
 
@@ -351,18 +358,18 @@ uv run python main.py
 
 | 方法   | 路径                  | 说明                         |
 | ------ | --------------------- | ---------------------------- |
-| GET    | `/api/users`          | 用户列表                     |
+| GET    | `/api/users`          | 用户列表（分页）             |
 | GET    | `/api/users/{id}`     | 用户详情                     |
 | POST   | `/api/users`          | 创建用户                     |
 | PUT    | `/api/users/{id}`     | 更新用户（角色、状态、密码） |
 | DELETE | `/api/users/{id}`     | 删除用户                     |
-| GET    | `/api/admin/accounts` | 全部课堂派账号               |
+| GET    | `/api/admin/accounts` | 全部课堂派账号（分页）       |
 
 ### 邀请码（管理员）
 
 | 方法   | 路径                            | 说明                               |
 | ------ | ------------------------------- | ---------------------------------- |
-| GET    | `/api/invite-codes`             | 邀请码列表                         |
+| GET    | `/api/invite-codes`             | 邀请码列表（分页）                 |
 | POST   | `/api/invite-codes`             | 生成邀请码（留空自动生成 16 位码） |
 | PUT    | `/api/invite-codes/{id}`        | 编辑（启用/停用/备注/次数上限）    |
 | DELETE | `/api/invite-codes/{id}`        | 删除邀请码                         |
@@ -455,15 +462,23 @@ SessionPool（模块级单例）
     │       │          │
     │       │          ├── 逐帧截取 canvas（720p 上限）
     │       │          ├── 灰度加权 + 对比度拉伸预处理
-    │       │          ├── ZXing WASM 解码
-    │       │          └── 匹配课堂派域名 + 参数校验 → 自动签到
+    │       │          ├── OpenCV WeChat QR 解码（主引擎）
+    │       │          │       │
+    │       │          │       ├── 成功 → 匹配域名参数 → 自动签到
+    │       │          │       └── 失败 → ZXing WASM 备用解码
+    │       │          │                  │
+    │       │          │                  └── 匹配域名参数 → 自动签到
+    │       │          │
+    │       │          └── 轮询超时 → 停止扫描，提示重试
     │       │
     │       └── 失败 → 提示"使用拍照扫描"
     │
     └── 拍照扫描（降级方案）
               │
               ├── 调用系统相机（<input capture="environment">）
-              ├── 加载照片 → canvas 绘制 → ZXing 解码
+              ├── 加载照片 → canvas 绘制 → OpenCV WeChat QR 解码
+              │                            │
+              │                            └── 失败 → ZXing 备用解码
               └── 解析成功 → 自动签到
 ```
 
@@ -476,6 +491,7 @@ SessionPool（模块级单例）
 | **Refresh Token Rotation** | 每次刷新使旧 token 失效，防止泄露后重放             |
 | **Token 吊销**             | 登出时将 `jti` 加入 Redis 黑名单，TTL 自动过期      |
 | **速率限制**               | Redis 滑动窗口 — 登录/注册 5次/分钟，签到 10次/分钟 |
+| **Redis 熔断**             | 断路器模式，30s 健康检查间隔自动恢复；3s 短超时防连接卡死 |
 | **凭据加密**               | Fernet (AES-128-CBC + HMAC) 加密课堂派密码          |
 | **密码强度**               | 8-128 字符，必须包含大小写字母和数字                |
 | **CORS**                   | `ALLOWED_ORIGINS` 白名单机制，可配置多个来源        |
@@ -492,6 +508,7 @@ CheckInHelper/
 ├── Dockerfile              # 🐳 Docker 多阶段构建
 ├── docker-compose.yml      # 🐳 一键启动 (MySQL + Redis + App)
 ├── favicon.ico             # 🖼️ 网站图标
+├── CLAUDE.md               # 🤖 Claude Code 项目指令
 │
 ├── app/                    # 🧩 后端核心
 │   ├── main.py             # FastAPI 应用、路由、中间件、异常处理
@@ -510,7 +527,11 @@ CheckInHelper/
 │   ├── vue.global.prod.js  # Vue 3 运行时
 │   ├── material-icons.css  # Material Icons 样式
 │   ├── MaterialIcons-Regular.ttf  # 图标字体
-│   └── zxing.min.js        # ZXing WASM QR 码解码
+│   ├── opencv.js           # OpenCV.js — WeChat QR 解码引擎
+│   ├── wechat_qrcode_files.js  # WeChat QR 模型脚本
+│   ├── wechat_qrcode_files.data # WeChat QR 模型数据
+│   ├── zxing.min.js        # ZXing WASM 备用 QR 解码
+│   └── test.html           # QR 解码测试页
 │
 └── .claude/                # 🤖 Claude Code 配置
 ```

@@ -7,7 +7,7 @@ from contextlib import asynccontextmanager
 from pathlib import Path
 from datetime import datetime, timedelta, timezone
 from starlette.exceptions import HTTPException
-from fastapi import FastAPI, Request, Response, Depends, Body
+from fastapi import FastAPI, Request, Response, Depends, Body, Query
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse, FileResponse
 from fastapi.staticfiles import StaticFiles
@@ -28,7 +28,9 @@ from app.security import (
     encrypt_credential,
 )
 from app.db import Session, Redis, get_session_with, get_redis
-from sqlmodel import select
+from sqlmodel import select, func
+from sqlmodel.sql.expression import Select, SelectOfScalar
+
 from app.models import *
 from app.api import CheckInRequest, CheckInResult
 
@@ -46,6 +48,7 @@ configure_jwt(
     os.environ.get("JWT_ALGORITHM", "HS256"),
     os.environ.get("JWT_EXPIRE_HOURS") or 24 * 7,
 )
+
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
@@ -230,6 +233,33 @@ def get_current_user(
 
 
 # ================================
+#         分页工具
+# ================================
+
+
+def paginate[T](
+    session: Session, query: Select[T] | SelectOfScalar[T], page: int, page_size: int
+):
+    """对 SQLModel select 查询应用分页，返回 (items, total_count)。"""
+    # 防御性校验
+    if page < 1:
+        page = 1
+    if page_size < 1:
+        page_size = DEFAULT_PAGE_SIZE
+    # 先获取总数（移除 ORDER BY 提高性能）
+    count_query = select(func.count()).select_from(query.order_by(None).subquery())
+    total = session.exec(count_query).one()
+    # 应用 OFFSET / LIMIT
+    items = session.exec(query.offset((page - 1) * page_size).limit(page_size)).all()
+    return items, total
+
+
+DEFAULT_PAGE = 1
+DEFAULT_PAGE_SIZE = 20
+MAX_PAGE_SIZE = 200
+
+
+# ================================
 #               路由
 # ================================
 
@@ -291,9 +321,14 @@ async def register(
         ).first()
         if matched_code is None or len(matched_code.code) != 16:
             raise HTTPException(status_code=400, detail="邀请码无效")
-        if matched_code.max_uses is not None and matched_code.used_count >= matched_code.max_uses:
+        if (
+            matched_code.max_uses is not None
+            and matched_code.used_count >= matched_code.max_uses
+        ):
             raise HTTPException(status_code=400, detail="邀请码已用完")
-        if matched_code.expires_at and matched_code.expires_at.replace(tzinfo=None) < datetime.now(timezone.utc).replace(tzinfo=None):
+        if matched_code.expires_at and matched_code.expires_at.replace(
+            tzinfo=None
+        ) < datetime.now(timezone.utc).replace(tzinfo=None):
             raise HTTPException(status_code=400, detail="邀请码已过期")
     elif invite_code:
         # 选填模式，仅做记录
@@ -317,8 +352,13 @@ async def register(
 
     # 注册成功后才记录邀请码使用
     if matched_code:
-        if matched_code.max_uses is None or matched_code.used_count < matched_code.max_uses:
-            if not matched_code.expires_at or matched_code.expires_at.replace(tzinfo=None) >= datetime.now(timezone.utc).replace(tzinfo=None):
+        if (
+            matched_code.max_uses is None
+            or matched_code.used_count < matched_code.max_uses
+        ):
+            if not matched_code.expires_at or matched_code.expires_at.replace(
+                tzinfo=None
+            ) >= datetime.now(timezone.utc).replace(tzinfo=None):
                 matched_code.used_count += 1
                 session.add(matched_code)
 
@@ -465,15 +505,21 @@ async def refresh_token(
 async def list_users(
     current_user: User = Depends(get_current_user),
     session: Session = Depends(get_session_with),
+    page: int = Query(default=DEFAULT_PAGE, ge=1),
+    page_size: int = Query(default=DEFAULT_PAGE_SIZE, ge=1, le=MAX_PAGE_SIZE),
 ):
     """获取所有用户列表（仅管理员）"""
     if current_user.role != Role.admin:
         raise HTTPException(status_code=403, detail="权限不足")
 
-    users = session.exec(select(User)).all()
-    return BaseResponse(
+    query = select(User).order_by(User.created_at.desc())
+    users, total = paginate(session, query, page, page_size)
+    return PaginatedResponse(
         message="success",
-        data=[user.model_dump(exclude=["password"]) for user in users],
+        data=[u.model_dump(exclude=["password"]) for u in users],
+        total=total,
+        page=page,
+        page_size=page_size,
     )
 
 
@@ -666,13 +712,19 @@ async def change_password(
 async def list_invite_codes(
     current_user: User = Depends(get_current_user),
     session: Session = Depends(get_session_with),
+    page: int = Query(default=DEFAULT_PAGE, ge=1),
+    page_size: int = Query(default=DEFAULT_PAGE_SIZE, ge=1, le=MAX_PAGE_SIZE),
 ):
     if current_user.role != Role.admin:
         raise HTTPException(status_code=403, detail="权限不足")
-    codes = session.exec(select(InviteCode).order_by(InviteCode.created_at.desc())).all()
-    return BaseResponse(
+    query = select(InviteCode).order_by(InviteCode.created_at.desc())
+    codes, total = paginate(session, query, page, page_size)
+    return PaginatedResponse(
         message="success",
         data=[c.model_dump() for c in codes],
+        total=total,
+        page=page,
+        page_size=page_size,
     )
 
 
@@ -691,10 +743,19 @@ async def create_invite_code(
         code=code.strip().upper() if code.strip() else generate_invite_code(),
         max_uses=max_uses,
         expires_at=(
-            datetime.now(timezone.utc).replace(hour=0, minute=0, second=0, microsecond=0)
-            + timedelta(days=expires_in_hours // 24 + (1 if expires_in_hours % 24 else 0))
-            if expires_in_hours else None
-        ) if expires_in_hours else None,
+            (
+                datetime.now(timezone.utc).replace(
+                    hour=0, minute=0, second=0, microsecond=0
+                )
+                + timedelta(
+                    days=expires_in_hours // 24 + (1 if expires_in_hours % 24 else 0)
+                )
+                if expires_in_hours
+                else None
+            )
+            if expires_in_hours
+            else None
+        ),
         note=note,
         created_by=current_user.id,
     )
@@ -750,7 +811,9 @@ async def get_invite_required(
         try:
             cached = redis.get("setting:invite_required")
             if cached is not None:
-                return BaseResponse(message="success", data={"invite_required": cached == b"true"})
+                return BaseResponse(
+                    message="success", data={"invite_required": cached == b"true"}
+                )
         except Exception:
             pass
     setting = session.get(SystemSetting, "invite_required")
@@ -774,14 +837,20 @@ async def set_invite_required(
         raise HTTPException(status_code=403, detail="权限不足")
     setting = session.get(SystemSetting, "invite_required")
     if setting is None:
-        setting = SystemSetting(key="invite_required", value="true" if invite_required else "false")
+        setting = SystemSetting(
+            key="invite_required", value="true" if invite_required else "false"
+        )
     else:
         setting.value = "true" if invite_required else "false"
     session.add(setting)
     # 更新 Redis 缓存
     if redis:
         try:
-            redis.set("setting:invite_required", "true" if invite_required else "false", 604800)
+            redis.set(
+                "setting:invite_required",
+                "true" if invite_required else "false",
+                604800,
+            )
         except Exception:
             pass
     return BaseResponse(message="设置已更新", data={"invite_required": invite_required})
@@ -791,14 +860,20 @@ async def set_invite_required(
 async def admin_list_accounts(
     current_user: User = Depends(get_current_user),
     session: Session = Depends(get_session_with),
+    page: int = Query(default=DEFAULT_PAGE, ge=1),
+    page_size: int = Query(default=DEFAULT_PAGE_SIZE, ge=1, le=MAX_PAGE_SIZE),
 ):
     """查询所有账号信息（仅管理员）"""
     if current_user.role != Role.admin:
         raise HTTPException(status_code=403, detail="权限不足")
-    accounts = session.exec(select(Account).order_by(Account.created_at.desc())).all()
-    return BaseResponse(
+    query = select(Account).order_by(Account.created_at.desc())
+    accounts, total = paginate(session, query, page, page_size)
+    return PaginatedResponse(
         message="success",
-        data=[account.model_dump(exclude=["password"]) for account in accounts],
+        data=[a.model_dump(exclude=["password"]) for a in accounts],
+        total=total,
+        page=page,
+        page_size=page_size,
     )
 
 
@@ -811,21 +886,32 @@ async def admin_list_accounts(
 async def list_accounts(
     current_user: User = Depends(get_current_user),
     session: Session = Depends(get_session_with),
+    page: int = Query(default=DEFAULT_PAGE, ge=1),
+    page_size: int = Query(default=DEFAULT_PAGE_SIZE, ge=1, le=MAX_PAGE_SIZE),
 ):
     """获取当前用户关联的账号"""
+    # 先查用户的 account_ids
     user_accounts = session.exec(
         select(UserAccount).where(UserAccount.user_id == current_user.id)
     ).all()
-
     account_ids = [ua.account_id for ua in user_accounts]
     if not account_ids:
-        return BaseResponse(message="success", data=[])
+        return PaginatedResponse(
+            message="success", data=[], total=0, page=page, page_size=page_size
+        )
 
-    accounts = session.exec(select(Account).where(Account.id.in_(account_ids))).all()
-
-    return BaseResponse(
+    query = (
+        select(Account)
+        .where(Account.id.in_(account_ids))
+        .order_by(Account.created_at.desc())
+    )
+    accounts, total = paginate(session, query, page, page_size)
+    return PaginatedResponse(
         message="success",
-        data=[account.model_dump(exclude=["password"]) for account in accounts],
+        data=[a.model_dump(exclude=["password"]) for a in accounts],
+        total=total,
+        page=page,
+        page_size=page_size,
     )
 
 
@@ -929,9 +1015,7 @@ async def create_account(
         import asyncio
         from app.sessions import session_pool
 
-        courses = await asyncio.to_thread(
-            session_pool.get_course_list, account.id
-        )
+        courses = await asyncio.to_thread(session_pool.get_course_list, account.id)
         if courses:
             for course_data in courses:
                 # 检查课程是否已存在，不存在则创建
@@ -1091,6 +1175,8 @@ async def delete_account(
 async def list_course_bindings(
     current_user: User = Depends(get_current_user),
     session: Session = Depends(get_session_with),
+    page: int = Query(default=DEFAULT_PAGE, ge=1),
+    page_size: int = Query(default=DEFAULT_PAGE_SIZE, ge=1, le=MAX_PAGE_SIZE),
 ):
     """获取当前用户的所有课程绑定"""
     # 先获取用户的所有账号
@@ -1100,14 +1186,19 @@ async def list_course_bindings(
 
     account_ids = [ua.account_id for ua in user_accounts]
     if not account_ids:
-        return BaseResponse(message="success", data=[])
+        return PaginatedResponse(
+            message="success", data=[], total=0, page=page, page_size=page_size
+        )
 
-    # 查询这些账号的课程绑定
-    bindings = session.exec(
-        select(CourseBinding).where(CourseBinding.account_id.in_(account_ids))
-    ).all()
-
-    return BaseResponse(message="success", data=[x.model_dump() for x in bindings])
+    query = select(CourseBinding).where(CourseBinding.account_id.in_(account_ids)).order_by(CourseBinding.id)
+    bindings, total = paginate(session, query, page, page_size)
+    return PaginatedResponse(
+        message="success",
+        data=[x.model_dump() for x in bindings],
+        total=total,
+        page=page,
+        page_size=page_size,
+    )
 
 
 @app.post("/api/courses/bindings")
@@ -1225,27 +1316,37 @@ async def update_course_binding(
 async def list_courses(
     current_user: User = Depends(get_current_user),
     session: Session = Depends(get_session_with),
+    page: int = Query(default=DEFAULT_PAGE, ge=1),
+    page_size: int = Query(default=DEFAULT_PAGE_SIZE, ge=1, le=MAX_PAGE_SIZE),
 ):
     """列出所有课程（管理员），或用户关联的课程"""
     if current_user.role == Role.admin:
-        courses = session.exec(select(Course)).all()
+        query = select(Course).order_by(Course.course_name)
+        courses, total = paginate(session, query, page, page_size)
     else:
         user_accounts = session.exec(
             select(UserAccount).where(UserAccount.user_id == current_user.id)
         ).all()
         account_ids = [ua.account_id for ua in user_accounts]
         if not account_ids:
-            return BaseResponse(message="success", data=[])
-        courses = session.exec(
+            return PaginatedResponse(
+                message="success", data=[], total=0, page=page, page_size=page_size
+            )
+        query = (
             select(Course)
             .join(CourseBinding)
             .where(CourseBinding.account_id.in_(account_ids))
             .distinct()
-        ).all()
+            .order_by(Course.course_name)
+        )
+        courses, total = paginate(session, query, page, page_size)
 
-    return BaseResponse(
+    return PaginatedResponse(
         message="success",
         data=[c.model_dump() for c in courses],
+        total=total,
+        page=page,
+        page_size=page_size,
     )
 
 
@@ -1299,6 +1400,8 @@ async def list_checkin_logs(
     session: Session = Depends(get_session_with),
     account_id: Optional[int] = None,
     course_id: Optional[str] = None,
+    page: int = Query(default=DEFAULT_PAGE, ge=1),
+    page_size: int = Query(default=DEFAULT_PAGE_SIZE, ge=1, le=MAX_PAGE_SIZE),
 ):
     """获取签到日志列表"""
     # 获取用户的所有账号
@@ -1308,7 +1411,9 @@ async def list_checkin_logs(
 
     account_ids = [ua.account_id for ua in user_accounts]
     if not account_ids:
-        return BaseResponse(message="success", data=[])
+        return PaginatedResponse(
+            message="success", data=[], total=0, page=page, page_size=page_size
+        )
 
     query = select(CheckInLog).where(CheckInLog.account_id.in_(account_ids))
 
@@ -1318,8 +1423,15 @@ async def list_checkin_logs(
     if course_id is not None:
         query = query.where(CheckInLog.course_id == course_id)
 
-    logs = session.exec(query).all()
-    return BaseResponse(message="success", data=[x.model_dump() for x in logs])
+    query = query.order_by(CheckInLog.created_at.desc())
+    logs, total = paginate(session, query, page, page_size)
+    return PaginatedResponse(
+        message="success",
+        data=[x.model_dump() for x in logs],
+        total=total,
+        page=page,
+        page_size=page_size,
+    )
 
 
 # @app.post("/api/checkin/logs")
