@@ -87,6 +87,9 @@
 - 密码使用 **Fernet (AES-128-CBC + HMAC)** 加密存储
 - 已存在账号自动关联，多个用户可共享同一课堂派账号
 - 添加成功后自动拉取学期课程列表并创建绑定
+- 自动获取并存储用户详情：姓名、学校、学号、院系、手机号、头像
+- 凭据验证按钮：随时手动重新验证账号状态，验证成功时同步刷新用户信息
+- 更新密码时自动重置账号状态并重新登录验证
 
 ### 📚 课程绑定
 
@@ -99,6 +102,7 @@
 - **Canary 模式**：先用一个账号测试签到有效性，成功后再并发处理其余账号
 - 签到结果区分成功、重复签到（视同成功）、二维码过期、考勤已结束
 - 全局失败缓存：二维码过期/考勤结束后跳过所有账号，避免无效请求
+- **Redis 签到去重**：同一 ticketid 下已签到成功的账号自动跳过，防止重复调用 API
 - 签到结果实时显示，支持失败原因查看
 
 ### 📷 扫码签到
@@ -117,6 +121,7 @@
 - 课程维度筛选、按时间倒序排列
 - 首页统计面板：账号数、绑定数、今日签到、累计记录
 - 签到明细查看（失败原因可追溯）
+- 每条日志附带签到结果描述（成功 / 二维码过期 / 重复签到等）
 
 ### 🔐 安全机制
 
@@ -330,7 +335,8 @@ uv run python main.py
 | GET    | `/api/accounts`      | 当前用户的课堂派账号列表（分页）       |
 | GET    | `/api/accounts/{id}` | 获取指定账号信息                   |
 | POST   | `/api/accounts`      | 添加课堂派账号（已存在则自动关联） |
-| PUT    | `/api/accounts/{id}` | 更新账号信息                       |
+| PUT    | `/api/accounts/{id}` | 更新账号信息（更新密码会自动重置状态并刷新详情） |
+| POST   | `/api/accounts/{id}/verify` | 重新验证账号凭据有效性，刷新用户详情 |
 | DELETE | `/api/accounts/{id}` | 删除账号                           |
 
 ### 课程管理
@@ -431,6 +437,7 @@ uv run python main.py
 - `asyncio.Semaphore(5)` 限制同一批次对课堂派 API 的并发数
 - `asyncio.Lock` 序列化签到批次的执行阶段
 - 失败缓存：`checkin:{courseid}:invalid:{ticketid}` 避免重复无效请求
+- 成功去重：`checkin_done:{ticketid}:{account_id}` 防止同一 ticket 下重复调用签到 API
 
 ### 会话池管理
 
@@ -493,6 +500,8 @@ SessionPool（模块级单例）
 | **速率限制**               | Redis 滑动窗口 — 登录/注册 5次/分钟，签到 10次/分钟 |
 | **Redis 熔断**             | 断路器模式，30s 健康检查间隔自动恢复；3s 短超时防连接卡死 |
 | **凭据加密**               | Fernet (AES-128-CBC + HMAC) 加密课堂派密码          |
+| **登录业务校验**           | 检查 API 返回 status 及 token，拒绝业务级失败（如密码过期） |
+| **状态追踪**               | 每个账号记录 `status_message`，失败原因可追溯       |
 | **密码强度**               | 8-128 字符，必须包含大小写字母和数字                |
 | **CORS**                   | `ALLOWED_ORIGINS` 白名单机制，可配置多个来源        |
 | **SQL 注入防护**           | SQLModel 参数化查询                                 |
@@ -532,6 +541,9 @@ CheckInHelper/
 │   ├── wechat_qrcode_files.data # WeChat QR 模型数据
 │   ├── zxing.min.js        # ZXing WASM 备用 QR 解码
 │   └── test.html           # QR 解码测试页
+│
+├── scripts/                # 🛠️ 工具脚本
+│   └── backfill_accounts.py  # 补齐旧账号用户详情字段
 │
 └── .claude/                # 🤖 Claude Code 配置
 ```
