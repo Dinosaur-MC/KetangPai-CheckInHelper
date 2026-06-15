@@ -347,10 +347,19 @@ class SessionPool:
                     "Canary check-in: account %s (%s)",
                     first_aid, first_client.email,
                 )
+                # canary 也检查去重
+                dedup_key = f"checkin_done:{data.ticketid}:{first_aid}"
                 try:
-                    first_result = await asyncio.to_thread(
-                        first_client.check_in, data
-                    )
+                    if r and r.get(dedup_key):
+                        first_result = CheckInResult(
+                            email=first_client.email,
+                            success=True,
+                            message="已签到（跳过重复调用）",
+                        )
+                    else:
+                        first_result = await asyncio.to_thread(
+                            first_client.check_in, data
+                        )
                 except Exception as e:
                     logger.warning(
                         "Canary check-in exception for account %s: %s",
@@ -361,6 +370,14 @@ class SessionPool:
                         success=False,
                         message=f"签到失败：{e}",
                     )
+
+                # canary 成功后写入去重标记
+                if first_result.success:
+                    try:
+                        ttl = max(data.expire - int(time.time()), 300)
+                        r.set(dedup_key, "1", ttl)
+                    except Exception:
+                        pass
 
                 self._record(
                     db, r, user_id, first_aid, data.courseid,
@@ -416,17 +433,40 @@ class SessionPool:
                     )
                     return results
 
-                # ----- 并发处理剩余账号 -----
+                # ----- 签发前过滤已在 Redis 中标记已签到的账号 -----
                 if len(account_ids) > 1:
+                    dedup_filtered = []
+                    already_done = []
+                    for aid in account_ids:
+                        if aid == first_aid:
+                            continue
+                        if r and r.get(f"checkin_done:{data.ticketid}:{aid}"):
+                            already_done.append(aid)
+                            email = self._resolve_client_email(snapshot, aid)
+                            cr = CheckInResult(
+                                email=email or f"account:{aid}",
+                                success=True,
+                                message="已签到（跳过重复调用）",
+                            )
+                            results[aid] = cr
+                            self._record(
+                                db, r, user_id, aid, data.courseid,
+                                email, cr,
+                            )
+                        else:
+                            dedup_filtered.append(aid)
+                    if already_done:
+                        logger.info(
+                            "Skipped %s accounts already checked in (ticket %s)",
+                            len(already_done), data.ticketid,
+                        )
                     tasks = [
                         asyncio.create_task(
                             self._checkin_one_ensure(
                                 snapshot, db, r, user_id, aid, data,
                             )
                         )
-                        for aid in account_ids
-                        # skip canary
-                        if aid != first_aid
+                        for aid in dedup_filtered
                     ]
                     gathered = await asyncio.gather(*tasks)
                     for aid, cr in gathered:
@@ -499,6 +539,25 @@ class SessionPool:
                         ),
                     )
 
+            # 检查该 ticket 下此账号是否已签过
+            dedup_key = f"checkin_done:{data.ticketid}:{account_id}"
+            try:
+                if r and r.get(dedup_key):
+                    logger.info(
+                        "Account %s already checked in for ticket %s — skipping",
+                        account_id, data.ticketid,
+                    )
+                    return (
+                        account_id,
+                        CheckInResult(
+                            email=client.email,
+                            success=True,
+                            message="已签到（跳过重复调用）",
+                        ),
+                    )
+            except Exception:
+                pass  # Redis 不可用时放行
+
             try:
                 result = await asyncio.to_thread(client.check_in, data)
             except Exception as e:
@@ -514,6 +573,13 @@ class SessionPool:
                         message=f"签到失败：{e}",
                     ),
                 )
+            # 签到成功后写入 Redis 去重标记
+            if result.success:
+                try:
+                    ttl = max(data.expire - int(time.time()), 300)
+                    r.set(dedup_key, "1", ttl)
+                except Exception:
+                    pass
             with self.lock:
                 self._touch(account_id)
             self._record(
