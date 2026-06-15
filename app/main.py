@@ -1148,6 +1148,18 @@ async def verify_account(
     try:
         client = KetangPaiAPI(account.email, password)
         client.login()
+        # 验证成功后顺便刷新用户详情
+        try:
+            info = client.get_user_info().data
+            account.username = info.username
+            account.avatar = info.avatar
+            account.school = info.school
+            account.stno = info.stno
+            account.department = info.department or ""
+            account.mobile = info.mobile
+            account.ktp_account = info.account
+        except Exception as e:
+            logger.warning("Failed to refresh user info for %s: %s", account.email, e)
         client.close()
         account.status = 1
         account.status_message = ""
