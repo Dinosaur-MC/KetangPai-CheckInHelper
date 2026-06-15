@@ -6,7 +6,7 @@ import os
 import time
 import threading
 import logging
-from sqlmodel import create_engine, SQLModel, Session
+from sqlmodel import create_engine, SQLModel, Session, text
 from redis import Redis, ConnectionPool
 
 from app.models import *
@@ -218,9 +218,36 @@ def get_redis_client() -> "Redis | None":
         return None
 
 
+def _migrate():
+    """增量迁移：为已有表添加新列（幂等，重复执行安全）。"""
+    additions = {
+        "account": [
+            "ADD COLUMN username VARCHAR(255) NOT NULL DEFAULT ''",
+            "ADD COLUMN avatar VARCHAR(512) NOT NULL DEFAULT ''",
+            "ADD COLUMN school VARCHAR(255) NOT NULL DEFAULT ''",
+            "ADD COLUMN stno VARCHAR(128) NOT NULL DEFAULT ''",
+            "ADD COLUMN department VARCHAR(255) NOT NULL DEFAULT ''",
+            "ADD COLUMN mobile VARCHAR(64) NOT NULL DEFAULT ''",
+            "ADD COLUMN ktp_account VARCHAR(128) NOT NULL DEFAULT ''",
+        ],
+        "checkinlog": [
+            "ADD COLUMN message VARCHAR(255) NOT NULL DEFAULT ''",
+        ],
+    }
+    for table, cols in additions.items():
+        for col in cols:
+            try:
+                with engine.connect() as conn:
+                    conn.execute(text(f"ALTER TABLE {table} {col}"))
+                    conn.commit()
+            except Exception:
+                pass  # 列已存在则静默跳过
+
+
 def init_db():
-    """在应用启动时调用，确保表已创建（幂等）。"""
+    """在应用启动时调用，确保表已创建并运行增量迁移。"""
     SQLModel.metadata.create_all(engine)
+    _migrate()
 
 
 def get_session() -> Session:
