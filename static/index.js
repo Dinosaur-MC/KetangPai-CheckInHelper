@@ -100,7 +100,7 @@ createApp({
         const adminAccounts = ref([]);
         const editingInvite = ref(null);
         const users = ref([]);
-        const recentLogs = computed(() => logs.value.slice(-10).reverse());
+        const recentLogs = computed(() => logs.value.slice(0, 10));
 
         // 分页状态
         const PAGE_SIZE = 20;
