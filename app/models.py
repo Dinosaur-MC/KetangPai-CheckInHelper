@@ -54,6 +54,13 @@ class Account(SQLModel, table=True):
     email: str = Field(index=True, unique=True)
     password: str
     uid: str
+    username: str = ""           # 真实姓名（来自课堂派）
+    avatar: str = ""             # 头像 URL
+    school: str = ""             # 学校
+    stno: str = ""               # 学号
+    department: str = ""         # 院系/专业
+    mobile: str = ""             # 手机号
+    ktp_account: str = ""        # 课堂派账号名
     status: int = Field(default=0)
     created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
 
@@ -85,6 +92,7 @@ class CheckInLog(SQLModel, table=True):
     account_id: int = Field(default=None, foreign_key="account.id")
     course_id: str
     status: int = Field(default=0)
+    message: str = ""            # 签到结果描述（成功/失败原因）
     created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
 
 
