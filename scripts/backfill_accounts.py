@@ -11,12 +11,17 @@
 """
 
 import sys
+import os
 import time
 import logging
 from pathlib import Path
 
 # 确保能找到项目根目录的 app 包
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+
+from dotenv import load_dotenv
+
+load_dotenv()
 
 from sqlmodel import Session, select
 from app.db import engine
