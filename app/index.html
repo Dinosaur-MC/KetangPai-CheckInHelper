@@ -190,18 +190,19 @@
                                     <thead>
                                         <tr>
                                             <th>课程</th>
-                                            <th>账号 ID</th>
-                                            <th>状态</th>
+                                            <th>账号</th>
+                                            <th>结果</th>
                                             <th>时间</th>
                                         </tr>
                                     </thead>
                                     <tbody>
                                         <tr v-for="log in recentLogs" :key="log.id">
-                                            <td>{{ log.course_id }}</td>
-                                            <td>{{ log.account_id }}</td>
+                                            <td style="font-size:13px;">{{ getCourseName(log.course_id) }}</td>
+                                            <td style="font-size:13px;">{{ getAccountEmail(log.account_id) }}</td>
                                             <td><span class="status-chip" :class="log.status===1?'green':'red'">{{
-                                                    log.status===1?'成功':'失败' }}</span></td>
-                                            <td>{{ formatTime(log.created_at) }}</td>
+                                                    log.status===1?'成功':'失败' }}</span>
+                                                <span v-if="log.message" style="font-size:11px;color:#666;display:block;">{{ log.message }}</span></td>
+                                            <td style="font-size:13px;white-space:nowrap;">{{ formatTime(log.created_at) }}</td>
                                         </tr>
                                     </tbody>
                                 </table>
