@@ -177,11 +177,16 @@ class KetangPaiAPI:
         :param email: 邮箱/手机号
         :param password: 密码
         :return: 登录响应（包含 token、uid 等）
+        :raises RuntimeError: 业务失败时抛出，消息包含 API 返回的错误原因
         """
         req = LoginRequest(email=self.email, password=self.password)
         resp = self.session.post(f"{API_BASE}/UserApi/login", json=req.model_dump())
         resp.raise_for_status()
         result = LoginResponse(**resp.json())
+        # 检查业务状态：status!=1 或 token 为空视为登录失败
+        if result.status != 1 or not result.data.token:
+            msg = result.message or "登录失败（未知原因）"
+            raise RuntimeError(msg)
         self.token = result.data.token
         self.session.headers["token"] = result.data.token
         return result
