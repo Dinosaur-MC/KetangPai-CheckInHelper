@@ -243,10 +243,13 @@
                                             <td style="font-size:13px;color:#666;">{{ acct.email }}</td>
                                             <td style="font-size:13px;color:#666;">{{ acct.school }}{{ acct.stno ? ' / '+acct.stno : '' }}</td>
                                             <td><span class="status-chip"
-                                                    :class="acct.status===1?'green':(acct.status===0?'orange':'red')">{{
-                                                    acct.status===1?'正常':(acct.status===0?'未知':'不可用') }}</span></td>
+                                                    :class="acct.status===1?'green':(acct.status===0?'orange':'red')"
+                                                    :title="acct.status_message">{{ acct.status===1?'正常':(acct.status===0?'未知':'不可用') }}</span>
+                                                <span v-if="acct.status_message" style="font-size:11px;color:#c62828;display:block;">{{ acct.status_message }}</span></td>
                                             <td>{{ formatTime(acct.created_at) }}</td>
                                             <td class="actions">
+                                                <mdui-button-icon icon="verified" @click="verifyAccount(acct)"
+                                                    title="验证凭据" style="color:#2563eb;"></mdui-button-icon>
                                                 <mdui-button-icon icon="edit" @click="openAccountModal(acct)"
                                                     title="编辑"></mdui-button-icon>
                                                 <mdui-button-icon icon="delete" @click="deleteAccount(acct)" title="删除"
@@ -529,8 +532,10 @@
                                             <td style="font-size:13px;color:#666;">{{ acct.school || '-' }}</td>
                                             <td style="font-size:13px;color:#666;">{{ acct.stno || '-' }}</td>
                                             <td><span class="status-chip"
-                                                    :class="acct.status===1?'green':(acct.status===0?'orange':'red')">{{
-                                                    acct.status===1?'正常':(acct.status===0?'未知':'不可用') }}</span></td>
+                                                    :class="acct.status===1?'green':(acct.status===0?'orange':'red')"
+                                                    :title="acct.status_message">{{
+                                                    acct.status===1?'正常':(acct.status===0?'未知':'不可用') }}</span>
+                                                <span v-if="acct.status_message" style="font-size:11px;color:#c62828;display:block;">{{ acct.status_message }}</span></td>
                                             <td>{{ formatTime(acct.created_at) }}</td>
                                         </tr>
                                     </tbody>

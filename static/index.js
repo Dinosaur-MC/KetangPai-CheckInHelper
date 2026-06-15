@@ -400,6 +400,19 @@ createApp({
             }
         }
 
+        async function verifyAccount(acct) {
+            try {
+                const res = await api("POST", `/api/accounts/${acct.id}/verify`);
+                showToast(res.message);
+                invalidateAccounts();
+                loadAccounts();
+            } catch (e) {
+                showToast(e.message);
+                invalidateAccounts();
+                loadAccounts();
+            }
+        }
+
         async function deleteAccount(acct) {
             if (!confirm(`确定删除账号 ${acct.email}？`)) return;
             try {
@@ -1266,6 +1279,7 @@ createApp({
             loadAccounts,
             openAccountModal,
             saveAccount,
+            verifyAccount,
             deleteAccount,
             loadBindings,
             openBindingModal,
