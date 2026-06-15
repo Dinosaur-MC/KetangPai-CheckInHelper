@@ -229,7 +229,9 @@
                                 <table>
                                     <thead>
                                         <tr>
+                                            <th>姓名</th>
                                             <th>账号</th>
+                                            <th>学校 / 学号</th>
                                             <th>状态</th>
                                             <th>创建时间</th>
                                             <th class="actions">操作</th>
@@ -237,7 +239,9 @@
                                     </thead>
                                     <tbody>
                                         <tr v-for="acct in accounts" :key="acct.id">
-                                            <td>{{ acct.email }}</td>
+                                            <td><strong>{{ acct.username || acct.email.split('@')[0] }}</strong></td>
+                                            <td style="font-size:13px;color:#666;">{{ acct.email }}</td>
+                                            <td style="font-size:13px;color:#666;">{{ acct.school }}{{ acct.stno ? ' / '+acct.stno : '' }}</td>
                                             <td><span class="status-chip"
                                                     :class="acct.status===1?'green':(acct.status===0?'orange':'red')">{{
                                                     acct.status===1?'正常':(acct.status===0?'未知':'不可用') }}</span></td>
@@ -413,15 +417,17 @@
                                             <th>账号</th>
                                             <th>课程 ID</th>
                                             <th>状态</th>
+                                            <th>结果</th>
                                         </tr>
                                     </thead>
                                     <tbody>
                                         <tr v-for="log in logs" :key="log.id">
                                             <td>{{ formatTime(log.created_at) }}</td>
                                             <td>{{ getAccountEmail(log.account_id) }}</td>
-                                            <td>{{ log.course_id }}</td>
+                                            <td style="font-size:13px;">{{ log.course_id }}</td>
                                             <td><span class="status-chip" :class="log.status===1?'green':'red'">{{
                                                     log.status===1?'成功':'失败' }}</span></td>
+                                            <td style="font-size:13px;color:#666;max-width:200px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;" :title="log.message">{{ log.message || '-' }}</td>
                                         </tr>
                                     </tbody>
                                 </table>
@@ -507,8 +513,10 @@
                                     <thead>
                                         <tr>
                                             <th>ID</th>
+                                            <th>姓名</th>
                                             <th>账号</th>
-                                            <th>UID</th>
+                                            <th>学校</th>
+                                            <th>学号</th>
                                             <th>状态</th>
                                             <th>创建时间</th>
                                         </tr>
@@ -516,8 +524,10 @@
                                     <tbody>
                                         <tr v-for="acct in adminAccounts" :key="acct.id">
                                             <td>{{ acct.id }}</td>
-                                            <td>{{ acct.email }}</td>
-                                            <td>{{ acct.uid }}</td>
+                                            <td><strong>{{ acct.username || '-' }}</strong></td>
+                                            <td style="font-size:13px;color:#666;">{{ acct.email }}</td>
+                                            <td style="font-size:13px;color:#666;">{{ acct.school || '-' }}</td>
+                                            <td style="font-size:13px;color:#666;">{{ acct.stno || '-' }}</td>
                                             <td><span class="status-chip"
                                                     :class="acct.status===1?'green':(acct.status===0?'orange':'red')">{{
                                                     acct.status===1?'正常':(acct.status===0?'未知':'不可用') }}</span></td>
