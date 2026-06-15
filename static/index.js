@@ -251,7 +251,8 @@ createApp({
 
         function getAccountEmail(id) {
             const a = accounts.value.find((a) => a.id === id);
-            return a ? a.email : `#${id}`;
+            if (!a) return `#${id}`;
+            return a.username || a.email;
         }
 
         function getCourseName(courseId) {
@@ -404,6 +405,7 @@ createApp({
             try {
                 await api("DELETE", `/api/accounts/${acct.id}`);
                 showToast("账号已删除");
+                invalidateAccounts();
                 loadAccounts();
             } catch (e) {
                 showToast(e.message);
