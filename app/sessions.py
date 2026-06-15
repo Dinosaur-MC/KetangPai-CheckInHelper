@@ -590,6 +590,7 @@ class SessionPool:
                     account_id=account_id,
                     course_id=course_id,
                     status=1 if result.success else 0,
+                    message=result.message,
                 )
             )
         except Exception as e:

@@ -984,11 +984,27 @@ async def create_account(
             logger.warning("Account verification failed for %s: %s", email, e)
             raise HTTPException(status_code=400, detail=f"账号验证失败：{e}")
 
-        # 3. 验证通过再入库
+        # 3. 获取用户详细信息
+        userinfo = None
+        try:
+            client = KetangPaiAPI(email, password, token)
+            userinfo = client.get_user_info().data
+            client.close()
+        except Exception as e:
+            logger.warning("Failed to get user info for %s: %s", email, e)
+
+        # 4. 验证通过再入库
         account = Account(
             email=email,
             password=encrypt_credential(password),
             uid=uid,
+            username=userinfo.username if userinfo else "",
+            avatar=userinfo.avatar if userinfo else "",
+            school=userinfo.school if userinfo else "",
+            stno=userinfo.stno if userinfo else "",
+            department=userinfo.department if userinfo else "",
+            mobile=userinfo.mobile if userinfo else "",
+            ktp_account=userinfo.account if userinfo else "",
             status=1,
         )
         session.add(account)
@@ -1127,10 +1143,29 @@ async def delete_account(
 
         relation = len(user_accounts)
 
-        # 先删除关联关系
+        # 先删除关联的课程绑定（含无引用课程清理）
+        bindings = session.exec(
+            select(CourseBinding).where(CourseBinding.account_id == account_id)
+        ).all()
+        for b in bindings:
+            session.delete(b)
+            remaining = session.exec(
+                select(CourseBinding).where(CourseBinding.course_id == b.course_id)
+            ).first()
+            if remaining is None:
+                course = session.get(Course, b.course_id)
+                if course:
+                    session.delete(course)
+        # 再删除签到日志
+        logs = session.exec(
+            select(CheckInLog).where(CheckInLog.account_id == account_id)
+        ).all()
+        for l in logs:
+            session.delete(l)
+        # 删除关联关系
         for ua in user_accounts:
             session.delete(ua)
-        # 再删除账号
+        # 最后删除账号
         session.delete(account)
         session.flush()
 
@@ -1151,14 +1186,32 @@ async def delete_account(
         if account is None:
             raise HTTPException(status_code=404, detail="账号不存在")
 
-        # 先删除关联关系
+        # 先删除关联的课程绑定和签到日志
+        bindings = session.exec(
+            select(CourseBinding).where(CourseBinding.account_id == account_id)
+        ).all()
+        for b in bindings:
+            session.delete(b)
+            remaining = session.exec(
+                select(CourseBinding).where(CourseBinding.course_id == b.course_id)
+            ).first()
+            if remaining is None:
+                course = session.get(Course, b.course_id)
+                if course:
+                    session.delete(course)
+        logs = session.exec(
+            select(CheckInLog).where(CheckInLog.account_id == account_id)
+        ).all()
+        for l in logs:
+            session.delete(l)
+        # 删除关联关系
         session.delete(user_account)
 
         # 验证账号是否被其他用户关联
-        user_account = session.exec(
+        other_link = session.exec(
             select(UserAccount).where(UserAccount.account_id == account_id)
         ).first()
-        if user_account is None:
+        if other_link is None:
             # 账号未被其他用户关联，可以删除
             session.delete(account)
         session.flush()
