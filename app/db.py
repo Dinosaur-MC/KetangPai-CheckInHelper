@@ -146,11 +146,11 @@ def get_redis():
         同 5min 内所有后续请求零额外网络开销。
 
     **熔断路径（Redis 不可用）**
-        - 客户端操作首次失败后立即将 *\_redis\_available* 翻转为 ``False``，
+        - 客户端操作首次失败后立即将 *redis_available* 翻转为 ``False``，
           后续请求立即返回 ``None``。
         - 每 5min 自动尝试一次 ping 恢复检查。
 
-    返回的客户端已是 *\_RedisWrapper* 包装，调用方无需重复 try/except::
+    返回的客户端已是 *RedisWrapper* 包装，调用方无需重复 try/except::
 
         @router.get("/foo")
         async def foo(redis: Redis = Depends(get_redis)):
