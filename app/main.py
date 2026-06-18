@@ -755,14 +755,8 @@ async def create_invite_code(
         max_uses=max_uses,
         expires_at=(
             (
-                datetime.now(timezone.utc).replace(
-                    hour=0, minute=0, second=0, microsecond=0
-                )
-                + timedelta(
-                    days=expires_in_hours // 24 + (1 if expires_in_hours % 24 else 0)
-                )
-                if expires_in_hours
-                else None
+                datetime.now(timezone.utc).replace(second=0, microsecond=0)
+                + timedelta(hours=expires_in_hours)
             )
             if expires_in_hours
             else None
@@ -1123,6 +1117,7 @@ async def update_account(
         account.status_message = ""
         try:
             from app.api import KetangPaiAPI
+
             client = KetangPaiAPI(
                 email if email is not None else account.email, password
             )
@@ -1332,7 +1327,11 @@ async def list_course_bindings(
             message="success", data=[], total=0, page=page, page_size=page_size
         )
 
-    query = select(CourseBinding).where(CourseBinding.account_id.in_(account_ids)).order_by(CourseBinding.id)
+    query = (
+        select(CourseBinding)
+        .where(CourseBinding.account_id.in_(account_ids))
+        .order_by(CourseBinding.id)
+    )
     bindings, total = paginate(session, query, page, page_size)
     return PaginatedResponse(
         message="success",

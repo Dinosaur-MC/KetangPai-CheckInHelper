@@ -43,8 +43,7 @@ class SessionPool:
         """移除过期的会话（调用方需持有 self.lock）。"""
         now = time.time()
         expired_ids = [
-            aid for aid, (_, ts) in list(self.clients.items())
-            if now - ts > SESSION_TTL
+            aid for aid, (_, ts) in list(self.clients.items()) if now - ts > SESSION_TTL
         ]
         for aid in expired_ids:
             try:
@@ -63,9 +62,7 @@ class SessionPool:
     # 同步方法：create / remove（通过 threading.Lock 保护）
     # ------------------------------------------------------------------
 
-    def create(
-        self, accounts: list[Account], update_status: bool = True
-    ) -> bool:
+    def create(self, accounts: list[Account], update_status: bool = True) -> bool:
         """为 *accounts* 创建登录会话，已存在的跳过。
 
         :param update_status: 是否数据库更新账号状态（login 成功=1，失败=-1）。
@@ -86,7 +83,9 @@ class SessionPool:
                     token = r.get(f"account:{account.id}:token")
                 except Exception:
                     token = None
-                client = KetangPaiAPI(account.email, decrypt_credential(account.password), token)
+                client = KetangPaiAPI(
+                    account.email, decrypt_credential(account.password), token
+                )
                 if not token:
                     try:
                         client.login()
@@ -103,7 +102,9 @@ class SessionPool:
                     except Exception as e:
                         msg = str(e) or "登录失败"
                         logger.warning(
-                            "Failed to login account %s: %s", account.email, msg
+                            "Failed to login account %s: %s",
+                            account.email[:5] + "..." + account.email[-5:],
+                            msg,
                         )
                         if update_status:
                             self._set_account_status(account.id, -1, msg)
@@ -152,7 +153,9 @@ class SessionPool:
             except Exception:
                 token = None
 
-            client = KetangPaiAPI(account.email, decrypt_credential(account.password), token)
+            client = KetangPaiAPI(
+                account.email, decrypt_credential(account.password), token
+            )
             if not token:
                 client.login()
                 try:
@@ -170,18 +173,14 @@ class SessionPool:
             return client
 
         except Exception as e:
-            logger.error(
-                "Failed to ensure client for account %s: %s", account_id, e
-            )
+            logger.error("Failed to ensure client for account %s: %s", account_id, e)
             return None
 
     # ------------------------------------------------------------------
     # 查询方法（均支持批量：int → result, list[int] → dict[int, result]）
     # ------------------------------------------------------------------
 
-    def get_account_info(
-        self, account_ids: int | list[int]
-    ) -> dict | None:
+    def get_account_info(self, account_ids: int | list[int]) -> dict | None:
         """获取账号用户信息。
 
         :param account_ids: 单个 ID 或 ID 列表。
@@ -200,9 +199,7 @@ class SessionPool:
                 resp = client.get_user_info()
                 result[aid] = resp.data.model_dump()
             except Exception as e:
-                logger.warning(
-                    "get_user_info failed for account %s: %s", aid, e
-                )
+                logger.warning("get_user_info failed for account %s: %s", aid, e)
                 # 移除失效会话以便下次重建
                 with self.lock:
                     old = self.clients.pop(aid, None)
@@ -236,9 +233,7 @@ class SessionPool:
                 items = client.get_course_list()
                 result[aid] = [item.model_dump() for item in items]
             except Exception as e:
-                logger.warning(
-                    "get_course_list failed for account %s: %s", aid, e
-                )
+                logger.warning("get_course_list failed for account %s: %s", aid, e)
                 with self.lock:
                     old = self.clients.pop(aid, None)
                     if old is not None:
@@ -250,9 +245,7 @@ class SessionPool:
 
         return result[account_ids] if single else result
 
-    def _set_account_status(
-        self, account_id: int, status: int, message: str = ""
-    ):
+    def _set_account_status(self, account_id: int, status: int, message: str = ""):
         """更新账号状态字段，可选附带状态说明。"""
         try:
             with get_session() as db:
@@ -266,12 +259,12 @@ class SessionPool:
                     db.commit()
                     logger.info(
                         "Account %s status updated to %s: %s",
-                        account_id, status, message,
+                        account_id,
+                        status,
+                        message,
                     )
         except Exception as e:
-            logger.error(
-                "Failed to update account %s status: %s", account_id, e
-            )
+            logger.error("Failed to update account %s status: %s", account_id, e)
 
     # ------------------------------------------------------------------
     # 异步方法：execute_checkin（通过 asyncio.Lock 序列化批次）
@@ -287,15 +280,16 @@ class SessionPool:
         """
         logger.info(
             "Starting check-in for user=%s course=%s ticket=%s accounts=%s",
-            user_id, data.courseid, data.ticketid, account_ids,
+            user_id,
+            data.courseid,
+            data.ticketid,
+            account_ids,
         )
 
         # ── 快照阶段 ──
         with self.lock:
             self._cleanup_expired()
-            snapshot = {
-                aid: self.clients.get(aid) for aid in account_ids
-            }
+            snapshot = {aid: self.clients.get(aid) for aid in account_ids}
 
         # ── 执行阶段 ──
         async with self.exec_lock:
@@ -304,14 +298,13 @@ class SessionPool:
                 r = get_redis_client()
 
                 # 检查缓存的「该 ticket 全局无效」标记
-                invalid_key = (
-                    f"checkin:{data.courseid}:invalid:{data.ticketid}"
-                )
+                invalid_key = f"checkin:{data.courseid}:invalid:{data.ticketid}"
                 if r and r.get(invalid_key):
                     logger.info(
                         "Ticket %s for course %s is cached as invalid — "
                         "skipping all accounts",
-                        data.ticketid, data.courseid,
+                        data.ticketid,
+                        data.courseid,
                     )
                     # 为每个账号生成有意义的"跳过"结果
                     cached = self._build_skip_results(
@@ -319,8 +312,13 @@ class SessionPool:
                     )
                     for aid, cr in cached.items():
                         self._record(
-                            db, r, user_id, aid, data.courseid,
-                            cr.email, cr,
+                            db,
+                            r,
+                            user_id,
+                            aid,
+                            data.courseid,
+                            cr.email,
+                            cr,
                         )
                     try:
                         db.commit()
@@ -338,14 +336,20 @@ class SessionPool:
                     )
                     # 尝试为每个无会话的账号按需创建并执行
                     return await self._checkin_all_ensure(
-                        snapshot, db, r, user_id, account_ids, data,
+                        snapshot,
+                        db,
+                        r,
+                        user_id,
+                        account_ids,
+                        data,
                     )
 
                 first_aid, first_client = canary
 
                 logger.debug(
                     "Canary check-in: account %s (%s)",
-                    first_aid, first_client.email,
+                    first_aid,
+                    first_client.email[:5] + "..." + first_client.email[-5:],
                 )
                 # canary 也检查去重
                 dedup_key = f"checkin_done:{data.ticketid}:{first_aid}"
@@ -363,7 +367,8 @@ class SessionPool:
                 except Exception as e:
                     logger.warning(
                         "Canary check-in exception for account %s: %s",
-                        first_aid, e,
+                        first_aid,
+                        e,
                     )
                     first_result = CheckInResult(
                         email=first_client.email,
@@ -380,15 +385,22 @@ class SessionPool:
                         pass
 
                 self._record(
-                    db, r, user_id, first_aid, data.courseid,
-                    first_client, first_result,
+                    db,
+                    r,
+                    user_id,
+                    first_aid,
+                    data.courseid,
+                    first_client,
+                    first_result,
                 )
                 self._touch(first_aid)
                 results[first_aid] = first_result
 
                 logger.info(
                     "Canary result for account %s: success=%s message=%s",
-                    first_aid, first_result.success, first_result.message,
+                    first_aid,
+                    first_result.success,
+                    first_result.message,
                 )
 
                 if not first_result.success:
@@ -399,7 +411,8 @@ class SessionPool:
                         logger.info(
                             "Ticket %s marked as globally invalid "
                             "(code=%s reason=%s)",
-                            data.ticketid, first_result.code,
+                            data.ticketid,
+                            first_result.code,
                             first_result.message,
                         )
 
@@ -408,7 +421,8 @@ class SessionPool:
                         if aid == first_aid:
                             continue
                         skip_email = self._resolve_client_email(
-                            snapshot, aid,
+                            snapshot,
+                            aid,
                         )
                         results[aid] = CheckInResult(
                             email=skip_email or f"account:{aid}",
@@ -416,8 +430,13 @@ class SessionPool:
                             message=f"已跳过（{first_result.message}）",
                         )
                         self._record(
-                            db, r, user_id, aid, data.courseid,
-                            skip_email, results[aid],
+                            db,
+                            r,
+                            user_id,
+                            aid,
+                            data.courseid,
+                            skip_email,
+                            results[aid],
                         )
 
                     try:
@@ -429,7 +448,8 @@ class SessionPool:
                     logger.info(
                         "Check-in aborted after canary failure — "
                         "%s succeeded, %s skipped",
-                        0, len(account_ids) - 1,
+                        0,
+                        len(account_ids) - 1,
                     )
                     return results
 
@@ -450,20 +470,31 @@ class SessionPool:
                             )
                             results[aid] = cr
                             self._record(
-                                db, r, user_id, aid, data.courseid,
-                                email, cr,
+                                db,
+                                r,
+                                user_id,
+                                aid,
+                                data.courseid,
+                                email,
+                                cr,
                             )
                         else:
                             dedup_filtered.append(aid)
                     if already_done:
                         logger.info(
                             "Skipped %s accounts already checked in (ticket %s)",
-                            len(already_done), data.ticketid,
+                            len(already_done),
+                            data.ticketid,
                         )
                     tasks = [
                         asyncio.create_task(
                             self._checkin_one_ensure(
-                                snapshot, db, r, user_id, aid, data,
+                                snapshot,
+                                db,
+                                r,
+                                user_id,
+                                aid,
+                                data,
                             )
                         )
                         for aid in dedup_filtered
@@ -474,8 +505,8 @@ class SessionPool:
                         logger.debug(
                             "Account %s check-in result: success=%s %s",
                             aid,
-                            cr.success if cr else 'N/A',
-                            cr.message if cr else '',
+                            cr.success if cr else "N/A",
+                            cr.message if cr else "",
                         )
 
                 try:
@@ -484,13 +515,12 @@ class SessionPool:
                     logger.error("Failed to commit: %s", e)
                     db.rollback()
 
-            succeeded = sum(
-                1 for r in results.values()
-                if r is not None and r.success
-            )
+            succeeded = sum(1 for r in results.values() if r is not None and r.success)
             logger.info(
                 "Check-in completed for user=%s: %s/%s succeeded",
-                user_id, succeeded, len(account_ids),
+                user_id,
+                succeeded,
+                len(account_ids),
             )
             return results
 
@@ -513,8 +543,11 @@ class SessionPool:
     async def _checkin_one_ensure(
         self,
         snapshot: dict[int, tuple[KetangPaiAPI, float] | None],
-        db, r,
-        user_id: int, account_id: int, data: CheckInRequest,
+        db,
+        r,
+        user_id: int,
+        account_id: int,
+        data: CheckInRequest,
     ) -> tuple[int, CheckInResult | None]:
         """签到单个账号（受 semaphore 限流），无会话时按需创建。"""
         async with self.semaphore:
@@ -545,7 +578,8 @@ class SessionPool:
                 if r and r.get(dedup_key):
                     logger.info(
                         "Account %s already checked in for ticket %s — skipping",
-                        account_id, data.ticketid,
+                        account_id,
+                        data.ticketid,
                     )
                     return (
                         account_id,
@@ -563,7 +597,9 @@ class SessionPool:
             except Exception as e:
                 logger.error(
                     "Check-in failed for account %s (%s): %s",
-                    account_id, client.email, e,
+                    account_id,
+                    client.email[:5] + "..." + client.email[-5:],
+                    e,
                 )
                 return (
                     account_id,
@@ -583,23 +619,38 @@ class SessionPool:
             with self.lock:
                 self._touch(account_id)
             self._record(
-                db, r, user_id, account_id, data.courseid, client, result,
+                db,
+                r,
+                user_id,
+                account_id,
+                data.courseid,
+                client,
+                result,
             )
             return (account_id, result)
 
     async def _checkin_all_ensure(
         self,
         snapshot: dict[int, tuple[KetangPaiAPI, float] | None],
-        db, r,
-        user_id: int, account_ids: list[int], data: CheckInRequest,
+        db,
+        r,
+        user_id: int,
+        account_ids: list[int],
+        data: CheckInRequest,
     ) -> dict[int, CheckInResult | None]:
         """所有账号无会话时的兜底：逐个尝试按需创建。"""
-        logger.info("Falling back to per-account ensure for all %s accounts",
-                     len(account_ids))
+        logger.info(
+            "Falling back to per-account ensure for all %s accounts", len(account_ids)
+        )
         tasks = [
             asyncio.create_task(
                 self._checkin_one_ensure(
-                    snapshot, db, r, user_id, aid, data,
+                    snapshot,
+                    db,
+                    r,
+                    user_id,
+                    aid,
+                    data,
                 )
             )
             for aid in account_ids
@@ -644,18 +695,19 @@ class SessionPool:
     # ------------------------------------------------------------------
 
     def _record(
-        self, db, r, user_id, account_id, course_id,
-        client_or_email, result,
+        self,
+        db,
+        r,
+        user_id,
+        account_id,
+        course_id,
+        client_or_email,
+        result,
     ):
         """记录签到日志并刷新 token 缓存（失败不抛异常）。
 
         *client_or_email* 可以是 KetangPaiAPI 实例（有 token）或纯邮箱字符串。
         """
-        email = (
-            client_or_email.email
-            if hasattr(client_or_email, 'email')
-            else client_or_email
-        )
         try:
             db.add(
                 CheckInLog(
@@ -668,7 +720,7 @@ class SessionPool:
             )
         except Exception as e:
             logger.error("Failed to write CheckInLog: %s", e)
-        if hasattr(client_or_email, 'token') and client_or_email.token:
+        if hasattr(client_or_email, "token") and client_or_email.token:
             try:
                 r.set(
                     f"account:{account_id}:token",
