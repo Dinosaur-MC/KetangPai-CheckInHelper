@@ -2,31 +2,30 @@
 SQLModel + MySQL + Redis
 """
 
-import os
 import time
 import threading
 import logging
 from sqlmodel import create_engine, SQLModel, Session, text
 from redis import Redis, ConnectionPool
 
+from app.core.settings import settings
 from app.models import *
 
 logger = logging.getLogger(__name__)
 
-DATABASE_URL = os.getenv(
-    "DATABASE_URL",
-    "mysql+pymysql://checkinhelper:checkinhelper@localhost:3306/checkinhelper?charset=utf8mb4",
-)
-REDIS_URL = os.getenv("REDIS_URL", "redis://localhost:6379/0")
-
-DB_ECHO = os.getenv("DB_ECHO", "false").lower() in ("1", "true", "yes")
+if not settings.database_url:
+    raise RuntimeError(
+        "DATABASE_URL 环境变量未设置。"
+        "请在 .env 文件中配置，例如：\n"
+        "DATABASE_URL=mysql+pymysql://user:password@host:port/dbname?charset=utf8mb4"
+    )
 
 engine = create_engine(
-    DATABASE_URL,
-    echo=DB_ECHO,
-    pool_size=int(os.getenv("DB_POOL_SIZE", "10")),
-    max_overflow=int(os.getenv("DB_MAX_OVERFLOW", "20")),
-    pool_recycle=int(os.getenv("DB_POOL_RECYCLE", "3600")),
+    settings.database_url,
+    echo=settings.db_echo,
+    pool_size=settings.db_pool_size,
+    max_overflow=settings.db_max_overflow,
+    pool_recycle=settings.db_pool_recycle,
 )
 
 # ── Redis 连接管理（断路器模式）──────────────────────────────────────────
@@ -54,7 +53,7 @@ def _get_redis_pool() -> "ConnectionPool | None":
             if _redis_pool is None:
                 try:
                     _redis_pool = ConnectionPool.from_url(
-                        REDIS_URL,
+                        settings.redis_url,
                         protocol=2,
                         socket_connect_timeout=_REDIS_SOCKET_TIMEOUT,
                         socket_timeout=_REDIS_SOCKET_TIMEOUT,
@@ -270,7 +269,8 @@ def _migrate():
 def init_db():
     """在应用启动时调用，确保表已创建并运行增量迁移。"""
     SQLModel.metadata.create_all(engine)
-    _migrate()
+    if settings.db_auto_migrate:
+        _migrate()
 
 
 def get_session() -> Session:

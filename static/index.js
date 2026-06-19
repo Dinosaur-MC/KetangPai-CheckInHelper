@@ -927,7 +927,7 @@ createApp({
                 params.set("page", logPage.value);
                 params.set("page_size", PAGE_SIZE);
                 if (logFilter.course_id) params.set("course_id", logFilter.course_id);
-                const res = await api("GET", `/api/checkin/logs?${params}`);
+                const res = await api("GET", `/api/logs/checkin?${params}`);
                 logs.value = res.data || [];
                 logTotal.value = res.total || 0;
             } catch (e) {

@@ -1,10 +1,12 @@
 import asyncio
 import time
 from threading import Lock
+
+from sqlmodel import Session
 from app.api import CheckInRequest, KetangPaiAPI, CheckInResult
-from app.db import get_session, get_redis_client
+from app.core.db import get_session, get_redis_client
 from app.models import Account, CheckInLog
-from app.security import decrypt_credential
+from app.core.security import decrypt_credential
 
 import logging
 
@@ -125,11 +127,17 @@ class SessionPool:
                         pass
             return True
 
-    def _ensure_client(self, account_id: int) -> KetangPaiAPI | None:
+    def _ensure_client(
+        self,
+        account_id: int,
+        db_session: Session | None = None,
+    ) -> KetangPaiAPI | None:
         """确保 *account_id* 在 self.clients 中有可用会话。
 
         调用方建议持有 self.lock；为安全，本方法内部自行加锁。
         返回客户端或 None（账号不存在或登录失败）。
+
+        :param db_session: 可选的现有 DB 会话，避免在事务外创建独立连接。
         """
         with self.lock:
             self._cleanup_expired()
@@ -142,8 +150,11 @@ class SessionPool:
 
         # 从 DB 重建
         try:
-            with get_session() as db:
-                account = db.get(Account, account_id)
+            if db_session is not None:
+                account = db_session.get(Account, account_id)
+            else:
+                with get_session() as db:
+                    account = db.get(Account, account_id)
             if account is None:
                 return None
 
@@ -166,7 +177,11 @@ class SessionPool:
                     )
                 except Exception:
                     pass
-                self._set_account_status(account_id, 1)
+                self._set_account_status(
+                    account_id,
+                    1,
+                    db_session=db_session,
+                )
 
             with self.lock:
                 self.clients[account_id] = (client, time.time())
@@ -245,8 +260,36 @@ class SessionPool:
 
         return result[account_ids] if single else result
 
-    def _set_account_status(self, account_id: int, status: int, message: str = ""):
-        """更新账号状态字段，可选附带状态说明。"""
+    def _set_account_status(
+        self,
+        account_id: int,
+        status: int,
+        message: str = "",
+        db_session: Session | None = None,
+    ):
+        """更新账号状态字段，可选附带状态说明。
+
+        :param db_session: 可选的现有 DB 会话。传入时复用该会话，
+            避免在已有事务上下文外创建独立连接。
+        """
+        if db_session is not None:
+            try:
+                acct = db_session.get(Account, account_id)
+                if acct is not None and (
+                    acct.status != status or acct.status_message != message
+                ):
+                    acct.status = status
+                    acct.status_message = message
+                    db_session.add(acct)
+                    logger.info(
+                        "Account %s status updated to %s: %s",
+                        account_id,
+                        status,
+                        message,
+                    )
+            except Exception as e:
+                logger.error("Failed to update account %s status: %s", account_id, e)
+            return
         try:
             with get_session() as db:
                 acct = db.get(Account, account_id)
@@ -555,12 +598,16 @@ class SessionPool:
             if entry is not None:
                 client = entry[0]
             else:
-                # 快照中无会话，尝试按需创建
+                # 快照中无会话，尝试按需创建（to_thread 避免阻塞事件循环）
                 logger.info(
                     "Account %s not in session pool, creating on demand",
                     account_id,
                 )
-                client = self._ensure_client(account_id)
+                client = await asyncio.to_thread(
+                    self._ensure_client,
+                    account_id,
+                    db_session=db,
+                )
                 if client is None:
                     email = self._resolve_client_email(snapshot, account_id)
                     return (

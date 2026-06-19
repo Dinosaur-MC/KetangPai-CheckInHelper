@@ -6,14 +6,16 @@ Dependencies: passlib[argon2], pyjwt
 from __future__ import annotations
 
 import logging
-import os
 import uuid
 from datetime import datetime, timedelta, timezone
 
 import jwt
+import secrets
 from cryptography.fernet import Fernet
 from passlib.context import CryptContext
 from redis import Redis
+
+from app.core.settings import settings
 
 logger = logging.getLogger(__name__)
 
@@ -31,7 +33,9 @@ _JWT_EXPIRE_HOURS: int = 24
 _REFRESH_EXPIRE_DAYS: int = 30
 
 # Allowed JWT algorithms
-_ALLOWED_ALGORITHMS = frozenset({"HS256", "HS384", "HS512", "RS256", "RS384", "RS512", "ES256", "ES384", "ES512"})
+_ALLOWED_ALGORITHMS = frozenset(
+    {"HS256", "HS384", "HS512", "RS256", "RS384", "RS512", "ES256", "ES384", "ES512"}
+)
 
 
 def hash_password(password: str) -> str:
@@ -54,37 +58,34 @@ _CREDENTIAL_CIPHER: Fernet | None = None
 def _get_cipher() -> Fernet:
     global _CREDENTIAL_CIPHER
     if _CREDENTIAL_CIPHER is None:
-        raw_key = os.environ.get("CREDENTIAL_KEY")
-        if raw_key:
-            try:
-                key = raw_key.encode("utf-8") if isinstance(raw_key, str) else raw_key
-                _CREDENTIAL_CIPHER = Fernet(key)
-            except Exception:
-                logger.warning("CREDENTIAL_KEY 不是有效的 Fernet 密钥（需 32 字节 base64），课堂派凭据将明文存储。")
-                _CREDENTIAL_CIPHER = None
-        else:
-            logger.warning(
-                "CREDENTIAL_KEY 未设置，课堂派凭据将明文存储。"
-                "可通过 `python -c 'from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())'` 生成密钥。"
+        if not settings.credential_key:
+            raise RuntimeError(
+                "CREDENTIAL_KEY 环境变量未设置。\n"
+                "课堂派账号密码加密密钥是必需的。请在 .env 文件中配置，例如：\n"
+                "CREDENTIAL_KEY=your_fernet_key_here\n"
+                "生成方式：uv run python -c \"from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())\""
+            )
+        try:
+            key = settings.credential_key.encode("utf-8")
+            _CREDENTIAL_CIPHER = Fernet(key)
+        except Exception:
+            raise RuntimeError(
+                "CREDENTIAL_KEY 不是有效的 Fernet 密钥（需 32 字节 base64 编码）。\n"
+                "请通过以下命令生成：\n"
+                "uv run python -c \"from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())\""
             )
     return _CREDENTIAL_CIPHER
 
 
 def encrypt_credential(plaintext: str) -> str:
-    """加密课堂派凭据。若未配置密钥则明文返回。"""
-    cipher = _get_cipher()
-    if cipher is None:
-        return plaintext
-    return cipher.encrypt(plaintext.encode("utf-8")).decode("utf-8")
+    """加密课堂派凭据。"""
+    return _get_cipher().encrypt(plaintext.encode("utf-8")).decode("utf-8")
 
 
 def decrypt_credential(token: str) -> str:
-    """解密课堂派凭据。若未配置密钥则假定明文。"""
-    cipher = _get_cipher()
-    if cipher is None:
-        return token
+    """解密课堂派凭据。"""
     try:
-        return cipher.decrypt(token.encode("utf-8")).decode("utf-8")
+        return _get_cipher().decrypt(token.encode("utf-8")).decode("utf-8")
     except Exception:
         return token  # fallback: assume already plaintext
 
@@ -225,14 +226,28 @@ def decode_access_token(token: str) -> dict | None:
 def configure_jwt(
     secret: str,
     algorithm: str = "HS256",
-    expire_hours: int = 24 * 7,
+    expire_hours: int = 24,
 ) -> None:
     """Override JWT defaults (call once at startup)."""
     global _JWT_SECRET, _JWT_ALGORITHM, _JWT_EXPIRE_HOURS
     if not secret or len(secret) < 16:
         raise ValueError("JWT_SECRET 必须至少 16 个字符")
     if algorithm not in _ALLOWED_ALGORITHMS:
-        raise ValueError(f"不支持的 JWT 算法：{algorithm}. 允许值：{_ALLOWED_ALGORITHMS}")
+        raise ValueError(
+            f"不支持的 JWT 算法：{algorithm}. 允许值：{_ALLOWED_ALGORITHMS}"
+        )
     _JWT_SECRET = secret
     _JWT_ALGORITHM = algorithm
     _JWT_EXPIRE_HOURS = expire_hours
+
+
+# JWT 配置 — 从 pydantic_settings 加载
+_jwt_secret = settings.jwt_secret
+if not _jwt_secret:
+    _jwt_secret = secrets.token_hex(32)
+    logger.warning("JWT_SECRET 未设置！已生成随机密钥。重启后所有 token 将失效。")
+configure_jwt(
+    _jwt_secret,
+    settings.jwt_algorithm,
+    settings.jwt_expire_hours,
+)

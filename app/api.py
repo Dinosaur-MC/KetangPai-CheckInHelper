@@ -3,7 +3,7 @@ import random
 import requests
 from typing import Optional, List
 from pydantic import BaseModel, Field
-from urllib.parse import urlparse
+from urllib.parse import urlparse, parse_qs
 
 # -------------------- 基础配置 --------------------
 API_BASE = "https://openapiv5.ketangpai.com"
@@ -221,16 +221,14 @@ class KetangPaiAPI:
         return [CourseItem(**item) for item in data.get("data", [])]
 
     def check_in_with_url(self, url: str) -> CheckInResult:
-        query = dict(
-            x.split("=", 1) for x in urlparse(url).query.split("&") if "=" in x
-        )
+        query = parse_qs(urlparse(url).query)
         return self.check_in(
             CheckInRequest(
-                ticketid=query.get("ticketid", ""),
-                expire=query.get("expire", 0),
-                sign=query.get("sign", ""),
-                courseid=query.get("courseid", ""),
-                randNum=query.get("randNum", ""),
+                ticketid=query.get("ticketid", [""])[0],
+                expire=query.get("expire", [0])[0],
+                sign=query.get("sign", [""])[0],
+                courseid=query.get("courseid", [""])[0],
+                randNum=query.get("randNum", [""])[0],
             )
         )
 
@@ -247,7 +245,8 @@ class KetangPaiAPI:
         }
         try:
             resp = self.session.post(
-                f"{API_BASE}/AttenceApi/AttenceResult", json=body,
+                f"{API_BASE}/AttenceApi/AttenceResult",
+                json=body,
             )
             resp.raise_for_status()
             j: dict = resp.json()
@@ -258,20 +257,29 @@ class KetangPaiAPI:
 
             if status == 1:
                 return CheckInResult(
-                    email=self.email, success=True, message="签到成功", code=0,
+                    email=self.email,
+                    success=True,
+                    message="签到成功",
+                    code=0,
                 )
             # 重复签到 (30324) 视同成功
             if code == 30324:
                 return CheckInResult(
-                    email=self.email, success=True,
-                    message=message or "重复签到（已成功）", code=code,
+                    email=self.email,
+                    success=True,
+                    message=message or "重复签到（已成功）",
+                    code=code,
                 )
             # 其他业务错误 → 失败，message 已有可读文本
             return CheckInResult(
-                email=self.email, success=False,
-                message=message or f"签到失败 (code={code})", code=code,
+                email=self.email,
+                success=False,
+                message=message or f"签到失败 (code={code})",
+                code=code,
             )
         except requests.exceptions.RequestException as e:
             return CheckInResult(
-                email=self.email, success=False, message=f"请求失败：{e}",
+                email=self.email,
+                success=False,
+                message=f"请求失败：{e}",
             )

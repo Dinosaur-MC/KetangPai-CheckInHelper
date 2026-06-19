@@ -356,9 +356,9 @@ uv run python main.py
 | 方法   | 路径                     | 说明                                                |
 | ------ | ------------------------ | --------------------------------------------------- |
 | POST   | `/api/checkin`           | 批量签到（Canary 模式）                             |
-| GET    | `/api/checkin/logs`      | 签到日志列表，支持 `account_id`/`course_id` 筛选 + 分页 |
-| GET    | `/api/checkin/logs/{id}` | 签到日志详情                                        |
-| DELETE | `/api/checkin/logs/{id}` | 删除签到日志（管理员）                              |
+| GET    | `/api/logs/checkin`      | 签到日志列表，支持 `account_id`/`course_id` 筛选 + 分页 |
+| GET    | `/api/logs/checkin/{id}` | 签到日志详情                                        |
+| DELETE | `/api/logs/checkin/{id}` | 删除签到日志（管理员）                              |
 
 ### 用户管理（管理员）
 
