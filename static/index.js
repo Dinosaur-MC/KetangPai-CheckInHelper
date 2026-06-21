@@ -1224,12 +1224,9 @@ createApp({
                         // 获取失败时不清除登录状态，保持 localStorage 数据
                     });
             }
-            loadPageData(route.value).catch(() => {
-                state.token = null;
-                state.currentUser = null;
-                localStorage.removeItem("token");
-                localStorage.removeItem("refresh_token");
-                localStorage.removeItem("user");
+            loadPageData(route.value).catch((e) => {
+                console.warn("加载页面数据失败:", e);
+                showToast("加载数据失败，请刷新重试");
             });
         }
 
