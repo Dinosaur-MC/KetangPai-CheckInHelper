@@ -15,7 +15,7 @@ logger = logging.getLogger(__name__)
 # ================================
 
 
-def _client_ip(request: Request) -> str:
+def get_client_ip(request: Request) -> str:
     """获取客户端真实 IP，优先信任反向代理的 X-Forwarded-For 头。"""
     forwarded = request.headers.get("X-Forwarded-For")
     if forwarded:
@@ -34,7 +34,7 @@ class RateLimiter:
         self.seconds = seconds
 
     async def __call__(self, request: Request, redis: Redis = Depends(get_redis)):
-        client_ip = _client_ip(request)
+        client_ip = get_client_ip(request)
         key = f"rate_limit:{request.url.path}:{client_ip}"
         try:
             current = redis.incr(key)

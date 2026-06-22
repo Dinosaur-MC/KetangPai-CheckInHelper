@@ -82,6 +82,7 @@ main.py                     # Entry point — loads .env, starts uvicorn
 - **Incremental migration**: `db.py:_migrate()` queries INFORMATION_SCHEMA.COLUMNS to detect missing columns and runs ALTER TABLE only for what's needed. Controlled by `DB_AUTO_MIGRATE` setting.
 - **Redis circuit breaker**: `_RedisWrapper` proxy auto-fuses on any operation failure, avoiding repeated timeouts. Health check pings Redis every 5 minutes.
 - **Client IP detection**: `get_client_ip()` in `utils.py` reads `X-Forwarded-For` / `X-Real-IP` headers for reverse proxy setups before falling back to `request.client.host`.
+- **Client IP forwarding to KetangPai**: The `/api/checkin` endpoint extracts the client's real IP via `get_client_ip(request)` and passes it through `SessionPool.execute_checkin()` → `KetangPaiAPI.check_in()`, which adds an `X-Forward-For` header to the outbound request to Ketangpai. Defaults to empty (no header sent) when IP is unavailable.
 - **Frontend**: Vue 3 SPA served as a static file from the FastAPI backend. Hash-based routing (`#/login`, `#/dashboard`, etc.). MDUI 2 Web Components for Material Design.
 - **Async safety**: All synchronous HTTP calls (`client.login()`, `client.get_user_info()`) are wrapped with `await asyncio.to_thread()` inside `async def` endpoints to avoid blocking the event loop.
 

@@ -1,5 +1,5 @@
 from starlette.exceptions import HTTPException
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, Request
 from sqlmodel import select
 
 from app.api import CheckInRequest, CheckInResult
@@ -9,7 +9,7 @@ from app.models import BaseResponse, User, Account, UserAccount, CourseBinding
 
 import logging
 
-from app.utils import RateLimiter
+from app.utils import RateLimiter, get_client_ip
 
 logger = logging.getLogger(__name__)
 
@@ -24,12 +24,15 @@ router = APIRouter()
 @router.post("/api/checkin")
 async def check_in(
     data: CheckInRequest,
+    request: Request,
     current_user: User = Depends(get_current_user),
     session: Session = Depends(get_session_with),
     _rate_limit: None = Depends(RateLimiter(times=10, seconds=60)),
 ):
     import asyncio
     from app.core.sessions import session_pool
+
+    client_ip = get_client_ip(request)
 
     course_id = data.courseid
     accounts = session.exec(
@@ -50,7 +53,7 @@ async def check_in(
 
     account_ids = [a.id for a in accounts]
     result: dict[int, CheckInResult | None] = await session_pool.execute_checkin(
-        current_user.id, account_ids, data
+        current_user.id, account_ids, data, client_ip=client_ip
     )
 
     success_count = sum(1 for r in result.values() if r is not None and r.success)

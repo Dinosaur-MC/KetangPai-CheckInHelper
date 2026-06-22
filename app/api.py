@@ -232,9 +232,10 @@ class KetangPaiAPI:
             )
         )
 
-    def check_in(self, data: CheckInRequest) -> CheckInResult:
+    def check_in(self, data: CheckInRequest, client_ip: str = "") -> CheckInResult:
         """签到接口（POST AttenceApi/AttenceResult，返回 JSON）。
 
+        :param client_ip: 客户端真实 IP，将作为 X-Forward-For 请求头发送给课堂派。
         :return: 签到结果（success=True 表示签到成功）。
         """
         body = {
@@ -243,10 +244,14 @@ class KetangPaiAPI:
             "sign": data.sign,
             "reqtimestamp": int(time.time() * 1000),
         }
+        extra_headers = {}
+        if client_ip:
+            extra_headers["X-Forward-For"] = client_ip
         try:
             resp = self.session.post(
                 f"{API_BASE}/AttenceApi/AttenceResult",
                 json=body,
+                headers=extra_headers,
             )
             resp.raise_for_status()
             j: dict = resp.json()

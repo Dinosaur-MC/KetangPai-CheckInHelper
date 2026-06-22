@@ -314,12 +314,18 @@ class SessionPool:
     # ------------------------------------------------------------------
 
     async def execute_checkin(
-        self, user_id: int, account_ids: list[int], data: CheckInRequest
+        self,
+        user_id: int,
+        account_ids: list[int],
+        data: CheckInRequest,
+        client_ip: str = "",
     ) -> dict[int, CheckInResult | None]:
         """批量签到入口。
 
         保证每个 account_id 都返回有意义的 CheckInResult（非 None），
         即使账号无可用会话也会尝试按需创建。
+
+        :param client_ip: 客户端真实 IP，透传至课堂派签到请求。
         """
         logger.info(
             "Starting check-in for user=%s course=%s ticket=%s accounts=%s",
@@ -385,6 +391,7 @@ class SessionPool:
                         user_id,
                         account_ids,
                         data,
+                        client_ip=client_ip,
                     )
 
                 first_aid, first_client = canary
@@ -405,7 +412,7 @@ class SessionPool:
                         )
                     else:
                         first_result = await asyncio.to_thread(
-                            first_client.check_in, data
+                            first_client.check_in, data, client_ip
                         )
                 except Exception as e:
                     logger.warning(
@@ -538,6 +545,7 @@ class SessionPool:
                                 user_id,
                                 aid,
                                 data,
+                                client_ip=client_ip,
                             )
                         )
                         for aid in dedup_filtered
@@ -591,8 +599,12 @@ class SessionPool:
         user_id: int,
         account_id: int,
         data: CheckInRequest,
+        client_ip: str = "",
     ) -> tuple[int, CheckInResult | None]:
-        """签到单个账号（受 semaphore 限流），无会话时按需创建。"""
+        """签到单个账号（受 semaphore 限流），无会话时按需创建。
+
+        :param client_ip: 客户端真实 IP，透传至课堂派签到请求。
+        """
         async with self.semaphore:
             entry = snapshot.get(account_id)
             if entry is not None:
@@ -640,7 +652,7 @@ class SessionPool:
                 pass  # Redis 不可用时放行
 
             try:
-                result = await asyncio.to_thread(client.check_in, data)
+                result = await asyncio.to_thread(client.check_in, data, client_ip)
             except Exception as e:
                 logger.error(
                     "Check-in failed for account %s (%s): %s",
@@ -684,8 +696,12 @@ class SessionPool:
         user_id: int,
         account_ids: list[int],
         data: CheckInRequest,
+        client_ip: str = "",
     ) -> dict[int, CheckInResult | None]:
-        """所有账号无会话时的兜底：逐个尝试按需创建。"""
+        """所有账号无会话时的兜底：逐个尝试按需创建。
+
+        :param client_ip: 客户端真实 IP，透传至课堂派签到请求。
+        """
         logger.info(
             "Falling back to per-account ensure for all %s accounts", len(account_ids)
         )
@@ -698,6 +714,7 @@ class SessionPool:
                     user_id,
                     aid,
                     data,
+                    client_ip=client_ip,
                 )
             )
             for aid in account_ids
