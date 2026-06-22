@@ -263,23 +263,26 @@ uv run python main.py
 
 ## 环境变量
 
-项目通过 `.env` 文件配置，完整说明：
+项目通过 `.env` 文件配置，所有配置项由 `app/core/settings.py`（pydantic-settings）统一管理：
 
-| 变量               | 说明                     | 默认值                                                                     |
-| ------------------ | ------------------------ | -------------------------------------------------------------------------- |
-| `PORT`             | 服务端口                 | `8765`                                                                     |
-| `DATABASE_URL`     | MySQL 连接串             | `mysql+pymysql://checkinhelper:checkinhelper@localhost:3306/checkinhelper` |
-| `REDIS_URL`        | Redis 连接串             | `redis://localhost:6379/0`                                                 |
-| `JWT_SECRET`       | **JWT 签名密钥（必填）** | 未设置时随机生成（重启后全部 Token 失效）                                  |
-| `JWT_ALGORITHM`    | JWT 算法                 | `HS256`                                                                    |
-| `JWT_EXPIRE_HOURS` | Token 有效期（小时）     | `168`（7 天）                                                              |
-| `CREDENTIAL_KEY`   | 课堂派密码加密密钥       | 未设置时明文存储                                                           |
-| `ALLOWED_ORIGINS`  | CORS 白名单（逗号分隔）  | 空（不允许跨域）                                                           |
-| `DEBUG`            | 调试模式                 | `false`                                                                    |
-| `DB_ECHO`          | 打印 SQL 日志            | `false`                                                                    |
-| `DB_POOL_SIZE`     | 数据库连接池大小         | `10`                                                                       |
-| `DB_MAX_OVERFLOW`  | 连接池最大溢出           | `20`                                                                       |
-| `DB_POOL_RECYCLE`  | 连接回收时间（秒）       | `3600`                                                                     |
+> **注意**：`DATABASE_URL` 和 `CREDENTIAL_KEY` 为 **必需项**，未设置时启动会报错退出。
+
+| 变量               | 说明                     | 默认值                             |
+| ------------------ | ------------------------ | ---------------------------------- |
+| `DATABASE_URL`     | **MySQL 连接串（必填）** | 无（未设置时启动失败）             |
+| `REDIS_URL`        | Redis 连接串             | `redis://localhost:6379/0`         |
+| `JWT_SECRET`       | **JWT 签名密钥（必填）** | 未设置时随机生成（重启后失效）     |
+| `JWT_ALGORITHM`    | JWT 算法                 | `HS256`                            |
+| `JWT_EXPIRE_HOURS` | Access Token 有效期      | `24`（小时）                       |
+| `CREDENTIAL_KEY`   | **课堂派密码加密密钥（必填）** | 无（未设置时启动失败）        |
+| `ALLOWED_ORIGINS`  | CORS 白名单（逗号分隔）  | 空（不允许跨域）                   |
+| `PORT`             | 服务端口                 | `8765`                             |
+| `DEBUG`            | 调试模式（热重载）       | `false`                            |
+| `DB_ECHO`          | 打印 SQL 日志            | `false`                            |
+| `DB_POOL_SIZE`     | 数据库连接池大小         | `10`                               |
+| `DB_MAX_OVERFLOW`  | 连接池最大溢出           | `20`                               |
+| `DB_POOL_RECYCLE`  | 连接回收时间（秒）       | `3600`                             |
+| `DB_AUTO_MIGRATE`  | 启动时自动运行增量迁移   | `true`                             |
 
 > **生成 `CREDENTIAL_KEY`：**
 >
@@ -392,7 +395,7 @@ uv run python main.py
     ▼
 返回 access_token + refresh_token
     │
-    ├── access_token ── 短期有效（默认 7天），用于请求认证
+    ├── access_token ── 短期有效（默认 24小时），用于请求认证
     │
     └── refresh_token ── 长期有效（默认 30天），用于令牌刷新
                             │
@@ -499,7 +502,7 @@ SessionPool（模块级单例）
 | **Token 吊销**             | 登出时将 `jti` 加入 Redis 黑名单，TTL 自动过期      |
 | **速率限制**               | Redis 滑动窗口 — 登录/注册 5次/分钟，签到 10次/分钟 |
 | **Redis 熔断**             | 断路器模式，30s 健康检查间隔自动恢复；3s 短超时防连接卡死 |
-| **凭据加密**               | Fernet (AES-128-CBC + HMAC) 加密课堂派密码          |
+| **凭据加密**               | Fernet (AES-128-CBC + HMAC) 加密课堂派密码，**启动时强制校验密钥存在** |
 | **登录业务校验**           | 检查 API 返回 status 及 token，拒绝业务级失败（如密码过期） |
 | **状态追踪**               | 每个账号记录 `status_message`，失败原因可追溯       |
 | **密码强度**               | 8-128 字符，必须包含大小写字母和数字                |
@@ -520,12 +523,25 @@ CheckInHelper/
 ├── CLAUDE.md               # 🤖 Claude Code 项目指令
 │
 ├── app/                    # 🧩 后端核心
-│   ├── main.py             # FastAPI 应用、路由、中间件、异常处理
+│   ├── main.py             # FastAPI 应用、中间件、异常处理、路由注册
 │   ├── api.py              # 课堂派第三方 API 客户端
 │   ├── models.py           # SQLModel 数据模型定义
-│   ├── security.py         # 密码哈希 · JWT 签发 · 凭据加密
-│   ├── sessions.py         # 会话池（异步签到 · 并发限流）
-│   ├── db.py               # MySQL + Redis 连接池
+│   ├── deps.py             # 共享 FastAPI 依赖（get_current_user 等）
+│   ├── utils.py            # 工具函数（RateLimiter、分页、IP 检测）
+│   ├── core/               # ⚙️ 核心基础设施
+│   │   ├── settings.py     # 集中配置（pydantic-settings，读取 .env）
+│   │   ├── security.py     # 密码哈希 · JWT 签发 · 凭据加密
+│   │   ├── sessions.py     # 会话池（异步签到 · 并发限流）
+│   │   └── db.py           # MySQL + Redis 连接池（断路器模式）
+│   ├── routers/            # 🧭 领域路由模块（替代单文件巨石）
+│   │   ├── auth.py         # 注册 / 登录 / 登出 / 刷新令牌
+│   │   ├── user.py         # 用户 CRUD + 修改密码
+│   │   ├── account.py      # 课堂派账号 CRUD + 验证 + 级联删除
+│   │   ├── course.py       # 课程 CRUD + 课程绑定 CRUD
+│   │   ├── checkin.py      # 批量签到执行
+│   │   ├── invite_code.py  # 邀请码 CRUD
+│   │   ├── log.py          # 签到日志列表 / 详情 / 删除
+│   │   └── settings.py     # 系统设置（邀请码开关）
 │   └── index.html          # 前端 SPA 模板
 │
 ├── static/                 # 🎨 前端资源（本地化，无 CDN）
