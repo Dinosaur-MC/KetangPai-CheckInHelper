@@ -65,8 +65,8 @@ def paginate[T: SQLModel](
     if page_size < 1:
         page_size = DEFAULT_PAGE_SIZE
     # 先获取总数（移除 ORDER BY 提高性能）
-    # 使用 session.execute() 而非 session.exec() 以避免 ORM 子查询编译问题
-    # （session.exec() 在隐式 JOIN 被包装为子查询后会丢失连接路径推断）
+    # 使用 session.execute()（Core 级）获取标量计数，避免 session.exec()
+    # 不必要的 ORM 实体包装层。
     count_query = select(func.count()).select_from(query.order_by(None).subquery())
     total = session.execute(count_query).scalar_one()
     # 应用 OFFSET / LIMIT

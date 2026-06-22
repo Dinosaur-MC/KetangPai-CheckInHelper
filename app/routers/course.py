@@ -40,8 +40,8 @@ async def list_courses(
     else:
         query = (
             select(Course)
-            .join(CourseBinding)
-            .join(UserAccount)
+            .join(CourseBinding, CourseBinding.course_id == Course.id)
+            .join(UserAccount, UserAccount.account_id == CourseBinding.account_id)
             .where(UserAccount.user_id == current_user.id)
             .distinct()
             .order_by(Course.course_name)
