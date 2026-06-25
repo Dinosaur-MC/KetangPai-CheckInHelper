@@ -88,6 +88,7 @@ createApp({
         const inviteForm = reactive({ code: "", max_uses: null, expires_in: null, note: "" });
         const checkinForm = reactive({ courseid: "", ticketid: "", expire: "", sign: "", randNum: "" });
         const checkinUrl = ref("");
+        const gpsCheckinForm = reactive({ courseid: "", id: "" });
         const logFilter = reactive({
             course_id: "",
             account_email: null,
@@ -142,6 +143,8 @@ createApp({
         // 签到
         const checkinLoading = ref(false);
         const checkinResults = ref([]);
+        const gpsCheckinLoading = ref(false);
+        const gpsCheckinResults = ref([]);
 
         // 扫码
         const scanOpening = ref(false);
@@ -201,6 +204,7 @@ createApp({
         });
 
         const checkinSuccessCount = computed(() => checkinResults.value.filter((r) => r.success).length);
+        const gpsCheckinSuccessCount = computed(() => gpsCheckinResults.value.filter((r) => r.success).length);
 
         // ---- Toast (MDUI 2 snackbar) ----
         function showToast(msg, delay) {
@@ -926,6 +930,28 @@ createApp({
             }
         }
 
+        async function executeGpsCheckin() {
+            if (!gpsCheckinForm.courseid || !gpsCheckinForm.id) {
+                showToast("课程 ID 和考勤 ID 为必填项");
+                return;
+            }
+            gpsCheckinLoading.value = true;
+            gpsCheckinResults.value = [];
+            try {
+                const res = await api("POST", "/api/checkin/gps", {
+                    id: gpsCheckinForm.id,
+                    courseid: gpsCheckinForm.courseid,
+                });
+                const data = res.data || {};
+                gpsCheckinResults.value = data.results || [];
+                showToast(data.message || `签到完成 (${gpsCheckinSuccessCount.value}/${gpsCheckinResults.value.length})`);
+            } catch (e) {
+                showToast(e.message || "签到失败");
+            } finally {
+                gpsCheckinLoading.value = false;
+            }
+        }
+
         // ---- 日志 ----
         async function loadLogs() {
             try {
@@ -1260,6 +1286,7 @@ createApp({
             bindingForm,
             userForm,
             checkinForm,
+            gpsCheckinForm,
             logFilter,
             changePwdForm,
             accounts,
@@ -1272,10 +1299,13 @@ createApp({
             editingUser,
             checkinLoading,
             checkinResults,
+            gpsCheckinLoading,
+            gpsCheckinResults,
             pageTitle,
             pageSubtitle,
             stats,
             checkinSuccessCount,
+            gpsCheckinSuccessCount,
             formatTime,
             getAccountEmail,
             getCourseName,
@@ -1297,6 +1327,7 @@ createApp({
             deleteBinding,
             toggleBinding,
             executeCheckin,
+            executeGpsCheckin,
             parseCheckinUrl,
             checkinUrl,
             loadLogs,

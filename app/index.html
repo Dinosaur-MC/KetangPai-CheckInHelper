@@ -319,10 +319,11 @@
                              签到执行
                              ========================================================== -->
                         <div v-if="route === 'checkin'">
+                            <!-- 二维码签到 -->
                             <div class="checkin-card">
                                 <div class="checkin-header">
-                                    <h3>批量签到</h3>
-                                    <p>粘贴签到二维码链接或手动填写参数，对绑定该课程的所有账号执行签到</p>
+                                    <h3>📷 二维码签到</h3>
+                                    <p>粘贴签到二维码链接或手动填写参数，对绑定该课程的所有账号执行二维码签到</p>
                                 </div>
 
                                 <!-- URL 快速解析 -->
@@ -379,7 +380,7 @@
 
                                 <mdui-button variant="filled" @click="executeCheckin" :disabled="checkinLoading"
                                     class="checkin-btn">
-                                    {{ checkinLoading ? '签到中…' : '🚀 执行签到' }}
+                                    {{ checkinLoading ? '签到中…' : '🚀 执行二维码签到' }}
                                 </mdui-button>
 
                                 <div v-if="checkinResults.length" style="margin-top:24px;">
@@ -399,6 +400,53 @@
                                     </div>
                                 </div>
                             </div>
+                            <!-- /checkin-card (二维码签到) -->
+
+                            <!-- GPS 位置签到 -->
+                            <div class="checkin-card" style="margin-top:24px;">
+                                <div class="checkin-header">
+                                    <h3>📍 位置签到</h3>
+                                    <p>使用考勤 ID 与课程 ID 对绑定该课程的所有账号执行 GPS/数字码签到，坐标将自动获取</p>
+                                </div>
+
+                                <div class="checkin-fields" style="margin-top:14px;">
+                                    <div class="checkin-row">
+                                        <div class="field-wrap">
+                                            <label class="field-label">CourseID<span class="req">*</span></label>
+                                            <input class="field-input" :value="gpsCheckinForm.courseid"
+                                                @input="gpsCheckinForm.courseid=$event.target.value" placeholder="课程 ID">
+                                        </div>
+                                        <div class="field-wrap">
+                                            <label class="field-label">考勤 ID<span class="req">*</span></label>
+                                            <input class="field-input" :value="gpsCheckinForm.id"
+                                                @input="gpsCheckinForm.id=$event.target.value" placeholder="考勤记录 ID">
+                                        </div>
+                                    </div>
+                                </div>
+
+                                <mdui-button variant="filled" @click="executeGpsCheckin" :disabled="gpsCheckinLoading"
+                                    class="checkin-btn">
+                                    {{ gpsCheckinLoading ? '签到中…' : '🚀 执行位置签到' }}
+                                </mdui-button>
+
+                                <div v-if="gpsCheckinResults.length" style="margin-top:24px;">
+                                    <div class="result-summary">
+                                        签到结果 ·
+                                        <span class="result-ok">{{ gpsCheckinSuccessCount }} 成功</span>
+                                        <span class="result-divider">/</span>
+                                        <span class="result-fail">{{ gpsCheckinResults.length - gpsCheckinSuccessCount }}
+                                            失败</span>
+                                    </div>
+                                    <div class="result-grid">
+                                        <div v-for="r in gpsCheckinResults" :key="r.email" class="result-item"
+                                            :class="r.success?'success':'fail'">
+                                            <div class="email">{{ r.email }}</div>
+                                            <div class="msg">{{ r.message }}</div>
+                                        </div>
+                                    </div>
+                                </div>
+                            </div>
+                            <!-- /checkin-card (位置签到) -->
                         </div>
 
                         <!-- ==========================================================
