@@ -283,6 +283,7 @@
                                     <thead>
                                         <tr>
                                             <th>课程代码</th>
+                                            <th>课程 ID</th>
                                             <th>课程名称</th>
                                             <th>课堂派账号</th>
                                             <th>学期</th>
@@ -295,7 +296,8 @@
                                             <td><code
                                                     style="font-size:12px;background:#f1f5f9;padding:2px 6px;border-radius:4px;">{{ getCourseCode(b.course_id) }}</code>
                                             </td>
-                                            <td title="ID: {{ b.course_id }}">{{ getCourseName(b.course_id) }}</td>
+                                            <td style="font-size:13px;color:#666;">{{ b.course_id }}</td>
+                                            <td>{{ getCourseName(b.course_id) }}</td>
                                             <td>{{ getAccountEmail(b.account_id) }}</td>
                                             <td>{{ getCourseSemester(b.course_id) }}</td>
                                             <td><mdui-switch :checked="b.is_active"
@@ -404,13 +406,45 @@
                              ========================================================== -->
                         <div v-if="route === 'logs'">
                             <div class="logs-toolbar">
-                                <div class="log-filter-wrap">
-                                    <mdui-icon class="log-filter-icon" name="search"></mdui-icon>
-                                    <input class="log-filter-input" placeholder="按课程 ID 筛选…"
-                                        :value="logFilter.course_id" @input="logFilter.course_id = $event.target.value">
-                                    <button class="log-filter-clear" v-if="logFilter.course_id"
-                                        @click="logFilter.course_id=''">✕</button>
+                                <div class="log-filters-row">
+                                    <div class="log-filter-wrap">
+                                        <mdui-icon class="log-filter-icon" name="search"></mdui-icon>
+                                        <input class="log-filter-input" type="text" placeholder="课程 ID"
+                                            autocomplete="nope"
+                                            :value="logFilter.course_id"
+                                            @focus="const t=$event.target; if (t.dataset.initReadonly) { t.removeAttribute('readonly'); t.dataset.initReadonly=''; }"
+                                            @input="logFilter.course_id = $event.target.value"
+                                            readonly data-init-readonly="1">
+                                        <button class="log-filter-clear" v-if="logFilter.course_id"
+                                            @click="logFilter.course_id=''">✕</button>
+                                    </div>
+
+                                    <span class="log-filter-label">账号</span>
+                                    <select class="log-filter-select" :value="logFilter.account_email"
+                                        @change="logFilter.account_email = $event.target.value || null">
+                                        <option value="">全部账号</option>
+                                        <option v-for="acct in accounts" :key="acct.id" :value="acct.email">
+                                            {{ acct.username || acct.email.split('@')[0] }} ({{ acct.email }})
+                                        </option>
+                                    </select>
+
+                                    <div class="log-filter-status">
+                                        <button :class="{ active: logFilter.status === null }"
+                                            @click="logFilter.status = null">全部</button>
+                                        <button :class="{ active: logFilter.status === 1 }"
+                                            @click="logFilter.status = 1">成功</button>
+                                        <button :class="{ active: logFilter.status === 0 }"
+                                            @click="logFilter.status = 0">失败</button>
+                                    </div>
+
+                                    <span class="log-filter-label">从</span>
+                                    <input class="log-filter-date" type="date" :value="logFilter.date_from"
+                                        @input="logFilter.date_from = $event.target.value || null">
+                                    <span class="log-filter-label">至</span>
+                                    <input class="log-filter-date" type="date" :value="logFilter.date_to"
+                                        @input="logFilter.date_to = $event.target.value || null">
                                 </div>
+
                                 <mdui-button variant="outlined" icon="refresh" @click="loadLogs"
                                     size="small">刷新</mdui-button>
                                 <span class="log-count" v-if="logTotal">共 {{ logTotal }} 条记录</span>

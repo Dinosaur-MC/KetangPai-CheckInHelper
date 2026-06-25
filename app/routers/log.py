@@ -1,4 +1,5 @@
 from typing import Optional
+from datetime import date, datetime, timedelta
 from starlette.exceptions import HTTPException
 from fastapi import APIRouter, Depends, Query
 from sqlmodel import select
@@ -11,6 +12,8 @@ from app.models import (
     PaginatedResponse,
     User,
     Role,
+    Account,
+    UserAccount,
     CheckInLog,
 )
 
@@ -30,19 +33,44 @@ router = APIRouter(prefix="/api/logs", tags=["Log"])
 async def list_checkin_logs(
     current_user: User = Depends(get_current_user),
     session: Session = Depends(get_session_with),
-    account_id: Optional[int] = None,
+    account_email: Optional[str] = None,
     course_id: Optional[str] = None,
+    status: Optional[int] = None,
+    date_from: Optional[date] = None,
+    date_to: Optional[date] = None,
     page: int = Query(default=DEFAULT_PAGE, ge=1),
     page_size: int = Query(default=DEFAULT_PAGE_SIZE, ge=1, le=MAX_PAGE_SIZE),
 ):
-    """获取签到日志列表"""
+    """获取签到日志列表，支持按账号（邮箱）、课程、结果、日期范围筛选"""
     query = select(CheckInLog).where(CheckInLog.user_id == current_user.id)
 
-    if account_id is not None:
-        query = query.where(CheckInLog.account_id == account_id)
+    if account_email is not None:
+        # 通过邮箱查找属于当前用户的账号 ID 列表
+        account_ids = select(Account.id).join(
+            UserAccount, Account.id == UserAccount.account_id
+        ).where(
+            Account.email == account_email,
+            UserAccount.user_id == current_user.id,
+        )
+        query = query.where(CheckInLog.account_id.in_(account_ids))
 
     if course_id is not None:
         query = query.where(CheckInLog.course_id == course_id)
+
+    if status is not None:
+        query = query.where(CheckInLog.status == status)
+
+    if date_from is not None:
+        query = query.where(
+            CheckInLog.created_at >= datetime.combine(date_from, datetime.min.time())
+        )
+
+    if date_to is not None:
+        # 包含 date_to 当天：取 date_to 的次日 00:00 作为上限
+        next_day = date_to + timedelta(days=1)
+        query = query.where(
+            CheckInLog.created_at < datetime.combine(next_day, datetime.min.time())
+        )
 
     query = query.order_by(CheckInLog.created_at.desc())
     logs, total = paginate(session, query, page, page_size)

@@ -88,7 +88,13 @@ createApp({
         const inviteForm = reactive({ code: "", max_uses: null, expires_in: null, note: "" });
         const checkinForm = reactive({ courseid: "", ticketid: "", expire: "", sign: "", randNum: "" });
         const checkinUrl = ref("");
-        const logFilter = reactive({ course_id: "" });
+        const logFilter = reactive({
+            course_id: "",
+            account_email: null,
+            status: null,
+            date_from: null,
+            date_to: null,
+        });
 
         // 列表
         const accounts = ref([]);
@@ -927,6 +933,10 @@ createApp({
                 params.set("page", logPage.value);
                 params.set("page_size", PAGE_SIZE);
                 if (logFilter.course_id) params.set("course_id", logFilter.course_id);
+                if (logFilter.account_email) params.set("account_email", logFilter.account_email);
+                if (logFilter.status !== null) params.set("status", logFilter.status);
+                if (logFilter.date_from) params.set("date_from", logFilter.date_from);
+                if (logFilter.date_to) params.set("date_to", logFilter.date_to);
                 const res = await api("GET", `/api/logs/checkin?${params}`);
                 logs.value = res.data || [];
                 logTotal.value = res.total || 0;
@@ -935,15 +945,18 @@ createApp({
             }
         }
 
-        // 日志筛选防抖 — 输入 course_id 后自动重载（300ms 防抖）
+        // 日志筛选防抖 — 任何筛选条件变化后自动重载（300ms 防抖）
         let _logFilterTimer = null;
-        watch(() => logFilter.course_id, () => {
-            clearTimeout(_logFilterTimer);
-            _logFilterTimer = setTimeout(() => {
-                logPage.value = 1;
-                loadLogs();
-            }, 300);
-        });
+        watch(
+            () => [logFilter.course_id, logFilter.account_email, logFilter.status, logFilter.date_from, logFilter.date_to],
+            () => {
+                clearTimeout(_logFilterTimer);
+                _logFilterTimer = setTimeout(() => {
+                    logPage.value = 1;
+                    loadLogs();
+                }, 300);
+            },
+        );
 
         // ---- 用户管理 ----
         async function loadUsers() {
@@ -1155,7 +1168,7 @@ createApp({
                     break;
                 case "logs":
                     logPage.value = 1;
-                    await loadLogs();
+                    await Promise.all([loadAccounts(), loadLogs()]);
                     break;
                 case "users":
                     userPage.value = 1;
