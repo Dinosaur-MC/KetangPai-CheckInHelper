@@ -35,11 +35,11 @@ docker compose down -v  # also remove volumes
 main.py                     # Entry point — loads .env, starts uvicorn
 ├── app/
 │   ├── main.py             # FastAPI app: middleware, exception handlers, route registration
-│   ├── api.py              # KetangPai third-party API client (requests-based)
 │   ├── models.py           # SQLModel ORM models + Pydantic DTOs
 │   ├── deps.py             # Shared FastAPI dependencies (get_current_user, user cache)
 │   ├── utils.py            # RateLimiter, paginate helper, client IP detection
 │   ├── core/
+│   │   ├── api.py          # KetangPai third-party API client (requests-based)
 │   │   ├── settings.py     # Pydantic Settings — centralized config (reads .env)
 │   │   ├── security.py     # Argon2 password hashing, JWT create/decode, Fernet encryption
 │   │   ├── sessions.py     # SessionPool singleton — manages KetangPai login sessions

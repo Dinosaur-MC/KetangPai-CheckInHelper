@@ -526,11 +526,11 @@ CheckInHelper/
 │
 ├── app/                    # 🧩 后端核心
 │   ├── main.py             # FastAPI 应用、中间件、异常处理、路由注册
-│   ├── api.py              # 课堂派第三方 API 客户端
 │   ├── models.py           # SQLModel 数据模型定义
 │   ├── deps.py             # 共享 FastAPI 依赖（get_current_user 等）
 │   ├── utils.py            # 工具函数（RateLimiter、分页、IP 检测）
 │   ├── core/               # ⚙️ 核心基础设施
+│   │   ├── api.py          # 课堂派第三方 API 客户端
 │   │   ├── settings.py     # 集中配置（pydantic-settings，读取 .env）
 │   │   ├── security.py     # 密码哈希 · JWT 签发 · 凭据加密
 │   │   ├── sessions.py     # 会话池（异步签到 · 并发限流）
