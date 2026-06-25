@@ -3,7 +3,7 @@ import time
 from threading import Lock
 
 from sqlmodel import Session
-from app.core.api import CheckInRequest, KetangPaiAPI, CheckInResult
+from app.core.api import QRCheckInRequest, CheckInRequest, KetangPaiAPI, CheckInResult, is_position_error, _extract_gps
 from app.core.db import get_session, get_redis_client
 from app.models import Account, CheckInLog
 from app.core.security import decrypt_credential
@@ -15,6 +15,7 @@ logger = logging.getLogger(__name__)
 TOKEN_EXPIRE_TIME = 60 * 60 * 24 * 5  # Redis 缓存 token 的 TTL
 SESSION_TTL = 30 * 60  # 内存会话过期时间 30 分钟
 MAX_CONCURRENT_CHECKINS = 5
+GPS_COORDS_CACHE_TTL = 60 * 20  # 建筑 GPS 坐标缓存 20 分钟
 
 
 class SessionPool:
@@ -317,10 +318,10 @@ class SessionPool:
         self,
         user_id: int,
         account_ids: list[int],
-        data: CheckInRequest,
+        data: QRCheckInRequest,
         client_ip: str = "",
     ) -> dict[int, CheckInResult | None]:
-        """批量签到入口。
+        """批量二维码签到入口。
 
         保证每个 account_id 都返回有意义的 CheckInResult（非 None），
         即使账号无可用会话也会尝试按需创建。
@@ -412,7 +413,7 @@ class SessionPool:
                         )
                     else:
                         first_result = await asyncio.to_thread(
-                            first_client.check_in, data, client_ip
+                            first_client.qr_check_in, data, client_ip
                         )
                 except Exception as e:
                     logger.warning(
@@ -598,10 +599,10 @@ class SessionPool:
         r,
         user_id: int,
         account_id: int,
-        data: CheckInRequest,
+        data: QRCheckInRequest,
         client_ip: str = "",
     ) -> tuple[int, CheckInResult | None]:
-        """签到单个账号（受 semaphore 限流），无会话时按需创建。
+        """二维码签到单个账号（受 semaphore 限流），无会话时按需创建。
 
         :param client_ip: 客户端真实 IP，透传至课堂派签到请求。
         """
@@ -652,7 +653,7 @@ class SessionPool:
                 pass  # Redis 不可用时放行
 
             try:
-                result = await asyncio.to_thread(client.check_in, data, client_ip)
+                result = await asyncio.to_thread(client.qr_check_in, data, client_ip)
             except Exception as e:
                 logger.error(
                     "Check-in failed for account %s (%s): %s",
@@ -695,10 +696,10 @@ class SessionPool:
         r,
         user_id: int,
         account_ids: list[int],
-        data: CheckInRequest,
+        data: QRCheckInRequest,
         client_ip: str = "",
     ) -> dict[int, CheckInResult | None]:
-        """所有账号无会话时的兜底：逐个尝试按需创建。
+        """所有账号无会话时的兜底（二维码签到）：逐个尝试按需创建。
 
         :param client_ip: 客户端真实 IP，透传至课堂派签到请求。
         """
@@ -727,6 +728,326 @@ class SessionPool:
             logger.error("Failed to commit: %s", e)
             db.rollback()
         return results
+
+    # ------------------------------------------------------------------
+    # GPS / 数字码签到
+    # ------------------------------------------------------------------
+
+    async def execute_gps_checkin(
+        self,
+        user_id: int,
+        account_ids: list[int],
+        data: CheckInRequest,
+        client_ip: str = "",
+    ) -> dict[int, CheckInResult | None]:
+        """批量 GPS / 数字码签到入口。
+
+        每个账号独立签到（无 canary 机制），通过 semaphore 限制并发。
+        使用 data.id（考勤记录ID）做 Redis 去重。
+        当经纬度为空时，自动用第一个可用会话预取建筑 GPS 坐标。
+
+        :param client_ip: 客户端真实 IP，透传至课堂派签到请求。
+        """
+        logger.info(
+            "Starting GPS check-in for user=%s accounts=%s attendance_id=%s",
+            user_id,
+            account_ids,
+            data.id,
+        )
+
+        with self.lock:
+            self._cleanup_expired()
+            snapshot = {aid: self.clients.get(aid) for aid in account_ids}
+
+        # ── 预取建筑 GPS 中心点 + 围栏半径（仅用快照中已有 client）──
+        center_lat = data.latitude
+        center_lng = data.longitude
+        fence_radius = 0
+
+        if not center_lat or not center_lng:
+            # 先查 Redis 缓存
+            cached = None
+            coords_key = f"gps_coords:{data.id}"
+            try:
+                r_early = get_redis_client()
+                if r_early:
+                    cached = r_early.get(coords_key)
+            except Exception:
+                pass
+            if cached:
+                import json
+                try:
+                    parsed = json.loads(cached if isinstance(cached, str) else cached.decode())
+                    if isinstance(parsed, dict):
+                        center_lat = parsed.get("lat", "") or parsed.get("latitude", "")
+                        center_lng = parsed.get("lng", "") or parsed.get("longitude", "")
+                        logger.info(
+                            "Using cached GPS coords for attendance %s: %s, %s",
+                            data.id, center_lat, center_lng,
+                        )
+                except Exception:
+                    pass
+
+        # 取第一个可用 client（后续坐标和半径复用同一个）
+        first_client = next(
+            (entry[0] for entry in snapshot.values() if entry is not None),
+            None,
+        )
+
+        if not center_lat or not center_lng:
+            logger.info(
+                "Coordinates empty, pre-fetching building GPS for attendance %s",
+                data.id,
+            )
+            if first_client is not None:
+                try:
+                    gps_resp = first_client.get_attence_building_gps(data.id)
+                    lat, lng = _extract_gps(gps_resp)
+                    if lat is not None:
+                        center_lat = lat
+                    if lng is not None:
+                        center_lng = lng
+                    # 写入 Redis 缓存
+                    if center_lat and center_lng:
+                        try:
+                            import json
+                            get_redis_client().set(
+                                f"gps_coords:{data.id}",
+                                json.dumps({"lat": center_lat, "lng": center_lng}),
+                                GPS_COORDS_CACHE_TTL,
+                            )
+                            logger.info(
+                                "Cached GPS coords for attendance %s (TTL=%ss)",
+                                data.id, GPS_COORDS_CACHE_TTL,
+                            )
+                        except Exception:
+                            pass
+                except Exception as e:
+                    logger.warning("Failed to pre-fetch building GPS: %s", e)
+
+        # 尝试获取围栏半径（不论经纬度是否已提供）
+        if first_client is not None:
+            try:
+                loc_resp = first_client.get_attence_location(data.id)
+                fence_radius = _extract_radius(loc_resp)
+            except Exception as e:
+                logger.warning("Failed to pre-fetch fence radius: %s", e)
+
+        async with self.exec_lock:
+            results: dict[int, CheckInResult | None] = {}
+            with get_session() as db:
+                r = get_redis_client()
+
+                # ── 检查该考勤是否已标记结束（在锁内，防竞态）──
+                ended_key = f"gps_ended:{data.id}"
+                try:
+                    if r and r.get(ended_key):
+                        logger.info("Attendance %s is cached as ended — skipping all accounts", data.id)
+                        return {
+                            aid: CheckInResult(
+                                email=f"account:{aid}",
+                                success=False,
+                                message="已跳过（该GPS考勤已结束）",
+                            )
+                            for aid in account_ids
+                        }
+                except Exception:
+                    pass
+
+                dedup_filtered = []
+                already_done = []
+                for aid in account_ids:
+                    dedup_key = f"checkin_done:gps:{data.id}:{aid}"
+                    try:
+                        if r and r.get(dedup_key):
+                            already_done.append(aid)
+                            email = self._resolve_client_email(snapshot, aid)
+                            cr = CheckInResult(
+                                email=email or f"account:{aid}",
+                                success=True,
+                                message="已签到（跳过重复调用）",
+                            )
+                            results[aid] = cr
+                            self._record(db, r, user_id, aid, data.courseid, email, cr)
+                        else:
+                            dedup_filtered.append(aid)
+                    except Exception:
+                        dedup_filtered.append(aid)
+
+                if already_done:
+                    logger.info(
+                        "Skipped %s accounts already checked in (attendance %s)",
+                        len(already_done),
+                        data.id,
+                    )
+
+                tasks = [
+                    asyncio.create_task(
+                        self._gps_checkin_one(
+                            snapshot, db, r, user_id, aid, data, client_ip=client_ip,
+                            center_lat=center_lat, center_lng=center_lng,
+                            fence_radius=fence_radius,
+                        )
+                    )
+                    for aid in dedup_filtered
+                ]
+                gathered = await asyncio.gather(*tasks)
+                for aid, cr in gathered:
+                    results[aid] = cr
+
+                try:
+                    db.commit()
+                except Exception as e:
+                    logger.error("Failed to commit: %s", e)
+                    db.rollback()
+
+            succeeded = sum(1 for r in results.values() if r is not None and r.success)
+            logger.info(
+                "GPS check-in completed for user=%s: %s/%s succeeded",
+                user_id,
+                succeeded,
+                len(account_ids),
+            )
+            return results
+
+    async def _gps_checkin_one(
+        self,
+        snapshot: dict[int, tuple[KetangPaiAPI, float] | None],
+        db,
+        r,
+        user_id: int,
+        account_id: int,
+        data: CheckInRequest,
+        client_ip: str = "",
+        *,
+        center_lat: str = "",
+        center_lng: str = "",
+        fence_radius: int = 0,
+    ) -> tuple[int, CheckInResult | None]:
+        """GPS 签到单个账号（受 semaphore 限流），无会话时按需创建。
+
+        每个账号使用独立抖动的经纬度，使定位分布更自然。
+        """
+        async with self.semaphore:
+            entry = snapshot.get(account_id)
+            if entry is not None:
+                client = entry[0]
+            else:
+                logger.info(
+                    "Account %s not in session pool, creating on demand",
+                    account_id,
+                )
+                client = await asyncio.to_thread(
+                    self._ensure_client,
+                    account_id,
+                    db_session=db,
+                )
+                if client is None:
+                    email = self._resolve_client_email(snapshot, account_id)
+                    return (
+                        account_id,
+                        CheckInResult(
+                            email=email or f"account:{account_id}",
+                            success=False,
+                            message="签到失败：无法创建会话（账号不存在或登录失败）",
+                        ),
+                    )
+
+            # ── 经纬度随机抖动 ──
+            if center_lat and center_lng and fence_radius > 0:
+                jlat, jlng = _jitter_coordinates(
+                    float(center_lat), float(center_lng), fence_radius
+                )
+                lat_str = f"{jlat:.8f}"
+                lng_str = f"{jlng:.8f}"
+            else:
+                lat_str = data.latitude
+                lng_str = data.longitude
+
+            # 构造带抖动坐标的副本
+            checkin_data = CheckInRequest(
+                id=data.id,
+                code=data.code,
+                latitude=lat_str,
+                longitude=lng_str,
+            )
+
+            dedup_key = f"checkin_done:gps:{data.id}:{account_id}"
+            try:
+                if r and r.get(dedup_key):
+                    logger.info(
+                        "Account %s already checked in for attendance %s — skipping",
+                        account_id,
+                        data.id,
+                    )
+                    return (
+                        account_id,
+                        CheckInResult(
+                            email=client.email,
+                            success=True,
+                            message="已签到（跳过重复调用）",
+                        ),
+                    )
+            except Exception:
+                pass
+
+            try:
+                result = await asyncio.to_thread(
+                    client.gps_check_in, checkin_data, client_ip
+                )
+            except Exception as e:
+                logger.error(
+                    "GPS check-in failed for account %s (%s): %s",
+                    account_id,
+                    client.email[:5] + "..." + client.email[-5:],
+                    e,
+                )
+                return (
+                    account_id,
+                    CheckInResult(
+                        email=client.email,
+                        success=False,
+                        message=f"签到失败：{e}",
+                    ),
+                )
+
+            if result.success:
+                try:
+                    r.set(dedup_key, "1", 86400)  # 默认 24h TTL
+                except Exception:
+                    pass
+
+            # ── 位置错误 → 清除缓存的坐标，下次重新获取 ──
+            if not result.success and is_position_error(result):
+                try:
+                    r.delete(f"gps_coords:{data.id}")
+                    logger.info(
+                        "Cleared cached GPS coords for attendance %s due to position error",
+                        data.id,
+                    )
+                except Exception:
+                    pass
+
+            # ── 考勤已结束 → 缓存结束标记，整批次跳过 ──
+            if not result.success and result.code == 30322:
+                try:
+                    r.set(f"gps_ended:{data.id}", "1", 3600)
+                    logger.info("Cached ended state for attendance %s (TTL=3600s)", data.id)
+                except Exception:
+                    pass
+
+            with self.lock:
+                self._touch(account_id)
+            self._record(
+                db,
+                r,
+                user_id,
+                account_id,
+                data.courseid,
+                client,
+                result,
+            )
+            return (account_id, result)
 
     @staticmethod
     def _resolve_client_email(
@@ -797,3 +1118,40 @@ class SessionPool:
 
 # 创建会话池（模块级单例）
 session_pool = SessionPool()
+
+
+# ── GPS 辅助函数 ──
+
+import math
+import random
+
+
+def _extract_radius(resp: dict, default: int = 100) -> int:
+    """从考勤位置 API 响应（已解包的 data 层）中提取围栏半径（米）。"""
+    for key in ("radius", "range", "scope", "distance"):
+        if key in resp:
+            try:
+                return int(resp[key])
+            except (ValueError, TypeError):
+                pass
+    return default
+
+
+def _jitter_coordinates(lat: float, lng: float, radius_meters: int) -> tuple[float, float]:
+    """在围栏范围内随机抖动，最大偏移为中心到围栏边界的 60%。
+
+    多个账号使用相同中心点时，每个账号得到独立抖动的坐标，
+    使定位分布更自然，避免全部重合在同一坐标。
+    """
+    if radius_meters <= 0:
+        return lat, lng
+
+    max_offset = radius_meters * 0.6
+    angle = random.random() * 2 * math.pi
+    distance = random.random() * max_offset
+
+    # 1 度纬度 ≈ 111320 m；1 度经度 ≈ 111320 * cos(lat) m
+    dlat = distance * math.cos(angle) / 111320.0
+    dlng = distance * math.sin(angle) / (111320.0 * math.cos(math.radians(lat)))
+
+    return lat + dlat, lng + dlng

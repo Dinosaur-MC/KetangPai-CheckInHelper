@@ -1,9 +1,12 @@
 import time
 import random
+import logging
 import requests
 from typing import Optional, List
 from pydantic import BaseModel, Field
 from urllib.parse import urlparse, parse_qs
+
+logger = logging.getLogger(__name__)
 
 # -------------------- 基础配置 --------------------
 API_BASE = "https://openapiv5.ketangpai.com"
@@ -100,8 +103,8 @@ class GetUserInfoResponse(BaseModel):
     data: UserInfo
 
 
-# 3. 签到接口
-class CheckInRequest(BaseModel):
+# 3. 二维码签到接口
+class QRCheckInRequest(BaseModel):
     type: int = 2
     ticketid: str
     expire: int
@@ -110,12 +113,70 @@ class CheckInRequest(BaseModel):
     randNum: str
 
 
-# 4. 签到结果（基于 HTML 页面关键词解析）
+# 4. GPS / 数字码签到接口
+class CheckInRequest(BaseModel):
+    id: str  # 考勤记录ID
+    courseid: str = ""  # 课程ID（用于查询绑定账号）
+    code: str = ""  # 数字考勤码
+    latitude: str = ""  # 纬度
+    longitude: str = ""  # 经度
+
+
+# 5. 签到结果
 class CheckInResult(BaseModel):
     email: str
     success: bool
     message: str
     code: int = 0  # 课堂派业务码: 30319=二维码过期, 30322=考勤已结束, 30324=重复签到
+
+
+# GPS 位置错误码（签到失败因位置不在允许范围内）
+POSITION_ERROR_CODES: set[int] = {30315, 30320, 30321, 30323}
+POSITION_ERROR_KEYWORDS: tuple[str, ...] = ("位置", "范围", "距离", "定位")
+
+
+def is_position_error(result: CheckInResult) -> bool:
+    """判断签到失败是否因位置不正确引起。"""
+    if not result.success:
+        if result.code in POSITION_ERROR_CODES:
+            return True
+        msg = result.message or ""
+        for kw in POSITION_ERROR_KEYWORDS:
+            if kw in msg:
+                return True
+    return False
+
+
+def _extract_gps(resp: dict | list) -> tuple[str | None, str | None]:
+    """从建筑 GPS API 响应（已解包的 data 层）中提取经纬度。
+
+    兼容格式：
+    - {"lat": "…", "lng": "…"}
+    - {"latitude": "…", "longitude": "…"}
+    - [{"lat": "…", "lng": "…"}, ...]
+    """
+    if isinstance(resp, list):
+        if len(resp) > 0 and isinstance(resp[0], dict):
+            resp = resp[0]
+        else:
+            return None, None
+
+    if not isinstance(resp, dict):
+        return None, None
+
+    lat = None
+    for key in ("lat", "latitude"):
+        if key in resp and resp[key]:
+            lat = str(resp[key])
+            break
+
+    lng = None
+    for key in ("lng", "longitude"):
+        if key in resp and resp[key]:
+            lng = str(resp[key])
+            break
+
+    return lat, lng
 
 
 # 5. 获取课程列表接口
@@ -158,7 +219,8 @@ class KetangPaiAPI:
 
     :function login: 登录接口
     :function get_user_info: 获取用户信息接口
-    :function check_in: 签到接口
+    :function qr_check_in: 二维码签到接口
+    :function gps_check_in: GPS / 数字码签到接口
     """
 
     def __init__(self, email: str, password: str, token: Optional[str] = None):
@@ -222,8 +284,8 @@ class KetangPaiAPI:
 
     def check_in_with_url(self, url: str) -> CheckInResult:
         query = parse_qs(urlparse(url).query)
-        return self.check_in(
-            CheckInRequest(
+        return self.qr_check_in(
+            QRCheckInRequest(
                 ticketid=query.get("ticketid", [""])[0],
                 expire=query.get("expire", [0])[0],
                 sign=query.get("sign", [""])[0],
@@ -232,8 +294,54 @@ class KetangPaiAPI:
             )
         )
 
-    def check_in(self, data: CheckInRequest, client_ip: str = "") -> CheckInResult:
-        """签到接口（POST AttenceApi/AttenceResult，返回 JSON）。
+    def get_attence_building_gps(self, attenceid: str) -> dict | list:
+        """获取考勤关联的建筑 GPS 坐标。
+
+        POST 请求，响应解包后返回 data 层。
+        """
+        try:
+            resp = self.session.post(
+                f"{API_BASE}/AttenceV2Api/getAttenceBuildingGps",
+                json={"attenceid": attenceid},
+            )
+            resp.raise_for_status()
+            j = resp.json()
+            if j.get("status") == 1:
+                return j.get("data", {})
+            logger.warning("getAttenceBuildingGps status!=1 for %s: %s", attenceid, j.get("message"))
+            return {}
+        except requests.exceptions.RequestException as e:
+            logger.warning("Failed to get building GPS for %s: %s", attenceid, e)
+            return {}
+        except ValueError:
+            logger.warning("Invalid JSON response from getAttenceBuildingGps for %s", attenceid)
+            return {}
+
+    def get_attence_location(self, attenceid: str) -> dict:
+        """获取考勤位置配置。
+
+        POST 请求，响应包含考勤的定位设置（中心点坐标、签到半径等）。
+        """
+        try:
+            resp = self.session.post(
+                f"{API_BASE}/AttenceApi/getLocation",
+                json={"attenceid": attenceid},
+            )
+            resp.raise_for_status()
+            j = resp.json()
+            if j.get("status") == 1:
+                return j.get("data", {})
+            logger.warning("getLocation status!=1 for %s: %s", attenceid, j.get("message"))
+            return {}
+        except requests.exceptions.RequestException as e:
+            logger.warning("Failed to get location for %s: %s", attenceid, e)
+            return {}
+        except ValueError:
+            logger.warning("Invalid JSON response from getLocation for %s", attenceid)
+            return {}
+
+    def qr_check_in(self, data: QRCheckInRequest, client_ip: str = "") -> CheckInResult:
+        """二维码签到接口（POST AttenceApi/AttenceResult，返回 JSON）。
 
         :param client_ip: 客户端真实 IP，将作为 X-Forward-For 请求头发送给课堂派。
         :return: 签到结果（success=True 表示签到成功）。
@@ -276,6 +384,92 @@ class KetangPaiAPI:
                     code=code,
                 )
             # 其他业务错误 → 失败，message 已有可读文本
+            return CheckInResult(
+                email=self.email,
+                success=False,
+                message=message or f"签到失败 (code={code})",
+                code=code,
+            )
+        except requests.exceptions.RequestException as e:
+            return CheckInResult(
+                email=self.email,
+                success=False,
+                message=f"请求失败：{e}",
+            )
+
+    def gps_check_in(self, data: CheckInRequest, client_ip: str = "") -> CheckInResult:
+        """GPS / 数字码签到接口（POST AttenceApi/checkin，返回 JSON）。
+
+        当 latitude / longitude 为空时，自动调用课堂派的建筑 GPS
+        接口获取坐标填充。
+
+        :param client_ip: 客户端真实 IP，将作为 X-Forward-For 请求头发送给课堂派。
+        :return: 签到结果（success=True 表示签到成功）。
+        """
+        latitude = data.latitude
+        longitude = data.longitude
+
+        # 自动获取建筑 GPS 坐标（返回值已解包为 data 层）
+        if not latitude or not longitude:
+            gps_resp = self.get_attence_building_gps(data.id)
+            lat, lng = _extract_gps(gps_resp)
+            if lat is not None:
+                latitude = lat
+            if lng is not None:
+                longitude = lng
+
+            # 兜底：从考勤位置配置获取
+            if not latitude or not longitude:
+                loc_resp = self.get_attence_location(data.id)
+                loc_lat, loc_lng = _extract_gps(loc_resp)
+                if loc_lat is not None:
+                    latitude = latitude or loc_lat
+                if loc_lng is not None:
+                    longitude = longitude or loc_lng
+
+        body = {
+            "id": data.id,
+            "code": data.code,
+            "unusual": "",
+            "latitude": latitude,
+            "longitude": longitude,
+            "accuracy": "",
+            "appid": "",
+            "clienttype": "1",
+            "reqtimestamp": int(time.time() * 1000),
+        }
+        extra_headers = {}
+        if client_ip:
+            extra_headers["X-Forward-For"] = client_ip
+        try:
+            resp = self.session.post(
+                f"{API_BASE}/AttenceApi/checkin",
+                json=body,
+                headers=extra_headers,
+            )
+            resp.raise_for_status()
+            j: dict = resp.json()
+
+            status = j.get("status")
+            code = j.get("code")
+            message = j.get("message", "")
+
+            if status == 1:
+                return CheckInResult(
+                    email=self.email,
+                    success=True,
+                    message="签到成功",
+                    code=0,
+                )
+            # 重复签到 (30324) 视同成功
+            if code == 30324:
+                return CheckInResult(
+                    email=self.email,
+                    success=True,
+                    message=message or "重复签到（已成功）",
+                    code=code,
+                )
+            # 其他业务错误 → 失败
             return CheckInResult(
                 email=self.email,
                 success=False,

@@ -2,7 +2,7 @@ from starlette.exceptions import HTTPException
 from fastapi import APIRouter, Depends, Request
 from sqlmodel import select
 
-from app.core.api import CheckInRequest, CheckInResult
+from app.core.api import QRCheckInRequest, CheckInRequest, CheckInResult
 from app.deps import get_current_user
 from app.core.db import Session, get_session_with
 from app.models import BaseResponse, User, Account, UserAccount, CourseBinding
@@ -23,7 +23,7 @@ router = APIRouter()
 
 @router.post("/api/checkin")
 async def check_in(
-    data: CheckInRequest,
+    data: QRCheckInRequest,
     request: Request,
     current_user: User = Depends(get_current_user),
     session: Session = Depends(get_session_with),
@@ -63,4 +63,56 @@ async def check_in(
             "results": [r.model_dump() for r in result.values() if r is not None],
         },
         message=f"成功签到{success_count}个账号",
+    )
+
+
+@router.post("/api/checkin/gps")
+async def gps_check_in(
+    data: CheckInRequest,
+    request: Request,
+    current_user: User = Depends(get_current_user),
+    session: Session = Depends(get_session_with),
+    _rate_limit: None = Depends(RateLimiter(times=60, seconds=60)),
+):
+    import asyncio
+    from app.core.sessions import session_pool
+
+    client_ip = get_client_ip(request)
+
+    course_id = data.courseid
+    if not course_id:
+        raise HTTPException(status_code=422, detail="缺少 courseid 参数")
+
+    accounts = session.exec(
+        select(Account)
+        .join(UserAccount)
+        .join(CourseBinding)
+        .where(
+            UserAccount.user_id == current_user.id,
+            CourseBinding.course_id == course_id,
+            CourseBinding.is_active == True,
+        )
+    ).all()
+    if not accounts:
+        raise HTTPException(status_code=404, detail="无绑定此课程的账号")
+
+    if not await asyncio.to_thread(session_pool.create, accounts):
+        return BaseResponse(code=500, message="创建会话失败")
+
+    account_ids = [a.id for a in accounts]
+    result: dict[int, CheckInResult | None] = await session_pool.execute_gps_checkin(
+        current_user.id, account_ids, data, client_ip=client_ip
+    )
+
+    success_count = sum(1 for r in result.values() if r is not None and r.success)
+    if success_count:
+        msg = f"成功签到{success_count}个账号"
+    else:
+        msg = "签到失败，所有账号均未成功"
+    return BaseResponse(
+        data={
+            "success_count": success_count,
+            "results": [r.model_dump() for r in result.values() if r is not None],
+        },
+        message=msg,
     )
