@@ -3,7 +3,7 @@ import time
 from threading import Lock
 
 from sqlmodel import Session
-from app.api import CheckInRequest, KetangPaiAPI, CheckInResult
+from app.core.api import CheckInRequest, KetangPaiAPI, CheckInResult
 from app.core.db import get_session, get_redis_client
 from app.models import Account, CheckInLog
 from app.core.security import decrypt_credential

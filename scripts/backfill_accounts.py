@@ -11,7 +11,6 @@
 """
 
 import sys
-import os
 import time
 import logging
 from pathlib import Path
@@ -27,7 +26,7 @@ from sqlmodel import Session, select
 from app.core.db import engine
 from app.models import Account
 from app.core.security import decrypt_credential
-from app.api import KetangPaiAPI
+from app.core.api import KetangPaiAPI
 
 logging.basicConfig(
     level=logging.INFO,

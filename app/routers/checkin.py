@@ -2,7 +2,7 @@ from starlette.exceptions import HTTPException
 from fastapi import APIRouter, Depends, Request
 from sqlmodel import select
 
-from app.api import CheckInRequest, CheckInResult
+from app.core.api import CheckInRequest, CheckInResult
 from app.deps import get_current_user
 from app.core.db import Session, get_session_with
 from app.models import BaseResponse, User, Account, UserAccount, CourseBinding
@@ -27,7 +27,7 @@ async def check_in(
     request: Request,
     current_user: User = Depends(get_current_user),
     session: Session = Depends(get_session_with),
-    _rate_limit: None = Depends(RateLimiter(times=10, seconds=60)),
+    _rate_limit: None = Depends(RateLimiter(times=60, seconds=60)),
 ):
     import asyncio
     from app.core.sessions import session_pool

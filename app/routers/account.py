@@ -109,7 +109,7 @@ async def create_account(
             raise HTTPException(status_code=400, detail="该账号已关联到当前用户")
     else:
         # 2. 先通过课堂派 API 验证凭据有效性（不入库）
-        from app.api import KetangPaiAPI
+        from app.core.api import KetangPaiAPI
 
         uid = None
         token = None
@@ -255,7 +255,7 @@ async def update_account(
         account.status = 1
         account.status_message = ""
         try:
-            from app.api import KetangPaiAPI
+            from app.core.api import KetangPaiAPI
 
             client = KetangPaiAPI(
                 email if email is not None else account.email, password
@@ -315,7 +315,7 @@ async def verify_account(
     if account is None:
         raise HTTPException(status_code=404, detail="账号不存在")
 
-    from app.api import KetangPaiAPI
+    from app.core.api import KetangPaiAPI
     from app.core.security import decrypt_credential
 
     password = decrypt_credential(account.password)
