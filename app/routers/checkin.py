@@ -252,7 +252,7 @@ async def update_auto_checkin_config(
         session.add(config)
     session.commit()
     logger.info("Auto-checkin config saved user=%s enabled=%s types=%s windows=%s",
-                current_user.id, body.enabled, body.checkin_types, time_windows_str)
+                current_user.id, body.enabled, body.checkin_types, body.time_windows)
     return BaseResponse(
         data={
             "enabled": config.enabled,
