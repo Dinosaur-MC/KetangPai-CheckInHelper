@@ -186,6 +186,7 @@ class AutoCheckinWatcher:
 
                     # 尝试多个账号查询考勤列表，任一可用即可
                     attence_list = []
+                    first_client = None
                     for aid in account_ids:
                         try:
                             client = await session_pool.ensure_client(aid)
@@ -221,7 +222,7 @@ class AutoCheckinWatcher:
 
                         try:
                             checkin_data = CheckInRequest(id=att_id, courseid=course_id)
-                            if att_type == "1":
+                            if att_type == "1" and first_client is not None:
                                 code = await first_client.get_digit_attence(att_id)
                                 if not code:
                                     logger.warning("Empty digit code for attendance %s, skipping", att_id)

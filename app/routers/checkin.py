@@ -303,7 +303,7 @@ async def trigger_auto_checkin(
         select(AutoCheckinConfig).where(AutoCheckinConfig.user_id == current_user.id)
     ).first()
     if not config or not config.enabled:
-        return BaseResponse(code=400, message="请先开启自动签到")
+        raise HTTPException(status_code=400, detail="请先开启自动签到")
     logger.info("Auto-checkin trigger user=%s", current_user.id)
     await auto_checkin_watcher.trigger()
     return BaseResponse(message="扫描已触发")
