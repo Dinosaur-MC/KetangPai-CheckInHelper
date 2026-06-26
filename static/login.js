@@ -20,6 +20,24 @@ function showToast(msg) {
     el.addEventListener("closed", () => el.remove());
 }
 
+// 检查是否已登录（cookie 有效），如果是则直接跳转
+(async function checkAuth() {
+    try {
+        const res = await fetch(`${API_BASE}/api/users/me`, {
+            headers: { "Content-Type": "application/json" },
+        });
+        if (res.ok) {
+            const data = await res.json();
+            if (data.data) {
+                localStorage.setItem("user", JSON.stringify(data.data));
+                window.location.replace("/");
+            }
+        }
+    } catch {
+        // 未登录，继续显示登录页
+    }
+})();
+
 createApp({
     setup() {
         const page = ref("login");
@@ -27,24 +45,6 @@ createApp({
         const loading = ref(false);
         const inviteRequired = ref(false);
         const form = reactive({ email: "", password: "", invite_code: "" });
-
-        // 已登录用户直接跳转回主页
-        if (localStorage.getItem("token")) {
-            const token = localStorage.getItem("token");
-            try {
-                const payload = JSON.parse(atob(token.split(".")[1]));
-                if (payload.exp * 1000 > Date.now()) {
-                    window.location.replace("/");
-                    return;
-                }
-            } catch {
-                // token 解析失败，忽略
-            }
-            // token 过期，清理
-            localStorage.removeItem("token");
-            localStorage.removeItem("refresh_token");
-            localStorage.removeItem("user");
-        }
 
         onMounted(async () => {
             try {
@@ -67,9 +67,8 @@ createApp({
                     password: form.password,
                 });
                 const data = res.data || {};
-                localStorage.setItem("token", data.access_token);
-                localStorage.setItem("refresh_token", data.refresh_token);
                 localStorage.setItem("user", JSON.stringify(data.user));
+                // cookie 由后端设置，只需跳转
                 window.location.replace("/");
             } catch (e) {
                 showToast(e.message || "登录失败");
@@ -89,9 +88,8 @@ createApp({
                 if (form.invite_code) body.invite_code = form.invite_code;
                 const res = await api("POST", "/api/register", body);
                 const data = res.data || {};
-                localStorage.setItem("token", data.access_token);
-                localStorage.setItem("refresh_token", data.refresh_token);
                 localStorage.setItem("user", JSON.stringify(data.user));
+                // cookie 由后端设置，只需跳转
                 window.location.replace("/");
             } catch (e) {
                 showToast(e.message || "注册失败");

@@ -7,42 +7,28 @@ let _refreshing = false;
 
 async function api(method, path, body) {
     const headers = { "Content-Type": "application/json" };
-    const token = localStorage.getItem("token");
-    if (token) headers["Authorization"] = `Bearer ${token}`;
     const opts = { method, headers };
     if (body !== undefined) opts.body = JSON.stringify(body);
     const res = await fetch(`${API_BASE}${path}`, opts);
     const data = await res.json();
     if (res.ok) return data;
 
-    // 401 时尝试刷新令牌（跳过 auth 接口自身）
-    if (res.status === 401 && !["/api/refresh", "/api/login"].includes(path) && !_refreshing) {
+    // 401 时尝试刷新令牌（cookie 自动发送，跳过 auth 接口自身）
+    if (res.status === 401 && path !== "/api/refresh" && path !== "/api/login" && !_refreshing) {
         _refreshing = true;
         try {
-            const rt = localStorage.getItem("refresh_token");
-            if (!rt) throw new Error("no refresh token");
             const rr = await fetch(`${API_BASE}/api/refresh`, {
                 method: "POST",
-                headers: { Authorization: `Bearer ${rt}`, "Content-Type": "application/json" },
+                headers: { "Content-Type": "application/json" },
             });
-            const rd = await rr.json();
-            if (!rr.ok) throw new Error(rd.message || "refresh failed");
-            // 更新 localStorage
-            localStorage.setItem("token", rd.data.access_token);
-            localStorage.setItem("refresh_token", rd.data.refresh_token);
-            localStorage.setItem("user", JSON.stringify(rd.data.user));
+            if (!rr.ok) throw new Error("refresh failed");
             _refreshing = false;
-            // 重试原始请求
-            headers["Authorization"] = `Bearer ${rd.data.access_token}`;
+            // 重试原始请求（新 access_token cookie 已设置）
             const retry = await fetch(`${API_BASE}${path}`, { method, headers, body: opts.body });
-            const retryData = await retry.json();
-            if (!retry.ok) throw new Error(retryData.message || `请求失败 (${retry.status})`);
-            return retryData;
+            if (!retry.ok) throw new Error(data.message || `请求失败 (${retry.status})`);
+            return await retry.json();
         } catch (e) {
             _refreshing = false;
-            localStorage.removeItem("token");
-            localStorage.removeItem("refresh_token");
-            localStorage.removeItem("user");
             window.location.replace("/login");
         }
     }
@@ -54,7 +40,6 @@ async function api(method, path, body) {
 createApp({
     setup() {
         const state = reactive({
-            token: localStorage.getItem("token") || null,
             currentUser: JSON.parse(localStorage.getItem("user") || "null"),
         });
 
@@ -300,8 +285,6 @@ createApp({
             try {
                 await api("POST", "/api/logout");
             } catch {}
-            localStorage.removeItem("token");
-            localStorage.removeItem("refresh_token");
             localStorage.removeItem("user");
             window.location.replace("/login");
         }
@@ -1239,24 +1222,8 @@ createApp({
             }
         }
 
-        // JWT 过期检测（仅解码 exp，不验证签名）
-        function isJwtExpired(token) {
-            try {
-                const payload = JSON.parse(atob(token.split(".")[1]));
-                return payload.exp * 1000 < Date.now();
-            } catch {
-                return true;
-            }
-        }
-
         // ---- 初始化 ----
-        if (!state.token || isJwtExpired(state.token)) {
-            localStorage.removeItem("token");
-            localStorage.removeItem("refresh_token");
-            localStorage.removeItem("user");
-            window.location.replace("/login");
-            return;
-        }
+        // 尝试加载数据，401 会自动触发刷新或跳转到 /login
 
         // 获取最新用户信息
         const userId = state.currentUser?.id;
@@ -1268,9 +1235,17 @@ createApp({
                         localStorage.setItem("user", JSON.stringify(res.data));
                     }
                 })
-                .catch(() => {
-                    // 获取失败时不清除登录状态，保持 localStorage 数据
-                });
+                .catch(() => {});
+        } else {
+            // localStorage 中无缓存的 user 信息，通过 cookie 直接获取
+            api("GET", "/api/users/me")
+                .then((res) => {
+                    if (res.data) {
+                        state.currentUser = res.data;
+                        localStorage.setItem("user", JSON.stringify(res.data));
+                    }
+                })
+                .catch(() => {});
         }
         loadPageData(route.value).catch((e) => {
             console.warn("加载页面数据失败:", e);

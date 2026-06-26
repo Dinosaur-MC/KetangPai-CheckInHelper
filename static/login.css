@@ -68,4 +68,18 @@
     .login-card .subtitle {
         color: #9ca3af;
     }
+    .login-card .field-label {
+        color: #d1d5db;
+    }
+    .login-card .field-input {
+        background: #1c2128;
+        border-color: #444c56;
+        color: #e4e6ed;
+    }
+    .login-card .field-input::placeholder {
+        color: #6b7280;
+    }
+    .login-card .pwd-toggle:hover {
+        background: rgba(255, 255, 255, 0.06);
+    }
 }
