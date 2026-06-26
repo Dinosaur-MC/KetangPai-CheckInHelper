@@ -1018,7 +1018,22 @@ createApp({
         }
 
         function addTimeWindow() {
-          autoTimeWindows.value.push({ start: 8, end: 18 });
+          const key = (w) => `${w.start}-${w.end}`;
+          const used = new Set(autoTimeWindows.value.map(key));
+          const candidates = [
+            { start: 8, end: 12 },
+            { start: 14, end: 18 },
+            { start: 19, end: 22 },
+            { start: 7, end: 10 },
+            { start: 13, end: 17 },
+          ];
+          for (const c of candidates) {
+            if (!used.has(key(c))) {
+              autoTimeWindows.value.push({ ...c });
+              return;
+            }
+          }
+          showToast("所有时段组合都已添加");
         }
 
         function removeTimeWindow(index) {

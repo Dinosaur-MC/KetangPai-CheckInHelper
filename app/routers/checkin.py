@@ -185,8 +185,18 @@ async def update_auto_checkin_config(
         for w in windows:
             w["start"] = max(0, min(23, int(w.get("start", 7))))
             w["end"] = max(0, min(23, int(w.get("end", 22))))
+        # 去重：相同 start/end 的时段只保留一个
+        seen = set()
+        deduped = []
+        for w in windows:
+            key = f"{w['start']}-{w['end']}"
+            if key not in seen:
+                seen.add(key)
+                deduped.append(w)
+        windows = deduped
     except Exception as e:
         logger.warning("解析请求 time_windows 失败: %s, raw=%r", e, body.time_windows)
+        windows = [{"start": 7, "end": 22}]
     time_windows_str = json.dumps(windows, ensure_ascii=False)
 
     config = session.exec(
@@ -207,6 +217,8 @@ async def update_auto_checkin_config(
         config.updated_at = datetime.now(timezone.utc)
         session.add(config)
     session.commit()
+    logger.info("Auto-checkin config saved user=%s enabled=%s types=%s windows=%s",
+                current_user.id, body.enabled, body.checkin_types, time_windows_str)
     return BaseResponse(
         data={
             "enabled": config.enabled,
@@ -238,5 +250,6 @@ async def trigger_auto_checkin(
     ).first()
     if not config or not config.enabled:
         return BaseResponse(code=400, message="请先开启自动签到")
+    logger.info("Auto-checkin trigger user=%s", current_user.id)
     await auto_checkin_watcher.trigger()
     return BaseResponse(message="扫描已触发")
