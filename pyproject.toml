@@ -25,3 +25,12 @@ testpaths = ["tests"]
 python_files = ["test_*.py"]
 python_classes = ["Test*"]
 python_functions = ["test_*"]
+filterwarnings = [
+    "ignore::DeprecationWarning:sqlmodel.*:",
+    "ignore::DeprecationWarning:pydantic.*:",
+    "ignore::DeprecationWarning:passlib.*:",
+    "ignore:.*InsecureKeyLengthWarning.*:",
+    "ignore::jwt.InsecureKeyLengthWarning:jwt.*:",
+    "ignore:.*Using `httpx` with `starlette.testclient` is deprecated.*:",
+    "ignore:.*Setting per-request cookies.*:",
+]
