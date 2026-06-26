@@ -340,6 +340,48 @@ class KetangPaiAPI:
             logger.warning("Invalid JSON response from getLocation for %s", attenceid)
             return {}
 
+    def get_not_finish_attence_student(self, courseid: str) -> list[dict]:
+        """获取课程未完成的签到列表。
+
+        POST /AttenceApi/getNotFinishAttenceStudent
+        返回 data.lists，每项包含 id / type 等。
+        type: 1=数字, 2=GPS, 3=二维码, 4=签入签出
+        """
+        try:
+            resp = self.session.post(
+                f"{API_BASE}/AttenceApi/getNotFinishAttenceStudent",
+                json={"courseid": courseid, "reqtimestamp": int(time.time() * 1000)},
+            )
+            resp.raise_for_status()
+            j = resp.json()
+            if j.get("status") == 1:
+                return (j.get("data") or {}).get("lists") or []
+            return []
+        except Exception as e:
+            logger.warning("Failed to get not finish attence for %s: %s", courseid, e)
+            return []
+
+    def get_digit_attence(self, attence_id: str) -> str:
+        """获取数字考勤码。
+
+        POST /AttenceApi/getDigitAttence
+        返回 data.data.code（数字签到码），失败返回空字符串。
+        """
+        try:
+            resp = self.session.post(
+                f"{API_BASE}/AttenceApi/getDigitAttence",
+                json={"id": attence_id, "reqtimestamp": int(time.time() * 1000)},
+            )
+            resp.raise_for_status()
+            j = resp.json()
+            if j.get("status") == 1:
+                inner = j.get("data") or {}
+                return (inner.get("data") or {}).get("code") or ""
+            return ""
+        except Exception as e:
+            logger.warning("Failed to get digit attence for %s: %s", attence_id, e)
+            return ""
+
     def qr_check_in(self, data: QRCheckInRequest, client_ip: str = "") -> CheckInResult:
         """二维码签到接口（POST AttenceApi/AttenceResult，返回 JSON）。
 
@@ -364,17 +406,9 @@ class KetangPaiAPI:
             resp.raise_for_status()
             j: dict = resp.json()
 
-            status = j.get("status")
-            code = j.get("code")
+            code = j.get("code", 0)
             message = j.get("message", "")
 
-            if status == 1:
-                return CheckInResult(
-                    email=self.email,
-                    success=True,
-                    message="签到成功",
-                    code=0,
-                )
             # 重复签到 (30324) 视同成功
             if code == 30324:
                 return CheckInResult(
@@ -383,6 +417,18 @@ class KetangPaiAPI:
                     message=message or "重复签到（已成功）",
                     code=code,
                 )
+
+            # data.state == 8 表示二维码签到成功
+            if j.get("status") == 1:
+                data_section = j.get("data") or {}
+                if data_section.get("state") == 8:
+                    return CheckInResult(
+                        email=self.email,
+                        success=True,
+                        message="签到成功",
+                        code=0,
+                    )
+
             # 其他业务错误 → 失败，message 已有可读文本
             return CheckInResult(
                 email=self.email,
@@ -435,7 +481,7 @@ class KetangPaiAPI:
             "longitude": longitude,
             "accuracy": "",
             "appid": "",
-            "clienttype": "1",
+            "clienttype": 1,
             "reqtimestamp": int(time.time() * 1000),
         }
         extra_headers = {}
@@ -450,17 +496,9 @@ class KetangPaiAPI:
             resp.raise_for_status()
             j: dict = resp.json()
 
-            status = j.get("status")
-            code = j.get("code")
+            code = j.get("code", 0)
             message = j.get("message", "")
 
-            if status == 1:
-                return CheckInResult(
-                    email=self.email,
-                    success=True,
-                    message="签到成功",
-                    code=0,
-                )
             # 重复签到 (30324) 视同成功
             if code == 30324:
                 return CheckInResult(
@@ -469,6 +507,18 @@ class KetangPaiAPI:
                     message=message or "重复签到（已成功）",
                     code=code,
                 )
+
+            # data.state == 1 表示 GPS/数字签到成功
+            if j.get("status") == 1:
+                data_section = j.get("data") or {}
+                if data_section.get("state") == 1:
+                    return CheckInResult(
+                        email=self.email,
+                        success=True,
+                        message="签到成功",
+                        code=0,
+                    )
+
             # 其他业务错误 → 失败
             return CheckInResult(
                 email=self.email,
