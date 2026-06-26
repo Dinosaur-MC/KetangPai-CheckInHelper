@@ -154,10 +154,25 @@ class TimeWindow(BaseModel):
         return self
 
 
+VALID_CHECKIN_TYPES = {"1", "2"}
+
+
 class AutoCheckinConfigBody(BaseModel):
     enabled: bool = False
     checkin_types: str = "1,2"
     time_windows: str = '[]'
+
+    @field_validator("checkin_types")
+    @classmethod
+    def validate_checkin_types(cls, v):
+        parts = [s.strip() for s in v.split(",") if s.strip()]
+        if not parts:
+            raise ValueError("请至少选择一种签到类型")
+        invalid = set(parts) - VALID_CHECKIN_TYPES
+        if invalid:
+            raise ValueError(f"无效的签到类型: {', '.join(sorted(invalid))}，可选 1(数字考勤) 2(GPS考勤)")
+        # 去重并排序
+        return ",".join(sorted(set(parts)))
 
     @field_validator("time_windows", mode="before")
     @classmethod
