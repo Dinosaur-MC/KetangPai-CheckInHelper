@@ -28,14 +28,27 @@ DEDUP_TTL = 86400        # 去重标记 TTL（24h）
 
 
 def _in_time_windows(time_windows_str: str, now_hour: int) -> bool:
-    """检查当前小时是否在 time_windows JSON 的某个时段内。"""
+    """检查当前小时是否在 time_windows JSON 的某个时段内。
+
+    支持跨午夜时段（如 start=22, end=6 覆盖 22:00～05:59）。
+    零宽度时段（start == end）永不匹配。
+    """
     try:
         windows = json.loads(time_windows_str)
         for w in windows:
             start = int(w.get("start", 7))
             end = int(w.get("end", 22))
-            if start <= now_hour < end:
-                return True
+            if start == end:
+                # 零宽度：永不匹配
+                continue
+            if start < end:
+                # 普通时段：同一天内
+                if start <= now_hour < end:
+                    return True
+            else:
+                # 跨午夜时段：如 22:00～06:00
+                if now_hour >= start or now_hour < end:
+                    return True
     except Exception as e:
         logger.warning("解析 time_windows JSON 失败: %s, raw=%r", e, time_windows_str)
     return False
