@@ -14,7 +14,7 @@ def generate_invite_code() -> str:
 
 class BaseResponse(BaseModel):
     code: int = 200
-    message: str
+    message: str = "success"
     data: Optional[dict | list] = None
 
 
