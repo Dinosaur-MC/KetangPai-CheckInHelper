@@ -5,8 +5,12 @@ from sqlmodel import select
 from app.core.api import QRCheckInRequest, CheckInRequest, CheckInResult
 from app.deps import get_current_user
 from app.core.db import Session, get_session_with
-from app.models import BaseResponse, User, Account, UserAccount, CourseBinding
+from app.models import BaseResponse, User, Account, UserAccount, CourseBinding, AutoCheckinConfig
 
+from datetime import datetime, timezone
+from pydantic import BaseModel
+
+import json
 import logging
 
 from app.utils import RateLimiter, get_client_ip
@@ -124,3 +128,115 @@ async def gps_check_in(
         },
         message=msg,
     )
+
+
+# ================================
+#         Auto CheckIn
+# ================================
+
+
+class AutoCheckinConfigBody(BaseModel):
+    enabled: bool = False
+    checkin_types: str = "1,2"
+    time_windows: str = '[{"start":7,"end":22}]'
+
+
+@router.get("/api/auto-checkin/config")
+async def get_auto_checkin_config(
+    current_user: User = Depends(get_current_user),
+    session: Session = Depends(get_session_with),
+):
+    config = session.exec(
+        select(AutoCheckinConfig).where(AutoCheckinConfig.user_id == current_user.id)
+    ).first()
+    if config is None:
+        return BaseResponse(
+            message="success",
+            data={"enabled": False, "checkin_types": "1,2",
+                  "time_windows": [{"start": 7, "end": 22}]},
+        )
+    try:
+        windows = json.loads(config.time_windows)
+    except Exception as e:
+        logger.warning("解析 time_windows JSON 失败: %s, raw=%r", e, config.time_windows)
+        windows = [{"start": 7, "end": 22}]
+    return BaseResponse(
+        message="success",
+        data={
+            "enabled": config.enabled,
+            "checkin_types": config.checkin_types,
+            "time_windows": windows,
+            "created_at": config.created_at.isoformat(),
+            "updated_at": config.updated_at.isoformat(),
+        },
+    )
+
+
+@router.put("/api/auto-checkin/config")
+async def update_auto_checkin_config(
+    body: AutoCheckinConfigBody,
+    current_user: User = Depends(get_current_user),
+    session: Session = Depends(get_session_with),
+):
+    try:
+        windows = json.loads(body.time_windows) if isinstance(body.time_windows, str) else body.time_windows
+        if not isinstance(windows, list) or not windows:
+            windows = [{"start": 7, "end": 22}]
+        for w in windows:
+            w["start"] = max(0, min(23, int(w.get("start", 7))))
+            w["end"] = max(0, min(23, int(w.get("end", 22))))
+    except Exception as e:
+        logger.warning("解析请求 time_windows 失败: %s, raw=%r", e, body.time_windows)
+    time_windows_str = json.dumps(windows, ensure_ascii=False)
+
+    config = session.exec(
+        select(AutoCheckinConfig).where(AutoCheckinConfig.user_id == current_user.id)
+    ).first()
+    if config is None:
+        config = AutoCheckinConfig(
+            user_id=current_user.id,
+            enabled=body.enabled,
+            checkin_types=body.checkin_types,
+            time_windows=time_windows_str,
+        )
+        session.add(config)
+    else:
+        config.enabled = body.enabled
+        config.checkin_types = body.checkin_types
+        config.time_windows = time_windows_str
+        config.updated_at = datetime.now(timezone.utc)
+        session.add(config)
+    session.commit()
+    return BaseResponse(
+        data={
+            "enabled": config.enabled,
+            "checkin_types": config.checkin_types,
+            "time_windows": json.loads(config.time_windows),
+        },
+        message="自动签到配置已更新",
+    )
+
+
+@router.get("/api/auto-checkin/status")
+async def get_auto_checkin_status(
+    current_user: User = Depends(get_current_user),
+):
+    from app.core.watcher import auto_checkin_watcher
+
+    return BaseResponse(data=auto_checkin_watcher.get_status(), message="success")
+
+
+@router.post("/api/auto-checkin/trigger")
+async def trigger_auto_checkin(
+    current_user: User = Depends(get_current_user),
+    session: Session = Depends(get_session_with),
+):
+    from app.core.watcher import auto_checkin_watcher
+
+    config = session.exec(
+        select(AutoCheckinConfig).where(AutoCheckinConfig.user_id == current_user.id)
+    ).first()
+    if not config or not config.enabled:
+        return BaseResponse(code=400, message="请先开启自动签到")
+    await auto_checkin_watcher.trigger()
+    return BaseResponse(message="扫描已触发")
