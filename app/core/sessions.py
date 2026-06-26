@@ -430,7 +430,7 @@ class SessionPool:
                 # canary 成功后写入去重标记
                 if first_result.success:
                     try:
-                        ttl = max(data.expire - int(time.time()), 300)
+                        ttl = max(data.expire - int(time.time()), 3600)
                         r.set(dedup_key, "1", ttl)
                     except Exception:
                         pass
@@ -672,7 +672,7 @@ class SessionPool:
             # 签到成功后写入 Redis 去重标记
             if result.success:
                 try:
-                    ttl = max(data.expire - int(time.time()), 300)
+                    ttl = max(data.expire - int(time.time()), 3600)
                     r.set(dedup_key, "1", ttl)
                 except Exception:
                     pass
@@ -742,8 +742,8 @@ class SessionPool:
     ) -> dict[int, CheckInResult | None]:
         """批量 GPS / 数字码签到入口。
 
-        每个账号独立签到（无 canary 机制），通过 semaphore 限制并发。
-        使用 data.id（考勤记录ID）做 Redis 去重。
+        使用 canary 机制：第一个账号试签，成功后再并发其余账号。
+        通过 semaphore 限制并发，使用 data.id（考勤记录ID）做 Redis 去重。
         当经纬度为空时，自动用第一个可用会话预取建筑 GPS 坐标。
 
         :param client_ip: 客户端真实 IP，透传至课堂派签到请求。
@@ -854,6 +854,7 @@ class SessionPool:
                 except Exception:
                     pass
 
+                # ── 先做去重过滤，分离已签到和待签到 ──
                 dedup_filtered = []
                 already_done = []
                 for aid in account_ids:
@@ -881,19 +882,148 @@ class SessionPool:
                         data.id,
                     )
 
-                tasks = [
-                    asyncio.create_task(
-                        self._gps_checkin_one(
-                            snapshot, db, r, user_id, aid, data, client_ip=client_ip,
-                            center_lat=center_lat, center_lng=center_lng,
-                            fence_radius=fence_radius,
-                        )
+                if not dedup_filtered:
+                    try:
+                        db.commit()
+                    except Exception as e:
+                        logger.error("Failed to commit: %s", e)
+                        db.rollback()
+                    succeeded = sum(1 for r in results.values() if r is not None and r.success)
+                    logger.info(
+                        "GPS check-in completed for user=%s: %s/%s succeeded",
+                        user_id,
+                        succeeded,
+                        len(account_ids),
                     )
-                    for aid in dedup_filtered
-                ]
-                gathered = await asyncio.gather(*tasks)
-                for aid, cr in gathered:
-                    results[aid] = cr
+                    return results
+
+                # ── Canary：先试第一个待签到账号 ──
+                canary = self._pick_canary(snapshot, dedup_filtered)
+                if canary is None:
+                    # 快照中无可用会话，逐个按需创建
+                    return await self._gps_checkin_all_ensure(
+                        snapshot, db, r, user_id, dedup_filtered, data,
+                        client_ip=client_ip,
+                        center_lat=center_lat, center_lng=center_lng,
+                        fence_radius=fence_radius,
+                    )
+
+                canary_aid, canary_client = canary
+
+                logger.debug(
+                    "GPS canary check-in: account %s (%s)",
+                    canary_aid,
+                    canary_client.email[:5] + "..." + canary_client.email[-5:],
+                )
+
+                # canary 也检查一下去重（双保险）
+                canary_dedup_key = f"checkin_done:gps:{data.id}:{canary_aid}"
+                try:
+                    if r and r.get(canary_dedup_key):
+                        canary_result = CheckInResult(
+                            email=canary_client.email,
+                            success=True,
+                            message="已签到（跳过重复调用）",
+                        )
+                    else:
+                        canary_result = await asyncio.to_thread(
+                            canary_client.gps_check_in,
+                            CheckInRequest(
+                                id=data.id,
+                                code=data.code,
+                                latitude=center_lat or data.latitude,
+                                longitude=center_lng or data.longitude,
+                            ),
+                            client_ip,
+                        )
+                except Exception as e:
+                    logger.warning(
+                        "GPS canary check-in exception for account %s: %s",
+                        canary_aid,
+                        e,
+                    )
+                    canary_result = CheckInResult(
+                        email=canary_client.email,
+                        success=False,
+                        message=f"签到失败：{e}",
+                    )
+
+                # canary 成功后写入去重标记
+                if canary_result.success:
+                    try:
+                        r.set(canary_dedup_key, "1", 86400)
+                    except Exception:
+                        pass
+
+                self._record(db, r, user_id, canary_aid, data.courseid, canary_client, canary_result)
+                self._touch(canary_aid)
+                results[canary_aid] = canary_result
+
+                logger.info(
+                    "GPS canary result for account %s: success=%s message=%s",
+                    canary_aid,
+                    canary_result.success,
+                    canary_result.message,
+                )
+
+                if not canary_result.success:
+                    # 考勤已结束 → 缓存结束标记，整批次跳过
+                    if canary_result.code == 30322:
+                        try:
+                            r.set(f"gps_ended:{data.id}", "1", 3600)
+                            logger.info("Cached ended state for attendance %s (TTL=3600s)", data.id)
+                        except Exception:
+                            pass
+
+                    # 其余账号标记为"跳过"
+                    for aid in dedup_filtered:
+                        if aid == canary_aid:
+                            continue
+                        skip_email = self._resolve_client_email(snapshot, aid)
+                        results[aid] = CheckInResult(
+                            email=skip_email or f"account:{aid}",
+                            success=False,
+                            message=f"已跳过（{canary_result.message}）",
+                        )
+                        self._record(db, r, user_id, aid, data.courseid, skip_email, results[aid])
+
+                    try:
+                        db.commit()
+                    except Exception as e:
+                        logger.error("Failed to commit: %s", e)
+                        db.rollback()
+
+                    logger.info(
+                        "GPS check-in aborted after canary failure — "
+                        "%s succeeded, %s skipped",
+                        0,
+                        len(dedup_filtered) - 1,
+                    )
+                    succeeded = sum(1 for r in results.values() if r is not None and r.success)
+                    logger.info(
+                        "GPS check-in completed for user=%s: %s/%s succeeded",
+                        user_id,
+                        succeeded,
+                        len(account_ids),
+                    )
+                    return results
+
+                # ── Canary 成功，并发签到其余去重后的账号 ──
+                remaining = [aid for aid in dedup_filtered if aid != canary_aid]
+                if remaining:
+                    tasks = [
+                        asyncio.create_task(
+                            self._gps_checkin_one(
+                                snapshot, db, r, user_id, aid, data, client_ip=client_ip,
+                                center_lat=center_lat, center_lng=center_lng,
+                                fence_radius=fence_radius,
+                            )
+                        )
+                        for aid in remaining
+                    ]
+                    gathered = await asyncio.gather(*tasks)
+                    for aid, cr in gathered:
+                        results[aid] = cr
 
                 try:
                     db.commit()
@@ -909,6 +1039,43 @@ class SessionPool:
                 len(account_ids),
             )
             return results
+
+    async def _gps_checkin_all_ensure(
+        self,
+        snapshot: dict[int, tuple[KetangPaiAPI, float] | None],
+        db,
+        r,
+        user_id: int,
+        account_ids: list[int],
+        data: CheckInRequest,
+        client_ip: str = "",
+        *,
+        center_lat: str = "",
+        center_lng: str = "",
+        fence_radius: int = 0,
+    ) -> dict[int, CheckInResult | None]:
+        """所有账号无会话时的兜底（GPS 签到）：逐个尝试按需创建。"""
+        logger.info(
+            "GPS: falling back to per-account ensure for %s accounts", len(account_ids)
+        )
+        tasks = [
+            asyncio.create_task(
+                self._gps_checkin_one(
+                    snapshot, db, r, user_id, aid, data, client_ip=client_ip,
+                    center_lat=center_lat, center_lng=center_lng,
+                    fence_radius=fence_radius,
+                )
+            )
+            for aid in account_ids
+        ]
+        gathered = await asyncio.gather(*tasks)
+        results = {aid: cr for aid, cr in gathered}
+        try:
+            db.commit()
+        except Exception as e:
+            logger.error("Failed to commit: %s", e)
+            db.rollback()
+        return results
 
     async def _gps_checkin_one(
         self,
