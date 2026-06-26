@@ -470,7 +470,7 @@
                                 <!-- 多时段 -->
                                 <div class="auto-section">
                                     <div class="auto-section-header">运行时段（每天）</div>
-                                    <div v-for="(w, i) in autoTimeWindows" :key="i" class="time-window-row">
+                                    <div v-for="(w, i) in autoTimeWindows" :key="i" class="time-window-row" :class="{ duplicate: isDuplicateWindow(w, i) }">
                                         <span class="time-label">从</span>
                                         <select :value="w.start" :disabled="!autoEnabled"
                                             @change="w.start = parseInt($event.target.value) || 0; if (w.start >= w.end) w.end = Math.min(w.start + 1, 23)">
@@ -485,6 +485,7 @@
                                         <mdui-button-icon class="remove-btn" icon="close" size="small"
                                             :disabled="autoTimeWindows.length <= 1 || !autoEnabled"
                                             @click="removeTimeWindow(i)"></mdui-button-icon>
+                                        <span class="dup-hint" v-if="isDuplicateWindow(w, i)">⚠ 重复时段</span>
                                     </div>
                                     <div class="auto-add-window" @click="addTimeWindow" v-if="autoEnabled">
                                         <span class="material-icons">add</span> 添加时段

@@ -1049,6 +1049,18 @@ mdui-dialog::part(headline) {
   cursor: pointer;
 }
 
+.time-window-row.duplicate {
+  border-color: #fca5a5;
+  background: #fef2f2;
+}
+
+.time-window-row .dup-hint {
+  font-size: 11px;
+  color: #ef4444;
+  white-space: nowrap;
+  margin-left: auto;
+}
+
 .time-window-row .remove-btn {
   margin-left: 4px;
   color: #ef4444;

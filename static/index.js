@@ -976,11 +976,21 @@ createApp({
           }
         }
 
+        function isDuplicateWindow(w, index) {
+          return autoTimeWindows.value.some((other, i) =>
+            i !== index && other.start === w.start && other.end === w.end
+          );
+        }
+
         async function saveAutoConfig() {
           const types = [];
           if (autoTypeDigit.value) types.push("1");
           if (autoTypeGps.value) types.push("2");
           if (!types.length) { showToast("请至少选择一种签到类型"); return; }
+
+          // 检查是否有重复时段
+          const hasDup = autoTimeWindows.value.some((w, i) => isDuplicateWindow(w, i));
+          if (hasDup) { showToast("存在重复时段，请先修改"); return; }
 
           autoSaving.value = true;
           try {
@@ -1411,6 +1421,7 @@ createApp({
             triggerAutoCheckin,
             addTimeWindow,
             removeTimeWindow,
+            isDuplicateWindow,
             formatTime,
             getAccountEmail,
             getCourseName,
