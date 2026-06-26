@@ -333,7 +333,7 @@
                                     <div style="display:flex; gap:8px;">
                                         <input class="field-input" style="flex:1;" :value="checkinUrl"
                                             @input="parseCheckinUrl($event.target.value)"
-                                            placeholder="https://w.ketangpai.com/checkIn/checkinCodeResult?ticketid=...&expire=...&sign=...&courseid=...&randNum=...">
+                                            placeholder="https://w.ketangpai.com/checkIn/checkinCodeResult?ticketid=...&expire=...&sign=...&courseid=...">
                                         <mdui-button-icon icon="qr_code_scanner" @click="startScanner" title="扫码识别签到二维码"
                                             style="flex-shrink:0;"></mdui-button-icon>
                                     </div>
@@ -369,11 +369,6 @@
                                                 <input class="field-input" :value="checkinForm.sign"
                                                     @input="checkinForm.sign=$event.target.value" placeholder="签名">
                                             </div>
-                                        </div>
-                                        <div class="field-wrap">
-                                            <label class="field-label">RandNum<span class="req">*</span></label>
-                                            <input class="field-input" :value="checkinForm.randNum"
-                                                @input="checkinForm.randNum=$event.target.value" placeholder="随机数">
                                         </div>
                                     </div>
                                 </details>

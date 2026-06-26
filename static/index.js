@@ -86,7 +86,7 @@ createApp({
         const bindingForm = reactive({ course_id: "", account_id: "" });
         const userForm = reactive({ email: "", password: "", role: "user", is_active: true });
         const inviteForm = reactive({ code: "", max_uses: null, expires_in: null, note: "" });
-        const checkinForm = reactive({ courseid: "", ticketid: "", expire: "", sign: "", randNum: "" });
+        const checkinForm = reactive({ courseid: "", ticketid: "", expire: "", sign: "" });
         const checkinUrl = ref("");
         const gpsCheckinForm = reactive({ courseid: "", id: "" });
         const logFilter = reactive({
@@ -514,7 +514,6 @@ createApp({
                 checkinForm.expire = params.get("expire") || "";
                 checkinForm.sign = params.get("sign") || "";
                 checkinForm.courseid = params.get("courseid") || "";
-                checkinForm.randNum = params.get("randNum") || "";
                 showToast("参数已自动填充");
             } catch {
                 // 不是合法 URL，忽略
@@ -529,20 +528,17 @@ createApp({
                     return false;
                 }
                 const p = url.searchParams;
-                const type = p.get("type");
                 const ticketid = p.get("ticketid");
                 const expire = p.get("expire");
                 const sign = p.get("sign");
                 const courseid = p.get("courseid");
-                const randNum = p.get("randNum");
-                if (!ticketid || !expire || !sign || !courseid || !randNum || !type) {
+                if (!ticketid || !expire || !sign || !courseid) {
                     return false;
                 }
                 checkinForm.courseid = courseid;
                 checkinForm.ticketid = ticketid;
                 checkinForm.expire = expire;
                 checkinForm.sign = sign;
-                checkinForm.randNum = randNum;
                 checkinUrl.value = text;
                 if (route.value !== "checkin") navigate("checkin");
                 Vue.nextTick().then(() => executeCheckin());
@@ -903,8 +899,7 @@ createApp({
                 !checkinForm.courseid ||
                 !checkinForm.ticketid ||
                 !checkinForm.expire ||
-                !checkinForm.sign ||
-                !checkinForm.randNum
+                !checkinForm.sign
             ) {
                 showToast("所有参数均为必填项");
                 return;
@@ -913,12 +908,10 @@ createApp({
             checkinResults.value = [];
             try {
                 const res = await api("POST", "/api/checkin", {
-                    type: 2,
                     courseid: checkinForm.courseid,
                     ticketid: checkinForm.ticketid,
                     expire: parseInt(checkinForm.expire) || 0,
                     sign: checkinForm.sign || "",
-                    randNum: checkinForm.randNum || "",
                 });
                 const data = res.data || {};
                 checkinResults.value = data.results || [];
