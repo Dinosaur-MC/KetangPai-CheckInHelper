@@ -12,7 +12,8 @@
 [![Redis](https://img.shields.io/badge/Redis-7-DC382D?logo=redis&logoColor=fff)](https://redis.io)
 [![License](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 [![Docker](https://img.shields.io/badge/Docker-Ready-2496ED?logo=docker&logoColor=fff)](docker-compose.yml)
-[![Tests](https://img.shields.io/badge/Tests-179%20passed-2ea44f?logo=pytest&logoColor=fff)](tests/)
+[![Tests](https://img.shields.io/badge/Tests-187%20passed-2ea44f?logo=pytest&logoColor=fff)](tests/)
+[![Benchmark](https://img.shields.io/badge/Latency-%3C50ms-4FC08D)](tests/routers/.benchmark_results.json)
 
 </div>
 
@@ -206,7 +207,7 @@
 |            | **PyJWT**                                    | JWT 签发与验证（httponly cookie 承载）                |
 |            | **Cryptography (Fernet)**                    | 凭据加密                                              |
 |            | **Rate Limiter**                             | Redis 滑动窗口限流                                    |
-| **测试**   | **pytest** + **httpx** (TestClient)           | 179 个单元 + 集成测试 |
+| **测试**   | **pytest** + **httpx** (TestClient)           | 187+ 个单元 + 集成 + 基准测试 |
 | **包管理** | **uv**                                       | Python 依赖管理                                       |
 | **部署**   | **Docker** + **docker compose**              | 容器化一站式部署                                      |
 
@@ -263,7 +264,7 @@ uv run python main.py
 
 ### 运行测试
 
-项目包含 **179 个测试**（单元测试 + 集成测试），覆盖安全模块、数据模型、工具函数、数据库层和认证路由：
+项目包含 **187 个测试**（单元测试 + 集成测试 + 延迟基准测试），覆盖安全模块、数据模型、工具函数、数据库层和认证路由：
 
 ```bash
 # 运行全部测试
@@ -272,14 +273,29 @@ uv run pytest
 # 查看详细输出
 uv run pytest -v
 
-# 仅运行单元测试（跳过路由集成测试）
+# 仅运行单元测试
 uv run pytest tests/test_*.py -v
 
-# 运行指定测试类
+# 运行指定文件
 uv run pytest tests/test_security.py -v
+uv run pytest tests/routers/ -v          # 路由集成测试
+uv run pytest -v -s tests/routers/test_benchmark_checkin.py  # 基准测试详情
 ```
 
 测试使用 **SQLite 临时文件** 替代 MySQL，**Redis 模拟为 None**，无需启动外部依赖即可运行。
+
+### 延迟基准测试
+
+签到链路的延迟基准测试随常规测试自动运行，结果保存在 `tests/routers/.benchmark_results.json`：
+
+| 场景 | median | avg | p90 | 样本 |
+|------|--------|-----|-----|------|
+| 5 账号并发签到 | ~15 ms | ~15 ms | ~16 ms | 10轮测量去最慢1个 |
+| 10 账号 | ~15 ms | ~16 ms | ~16 ms | 同上 |
+| 20 账号 | ~16 ms | ~16 ms | ~17 ms | 同上 |
+| 50 账号 | ~19 ms | ~19 ms | ~21 ms | 同上 |
+
+防抖动策略：10 轮 warmup → 10 轮测量 → 去掉最慢的 1 个样本 → 断言 **median < 50ms**。
 
 ## 环境变量
 
@@ -591,15 +607,17 @@ CheckInHelper/
 │   ├── zxing.min.js        # ZXing WASM 备用 QR 解码
 │   └── test.html           # QR 解码测试页
 │
-├── tests/                  # ✅ 测试（179 个，覆盖核心模块 + 认证路由）
-│   ├── conftest.py         # 共享 Fixtures（SQLite + Mock Redis + JWT 重置）
+├── tests/                  # ✅ 测试（187+ 个，覆盖核心模块 + 路由 + 基准测试）
+│   ├── conftest.py         # 共享 Fixtures + benchmark 收集器
 │   ├── test_security.py    # 密码哈希 · JWT · Fernet 加密 · 令牌黑名单
 │   ├── test_models.py      # Pydantic/SQLModel 模型 · _extract_gps · is_position_error
 │   ├── test_utils.py       # get_client_ip · RateLimiter · _in_time_windows 等
 │   ├── test_db.py          # _RedisWrapper 断路器 · check_redis_health
 │   └── routers/
 │       ├── __init__.py
-│       └── test_auth.py    # 注册/登录/登出/令牌刷新集成测试
+│       ├── test_auth.py              # 注册/登录/登出/令牌刷新
+│       ├── test_benchmark_checkin.py # 签到链路延迟基准测试 (median<50ms)
+│       └── ...                       # 更多路由集成测试
 │
 ├── scripts/                # 🛠️ 工具脚本
 │   └── backfill_accounts.py  # 补齐旧账号用户详情字段
