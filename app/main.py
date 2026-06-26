@@ -23,8 +23,9 @@ logger = logging.getLogger(__name__)
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    """启动时初始化数据库并清空 user 缓存。"""
+    """启动时初始化数据库、清空缓存、启动自动签到观察器。"""
     from app.core.db import init_db, get_redis_client
+    from app.core.watcher import auto_checkin_watcher
 
     init_db()
     r = get_redis_client()
@@ -41,8 +42,14 @@ async def lifespan(app: FastAPI):
             logger.info("已清除 %s 条 user 缓存", len(keys))
     except Exception:
         logger.warning("清除 user 缓存失败（Redis 可能不可用）")
+
+    # 启动自动签到观察器
+    await auto_checkin_watcher.start()
+
     yield
-    # shutdown — nothing to do
+
+    # 关闭观察器
+    await auto_checkin_watcher.stop()
 
 
 # 创建 FastAPI 实例
