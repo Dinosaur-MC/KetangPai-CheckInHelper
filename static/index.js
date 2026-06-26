@@ -943,9 +943,9 @@ createApp({
                     id: gpsCheckinForm.id,
                     courseid: gpsCheckinForm.courseid,
                 });
-                const data = res.data || {};
-                gpsCheckinResults.value = data.results || [];
-                showToast(data.message || `签到完成 (${gpsCheckinSuccessCount.value}/${gpsCheckinResults.value.length})`);
+                const body = res.data || {};
+                gpsCheckinResults.value = body.results || [];
+                showToast(res.message || `签到失败 (${gpsCheckinSuccessCount.value}/${gpsCheckinResults.value.length})`);
             } catch (e) {
                 showToast(e.message || "签到失败");
             } finally {

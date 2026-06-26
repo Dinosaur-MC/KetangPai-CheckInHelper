@@ -409,12 +409,14 @@
                                         <div class="field-wrap">
                                             <label class="field-label">CourseID<span class="req">*</span></label>
                                             <input class="field-input" :value="gpsCheckinForm.courseid"
-                                                @input="gpsCheckinForm.courseid=$event.target.value" placeholder="课程 ID">
+                                                @input="gpsCheckinForm.courseid=$event.target.value"
+                                                placeholder="课程 ID" autocomplete="off">
                                         </div>
                                         <div class="field-wrap">
                                             <label class="field-label">考勤 ID<span class="req">*</span></label>
                                             <input class="field-input" :value="gpsCheckinForm.id"
-                                                @input="gpsCheckinForm.id=$event.target.value" placeholder="考勤记录 ID">
+                                                @input="gpsCheckinForm.id=$event.target.value"
+                                                placeholder="考勤记录 ID" autocomplete="off">
                                         </div>
                                     </div>
                                 </div>
