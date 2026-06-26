@@ -971,3 +971,156 @@ mdui-dialog::part(headline) {
     text-align: center;
     text-shadow: 0 1px 2px rgba(0, 0, 0, 0.04);
 }
+
+/* ============================================================
+      自动签到配置
+   ============================================================ */
+
+.auto-section {
+  margin-top: 20px;
+}
+
+.auto-section-header {
+  font-size: 14px;
+  font-weight: 500;
+  margin-bottom: 12px;
+  color: #374151;
+}
+
+/* 启用开关行 */
+.auto-enable-row {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding-bottom: 8px;
+}
+
+.auto-enable-row mdui-switch::part(container) {
+  display: flex;
+  align-items: center;
+}
+
+.auto-enable-label {
+  font-size: 14px;
+  font-weight: 500;
+  color: #374151;
+  line-height: 24px;
+}
+
+/* 签到类型复选框 */
+.auto-types {
+  display: flex;
+  gap: 24px;
+}
+
+.auto-types mdui-checkbox::part(label) {
+  font-size: 14px;
+}
+
+/* 时段行 */
+.time-window-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-bottom: 8px;
+  padding: 8px 12px;
+  background: #f8fafc;
+  border-radius: 8px;
+  border: 1px solid #e2e8f0;
+}
+
+.time-window-row .time-label {
+  font-size: 13px;
+  color: #6b7280;
+  white-space: nowrap;
+  line-height: 32px;
+}
+
+.time-window-row select {
+  height: 32px;
+  padding: 2px 8px;
+  border: 1px solid #d1d5db;
+  border-radius: 6px;
+  font-size: 13px;
+  background: #fff;
+  width: 76px;
+  font-family: inherit;
+  color: #374151;
+  cursor: pointer;
+}
+
+.time-window-row .remove-btn {
+  margin-left: 4px;
+  color: #ef4444;
+  flex-shrink: 0;
+}
+
+/* 添加时段按钮 */
+.auto-add-window {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  margin-top: 4px;
+  padding: 6px 12px;
+  font-size: 13px;
+  color: #6366f1;
+  cursor: pointer;
+  border-radius: 6px;
+  transition: background 0.15s;
+  user-select: none;
+  width: fit-content;
+}
+
+.auto-add-window:hover {
+  background: #eef2ff;
+}
+
+.auto-add-window .material-icons {
+  font-size: 16px;
+}
+
+/* 状态面板 */
+.auto-status-panel {
+  margin-top: 16px;
+  padding: 12px 16px;
+  background: #f0f9ff;
+  border-radius: 8px;
+  border: 1px solid #bae6fd;
+  font-size: 13px;
+  line-height: 1.6;
+}
+
+.auto-status-panel .status-dot {
+  display: inline-block;
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  margin-right: 6px;
+  vertical-align: middle;
+}
+
+.auto-status-panel .status-dot.running {
+  background: #22c55e;
+}
+
+.auto-status-panel .status-dot.stopped {
+  background: #9ca3af;
+}
+
+.auto-status-panel .status-row {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+}
+
+.auto-status-panel .status-label {
+  color: #6b7280;
+}
+
+/* 按钮区域 */
+.auto-actions {
+  display: flex;
+  gap: 12px;
+  margin-top: 20px;
+  justify-content: flex-end;
+}

@@ -442,6 +442,83 @@
                                 </div>
                             </div>
                             <!-- /checkin-card (位置签到) -->
+
+                            <!-- ⏰ 自动签到 -->
+                            <div class="checkin-card" style="margin-top:24px;">
+                                <div class="checkin-header">
+                                    <h3>⏰ 自动签到</h3>
+                                    <p>开启后系统将定时检查未完成的签到并自动执行</p>
+                                </div>
+
+                                <!-- 启用开关 -->
+                                <div class="auto-section auto-enable-row">
+                                    <mdui-switch :checked="autoEnabled"
+                                        @change="autoEnabled = $event.target.checked"></mdui-switch>
+                                    <span class="auto-enable-label">启用自动签到</span>
+                                </div>
+
+                                <!-- 签到类型 -->
+                                <div class="auto-section">
+                                    <div class="auto-types">
+                                        <mdui-checkbox :checked="autoTypeDigit" :disabled="!autoEnabled"
+                                            @change="autoTypeDigit = $event.target.checked">数字考勤 (1)</mdui-checkbox>
+                                        <mdui-checkbox :checked="autoTypeGps" :disabled="!autoEnabled"
+                                            @change="autoTypeGps = $event.target.checked">GPS考勤 (2)</mdui-checkbox>
+                                    </div>
+                                </div>
+
+                                <!-- 多时段 -->
+                                <div class="auto-section">
+                                    <div class="auto-section-header">运行时段（每天）</div>
+                                    <div v-for="(w, i) in autoTimeWindows" :key="i" class="time-window-row">
+                                        <span class="time-label">从</span>
+                                        <select :value="w.start" :disabled="!autoEnabled"
+                                            @change="w.start = parseInt($event.target.value) || 0; if (w.start >= w.end) w.end = Math.min(w.start + 1, 23)">
+                                            <option v-for="h in 24" :key="h-1" :value="h-1">{{ String(h-1).padStart(2,'0') }}</option>
+                                        </select>
+                                        <span class="time-label">时 至</span>
+                                        <select :value="w.end" :disabled="!autoEnabled"
+                                            @change="w.end = parseInt($event.target.value) || 0; if (w.end <= w.start) w.start = Math.max(w.end - 1, 0)">
+                                            <option v-for="h in 24" :key="h-1" :value="h-1">{{ String(h-1).padStart(2,'0') }}</option>
+                                        </select>
+                                        <span class="time-label">时</span>
+                                        <mdui-button-icon class="remove-btn" icon="close" size="small"
+                                            :disabled="autoTimeWindows.length <= 1 || !autoEnabled"
+                                            @click="removeTimeWindow(i)"></mdui-button-icon>
+                                    </div>
+                                    <div class="auto-add-window" @click="addTimeWindow" v-if="autoEnabled">
+                                        <span class="material-icons">add</span> 添加时段
+                                    </div>
+                                </div>
+
+                                <!-- 运行状态 -->
+                                <div class="auto-section" v-if="autoStatus">
+                                    <div class="auto-status-panel">
+                                        <div class="status-row">
+                                            <span>
+                                                <span class="status-dot" :class="autoStatus.is_running ? 'running' : 'stopped'"></span>
+                                                {{ autoStatus.is_running ? '监控中' : '已停止' }}
+                                            </span>
+                                            <span class="status-label">上次检查: {{ autoStatus.last_tick_time ? formatTime(autoStatus.last_tick_time) : '-' }}</span>
+                                        </div>
+                                        <div style="margin-top:4px;" v-if="autoStatus.last_result">
+                                            <span class="status-label">上次结果: </span>
+                                            检查 {{ autoStatus.last_result.checked || 0 }} 个，成功 {{ autoStatus.last_result.succeeded || 0 }} 个
+                                        </div>
+                                    </div>
+                                </div>
+
+                                <!-- 按钮 -->
+                                <div class="auto-actions">
+                                    <mdui-button variant="outlined" :disabled="!autoEnabled || autoSaving"
+                                        @click="triggerAutoCheckin">
+                                        ↻ 立即扫描
+                                    </mdui-button>
+                                    <mdui-button variant="filled" :disabled="autoSaving" @click="saveAutoConfig">
+                                        {{ autoSaving ? '保存中…' : '💾 保存配置' }}
+                                    </mdui-button>
+                                </div>
+                            </div>
                         </div>
 
                         <!-- ==========================================================

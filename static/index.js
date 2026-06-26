@@ -89,6 +89,14 @@ createApp({
         const checkinForm = reactive({ courseid: "", ticketid: "", expire: "", sign: "" });
         const checkinUrl = ref("");
         const gpsCheckinForm = reactive({ courseid: "", id: "" });
+        // 自动签到
+        const autoEnabled = ref(false);
+        const autoTypeDigit = ref(true);
+        const autoTypeGps = ref(true);
+        const autoTimeWindows = ref([{ start: 7, end: 22 }]);
+        const autoConfig = ref(null);
+        const autoStatus = ref(null);
+        const autoSaving = ref(false);
         const logFilter = reactive({
             course_id: "",
             account_email: null,
@@ -945,6 +953,79 @@ createApp({
             }
         }
 
+        // ---- 自动签到 ----
+        async function loadAutoConfig() {
+          try {
+            const res = await api("GET", "/api/auto-checkin/config");
+            const d = res.data || {};
+            autoConfig.value = d;
+            autoEnabled.value = d.enabled === true;
+            const types = (d.checkin_types || "1,2").split(",");
+            autoTypeDigit.value = types.includes("1");
+            autoTypeGps.value = types.includes("2");
+            if (d.time_windows && Array.isArray(d.time_windows) && d.time_windows.length) {
+              autoTimeWindows.value = d.time_windows.map(w => ({ start: w.start, end: w.end }));
+            } else {
+              autoTimeWindows.value = [{ start: 7, end: 22 }];
+            }
+          } catch (e) {
+            // 首次使用可能无配置，用默认值
+            autoConfig.value = { enabled: false };
+            autoEnabled.value = false;
+            autoTimeWindows.value = [{ start: 7, end: 22 }];
+          }
+        }
+
+        async function saveAutoConfig() {
+          const types = [];
+          if (autoTypeDigit.value) types.push("1");
+          if (autoTypeGps.value) types.push("2");
+          if (!types.length) { showToast("请至少选择一种签到类型"); return; }
+
+          autoSaving.value = true;
+          try {
+            const res = await api("PUT", "/api/auto-checkin/config", {
+              enabled: autoEnabled.value,
+              checkin_types: types.join(","),
+              time_windows: JSON.stringify(autoTimeWindows.value),
+            });
+            showToast(res.message || "配置已保存");
+            autoConfig.value = res.data;
+          } catch (e) {
+            showToast(e.message || "保存失败");
+          } finally {
+            autoSaving.value = false;
+          }
+        }
+
+        async function loadAutoStatus() {
+          try {
+            const res = await api("GET", "/api/auto-checkin/status");
+            autoStatus.value = res.data || {};
+          } catch {
+            autoStatus.value = null;
+          }
+        }
+
+        async function triggerAutoCheckin() {
+          try {
+            const res = await api("POST", "/api/auto-checkin/trigger");
+            showToast(res.message || "扫描已触发");
+            setTimeout(loadAutoStatus, 2000);
+          } catch (e) {
+            showToast(e.message || "触发失败");
+          }
+        }
+
+        function addTimeWindow() {
+          autoTimeWindows.value.push({ start: 8, end: 18 });
+        }
+
+        function removeTimeWindow(index) {
+          if (autoTimeWindows.value.length <= 1) return;
+          autoTimeWindows.value.splice(index, 1);
+        }
+
         // ---- 日志 ----
         async function loadLogs() {
             try {
@@ -1185,6 +1266,9 @@ createApp({
                 case "courses":
                     await Promise.all([loadAccounts(), loadBindings()]);
                     break;
+                case "checkin":
+                    await Promise.all([loadAccounts(), loadAutoConfig(), loadAutoStatus()]);
+                    break;
                 case "logs":
                     logPage.value = 1;
                     await Promise.all([loadAccounts(), loadLogs()]);
@@ -1299,6 +1383,19 @@ createApp({
             stats,
             checkinSuccessCount,
             gpsCheckinSuccessCount,
+            autoEnabled,
+            autoTypeDigit,
+            autoTypeGps,
+            autoTimeWindows,
+            autoConfig,
+            autoStatus,
+            autoSaving,
+            loadAutoConfig,
+            saveAutoConfig,
+            loadAutoStatus,
+            triggerAutoCheckin,
+            addTimeWindow,
+            removeTimeWindow,
             formatTime,
             getAccountEmail,
             getCourseName,
