@@ -93,7 +93,7 @@ createApp({
         const autoEnabled = ref(false);
         const autoTypeDigit = ref(true);
         const autoTypeGps = ref(true);
-        const autoTimeWindows = ref([{ start: 7, end: 22 }]);
+        const autoTimeWindows = ref([]);
         const autoConfig = ref(null);
         const autoStatus = ref(null);
         const autoSaving = ref(false);
@@ -966,13 +966,13 @@ createApp({
             if (d.time_windows && Array.isArray(d.time_windows) && d.time_windows.length) {
               autoTimeWindows.value = d.time_windows.map(w => ({ start: w.start, end: w.end }));
             } else {
-              autoTimeWindows.value = [{ start: 7, end: 22 }];
+              autoTimeWindows.value = [];
             }
           } catch (e) {
-            // 首次使用可能无配置，用默认值
+            // 首次使用可能无配置
             autoConfig.value = { enabled: false };
             autoEnabled.value = false;
-            autoTimeWindows.value = [{ start: 7, end: 22 }];
+            autoTimeWindows.value = [];
           }
         }
 
@@ -1028,26 +1028,10 @@ createApp({
         }
 
         function addTimeWindow() {
-          const key = (w) => `${w.start}-${w.end}`;
-          const used = new Set(autoTimeWindows.value.map(key));
-          const candidates = [
-            { start: 8, end: 12 },
-            { start: 14, end: 18 },
-            { start: 19, end: 22 },
-            { start: 7, end: 10 },
-            { start: 13, end: 17 },
-          ];
-          for (const c of candidates) {
-            if (!used.has(key(c))) {
-              autoTimeWindows.value.push({ ...c });
-              return;
-            }
-          }
-          showToast("所有时段组合都已添加");
+          autoTimeWindows.value.push({ start: 8, end: 12 });
         }
 
         function removeTimeWindow(index) {
-          if (autoTimeWindows.value.length <= 1) return;
           autoTimeWindows.value.splice(index, 1);
         }
 

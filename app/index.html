@@ -483,7 +483,7 @@
                                         </select>
                                         <span class="time-label">时</span>
                                         <mdui-button-icon class="remove-btn" icon="close" size="small"
-                                            :disabled="autoTimeWindows.length <= 1 || !autoEnabled"
+                                            :disabled="!autoEnabled"
                                             @click="removeTimeWindow(i)"></mdui-button-icon>
                                         <span class="dup-hint" v-if="isDuplicateWindow(w, i)">⚠ 重复时段</span>
                                     </div>
@@ -497,8 +497,8 @@
                                     <div class="auto-status-panel">
                                         <div class="status-row">
                                             <span>
-                                                <span class="status-dot" :class="autoStatus.is_running ? 'running' : 'stopped'"></span>
-                                                {{ autoStatus.is_running ? '监控中' : '已停止' }}
+                                                <span class="status-dot" :class="autoStatus.user_active ? 'running' : 'stopped'"></span>
+                                                {{ autoStatus.user_active ? '监控中' : '未启用' }}
                                             </span>
                                             <span class="status-label">上次检查: {{ autoStatus.last_tick_time ? formatTime(autoStatus.last_tick_time) : '-' }}</span>
                                         </div>
