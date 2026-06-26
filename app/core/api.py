@@ -105,16 +105,18 @@ class GetUserInfoResponse(BaseModel):
 
 # 3. 二维码签到接口
 class QRCheckInRequest(BaseModel):
-    type: int = 2
+    model_config = {"extra": "allow"}  # 允许额外参数（前端发来的 randNum / type 等）
+
     ticketid: str
     expire: int
     sign: str
     courseid: str
-    randNum: str
 
 
 # 4. GPS / 数字码签到接口
 class CheckInRequest(BaseModel):
+    model_config = {"extra": "allow"}  # 允许额外参数
+
     id: str  # 考勤记录ID
     courseid: str = ""  # 课程ID（用于查询绑定账号）
     code: str = ""  # 数字考勤码
@@ -290,7 +292,6 @@ class KetangPaiAPI:
                 expire=query.get("expire", [0])[0],
                 sign=query.get("sign", [""])[0],
                 courseid=query.get("courseid", [""])[0],
-                randNum=query.get("randNum", [""])[0],
             )
         )
 
@@ -480,7 +481,6 @@ class KetangPaiAPI:
             "latitude": latitude,
             "longitude": longitude,
             "accuracy": "",
-            "appid": "",
             "clienttype": 1,
             "reqtimestamp": int(time.time() * 1000),
         }
