@@ -117,6 +117,16 @@
 - 轮询超时机制，避免长时间无结果卡死
 - WASM 内存泄漏和 Blob URL 泄漏自动清理
 
+### ⏰ 自动签到
+
+- **后台轮询**：系统每 60 秒自动检查所有开启了自动签到的用户，扫描绑定课程中未完成的 GPS/数字考勤并自动签到
+- **签到类型选择**：支持数字考勤 (1) 和 GPS 考勤 (2)，可单独启用或组合使用
+- **多时段配置**：可配置每日多个运行时段（如 8:00-12:00 和 14:00-22:00），仅在配置时段内执行
+- **去重保护**：重复的时段自动去重，最多支持 16 个时段
+- **运行状态面板**：实时显示自动签到是否生效、上次检查时间和结果
+- **手动触发**：一键立即扫描，无需等待轮询周期
+- **严格 Pydantic 校验**：时段 start/end 范围 0-23 且 start < end，checkin_types 仅允许 "1"/"2"
+
 ### 📊 签到日志
 
 - 多维度筛选：按**账号（邮箱）**、**课程 ID**、**签到结果**（成功/失败）、**日期范围**
@@ -302,7 +312,7 @@ uv run python main.py
 | `#/dashboard` | 首页概览 | 统计卡片 + 最近签到   |
 | `#/accounts`  | 账号管理 | 管理课堂派账号        |
 | `#/courses`   | 课程绑定 | 绑定课程到账号        |
-| `#/checkin`   | 签到执行 | URL/手动/扫码三种方式 |
+| `#/checkin`   | 签到执行 | URL/手动/扫码/自动签到四种方式 |
 | `#/logs`      | 签到日志 | 历史记录查看与筛选    |
 | `#/users`     | 用户管理 | 管理员专用            |
 
@@ -360,6 +370,11 @@ uv run python main.py
 | 方法   | 路径                     | 说明                                                |
 | ------ | ------------------------ | --------------------------------------------------- |
 | POST   | `/api/checkin`           | 批量签到（Canary 模式）                             |
+| POST   | `/api/checkin/gps`       | GPS 位置签到                                       |
+| GET    | `/api/auto-checkin/config`    | 获取当前用户自动签到配置                       |
+| PUT    | `/api/auto-checkin/config`    | 更新自动签到配置（严格 Pydantic 校验）          |
+| GET    | `/api/auto-checkin/status`    | 自动签到运行状态 + 当前用户生效状态             |
+| POST   | `/api/auto-checkin/trigger`   | 手动触发一次自动签到扫描                         |
 | GET    | `/api/logs/checkin`      | 签到日志列表，支持 `account_email`/`course_id`/`status`/`date_from`/`date_to` 筛选 + 分页 |
 | GET    | `/api/logs/checkin/{id}` | 签到日志详情                                        |
 | DELETE | `/api/logs/checkin/{id}` | 删除签到日志（管理员）                              |
@@ -534,6 +549,7 @@ CheckInHelper/
 │   │   ├── settings.py     # 集中配置（pydantic-settings，读取 .env）
 │   │   ├── security.py     # 密码哈希 · JWT 签发 · 凭据加密
 │   │   ├── sessions.py     # 会话池（异步签到 · 并发限流）
+│   │   ├── watcher.py      # 自动签到观察器（轮询 + 执行）
 │   │   └── db.py           # MySQL + Redis 连接池（断路器模式）
 │   ├── routers/            # 🧭 领域路由模块（替代单文件巨石）
 │   │   ├── auth.py         # 注册 / 登录 / 登出 / 刷新令牌
@@ -554,6 +570,8 @@ CheckInHelper/
 │   ├── vue.global.prod.js  # Vue 3 运行时
 │   ├── material-icons.css  # Material Icons 样式
 │   ├── MaterialIcons-Regular.ttf  # 图标字体
+│   ├── img(32).webp        # 背景图（主页）
+│   ├── img(64).webp        # 背景图（登录页）
 │   ├── opencv.js           # OpenCV.js — WeChat QR 解码引擎
 │   ├── wechat_qrcode_files.js  # WeChat QR 模型脚本
 │   ├── wechat_qrcode_files.data # WeChat QR 模型数据

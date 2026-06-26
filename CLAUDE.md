@@ -43,6 +43,7 @@ main.py                     # Entry point — loads .env, starts uvicorn
 │   │   ├── settings.py     # Pydantic Settings — centralized config (reads .env)
 │   │   ├── security.py     # Argon2 password hashing, JWT create/decode, Fernet encryption
 │   │   ├── sessions.py     # SessionPool singleton — manages KetangPai login sessions
+│   │   ├── watcher.py      # AutoCheckinWatcher — 后台自动签到观察器（轮询 + 执行）
 │   │   └── db.py           # SQLModel engine, Redis connection pool (breaker pattern), migration
 │   ├── routers/            # ★ Domain route modules (split from monolithic main.py)
 │   │   ├── auth.py         # register, login, logout, refresh
@@ -58,6 +59,8 @@ main.py                     # Entry point — loads .env, starts uvicorn
 │   ├── index.js            # Vue 3 app (Composition API, MDUI 2, hash-routing)
 │   ├── index.css
 │   ├── mdui.css / mdui.global.js / vue.global.prod.js
+│   ├── img(32).webp        # 背景图（主页）
+│   ├── img(64).webp        # 背景图（登录页）
 │   ├── opencv.js           # OpenCV.js — WeChat QR decoding engine
 │   ├── wechat_qrcode_files.js  # WeChat QR model
 │   ├── zxing.min.js        # ZXing WASM fallback QR decoder
@@ -85,6 +88,10 @@ main.py                     # Entry point — loads .env, starts uvicorn
 - **Client IP forwarding to KetangPai**: The `/api/checkin` endpoint extracts the client's real IP via `get_client_ip(request)` and passes it through `SessionPool.execute_checkin()` → `KetangPaiAPI.check_in()`, which adds an `X-Forward-For` header to the outbound request to Ketangpai. Defaults to empty (no header sent) when IP is unavailable.
 - **Frontend**: Vue 3 SPA served as a static file from the FastAPI backend. Hash-based routing (`#/login`, `#/dashboard`, etc.). MDUI 2 Web Components for Material Design.
 - **Async safety**: All synchronous HTTP calls (`client.login()`, `client.get_user_info()`) are wrapped with `await asyncio.to_thread()` inside `async def` endpoints to avoid blocking the event loop.
+- **Auto CheckIn Watcher (`app/core/watcher.py`)**: Global `AutoCheckinWatcher` singleton polls every 60s for all users with auto-checkin enabled. Checks user's configured time windows (local hours), queries unfinished GPS/数字 attendances, and auto-executes check-in via `SessionPool`. Manual trigger via `POST /api/auto-checkin/trigger`.
+- **Auto CheckIn API (`app/routers/checkin.py`)**: Four endpoints — `GET/PUT /api/auto-checkin/config` (per-user config with strict Pydantic validation via `TimeWindow`/`AutoCheckinConfigBody`), `GET /api/auto-checkin/status` (watcher status + per-user `user_active` flag), `POST /api/auto-checkin/trigger` (manual scan trigger).
+- **Pydantic strict validation on config**: `TimeWindow` model validates start/end hours (0-23, start < end), `AutoCheckinConfigBody` validates `checkin_types` (only "1"/"2"), `time_windows` (max 16 items, dedup). All manual JSON parsing/handling eliminated in favor of Pydantic validators.
+- **Status uses `user_active` instead of `is_running`**: The global watcher is always running. Frontend shows meaningful status per user based on `user_active` (enabled + has time windows), not `is_running`.
 
 ## Data Model
 
@@ -101,6 +108,9 @@ SystemSetting
 - `Course`: KetangPai courses (keyed by string ID from the API)
 - `CourseBinding`: Links accounts to courses with `is_active` toggle
 - `CheckInLog`: Per-account-per-course check-in records, with `message` field for result description
+- `AutoCheckinConfig`: Per-user auto check-in configuration — `enabled`, `checkin_types`, `time_windows` (JSON array of `{start,end}` hour ranges)
+- `InviteCode`: Registration invite codes with usage limits and expiry
+- `SystemSetting`: Key-value system settings
 
 ## Environment
 
