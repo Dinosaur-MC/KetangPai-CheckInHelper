@@ -21,11 +21,7 @@ dependencies = [
 ]
 
 [tool.pytest.ini_options]
-markers = [
-    "benchmark: 签到链路延迟基准测试（默认跳过，用 -m benchmark 运行）",
-]
 testpaths = ["tests"]
-addopts = "-m 'not benchmark'"
 python_files = ["test_*.py"]
 python_classes = ["Test*"]
 python_functions = ["test_*"]
