@@ -20,7 +20,7 @@ if not settings.database_url:
         "DATABASE_URL=mysql+pymysql://user:password@host:port/dbname?charset=utf8mb4"
     )
 
-engine = create_engine(
+_engine = create_engine(
     settings.database_url,
     echo=settings.db_echo,
     pool_size=settings.db_pool_size,
@@ -220,7 +220,7 @@ def get_redis_client() -> "Redis | None":
 def _existing_columns(table: str) -> set[str]:
     """查询 MySQL 表现有的列名。"""
     try:
-        with engine.connect() as conn:
+        with _engine.connect() as conn:
             rows = conn.execute(
                 text(
                     "SELECT COLUMN_NAME FROM INFORMATION_SCHEMA.COLUMNS "
@@ -258,7 +258,7 @@ def _migrate():
                 continue
             sql = f"ALTER TABLE {table} ADD COLUMN {name} {definition}"
             try:
-                with engine.connect() as conn:
+                with _engine.connect() as conn:
                     conn.execute(text(sql))
                     conn.commit()
                 logger.info("Added column %s.%s", table, name)
@@ -268,17 +268,17 @@ def _migrate():
 
 def init_db():
     """在应用启动时调用，确保表已创建并运行增量迁移。"""
-    SQLModel.metadata.create_all(engine)
+    SQLModel.metadata.create_all(_engine)
     if settings.db_auto_migrate:
         _migrate()
 
 
 def get_session() -> Session:
-    return Session(engine)
+    return Session(_engine)
 
 
 def get_session_with():
-    with Session(engine) as session:
+    with Session(_engine) as session:
         try:
             yield session
             session.commit()  # commit before __exit__ calls close()
