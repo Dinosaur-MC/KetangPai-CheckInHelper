@@ -219,17 +219,20 @@ class KetangPaiAPI:
     :function gps_check_in: GPS / 数字码签到接口
     """
 
-    def __init__(self, email: str, password: str, token: Optional[str] = None):
+    def __init__(self, email: str, password: str, token: Optional[str | bytes] = None):
         self.email = email
         self.password = password
-        self.token = token
         self.user_info = None
         self._client = httpx.AsyncClient(
             headers={**COMMON_HEADERS},
             timeout=HTTP_TIMEOUT,
         )
         if token:
-            self._client.headers["token"] = token
+            token_str = token.decode("utf-8") if isinstance(token, bytes) else token
+            self.token = token_str
+            self._client.headers["token"] = token_str
+        else:
+            self.token = None
 
     async def close(self):
         await self._client.aclose()
