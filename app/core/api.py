@@ -10,7 +10,6 @@ logger = logging.getLogger(__name__)
 
 # -------------------- 基础配置 --------------------
 API_BASE = "https://openapiv5.ketangpai.com"
-CHECKIN_BASE = "https://w.ketangpai.com"
 
 # 通用请求头（可被具体函数覆盖）
 COMMON_HEADERS = {
