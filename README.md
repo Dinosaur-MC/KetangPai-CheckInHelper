@@ -194,13 +194,15 @@
 | ORM        | **SQLModel** + **PyMySQL**                   | 类型安全的异步 ORM                                    |
 | 数据库     | **MySQL 8.0**                                | 持久化存储                                            |
 | 缓存       | **Redis 7**                                  | JWT 黑名单、会话 Token 缓存、速率限制、邀请码设置缓存 |
-| **前端**   | **Vue 3** (Composition API)                  | 响应式 SPA                                            |
+| API 客户端 | **httpx**                                    | 异步 KetangPai API 客户端（async, 非阻塞）            |
+| **前端**   | **Vue 3** (Composition API)                  | 响应式 SPA（独立登录页 + 主应用）                     |
 | UI 框架    | **MDUI 2** (Web Components)                  | Material Design 界面                                  |
+| 样式       | **common.css + login.css + index.css**       | 分层 CSS：公共 / 登录页 / 主应用                      |
 | 图标       | **Material Icons**                           | 图标系统                                              |
 | 扫码(主)   | **OpenCV.js (WeChat QR)**                    | C++ WASM 解码引擎，抗畸变倾斜，识别率更高             |
 | 扫码(备)   | **ZXing WASM**                               | WASM 备用 QR 解码引擎                                 |
 | **安全**   | **Passlib (Argon2)**                         | 密码哈希                                              |
-|            | **PyJWT**                                    | JWT 签发与验证                                        |
+|            | **PyJWT**                                    | JWT 签发与验证（httponly cookie 承载）                |
 |            | **Cryptography (Fernet)**                    | 凭据加密                                              |
 |            | **Rate Limiter**                             | Redis 滑动窗口限流                                    |
 | **包管理** | **uv**                                       | Python 依赖管理                                       |
@@ -446,7 +448,7 @@ uv run python main.py
 ### 会话池管理
 
 ```
-SessionPool（模块级单例）
+SessionPool（模块级单例，全 async）
     │
     ├── clients: { account_id → (KetangPaiAPI, last_used) }
     │
@@ -457,9 +459,9 @@ SessionPool（模块级单例）
     ├── 按需重建 ── 无会话时从 DB 读取凭据并自动登录
     │
     └── 三层锁：
-        ├── threading.Lock    保护 clients 字典（线程安全）
+        ├── asyncio.Lock      保护 clients 字典（协程安全）
         ├── asyncio.Lock      序列化签到批次（协程安全）
-        └── asyncio.Semaphore 控制并发请求数
+        └── asyncio.Semaphore 控制并发请求数（默认 5）
 ```
 
 ### 扫码签到
@@ -529,8 +531,9 @@ CheckInHelper/
 │   ├── models.py           # SQLModel 数据模型定义
 │   ├── deps.py             # 共享 FastAPI 依赖（get_current_user 等）
 │   ├── utils.py            # 工具函数（RateLimiter、分页、IP 检测）
+│   ├── login.html          # 独立登录/注册页面
 │   ├── core/               # ⚙️ 核心基础设施
-│   │   ├── api.py          # 课堂派第三方 API 客户端
+│   │   ├── api.py          # 课堂派第三方 API 客户端（httpx 异步）
 │   │   ├── settings.py     # 集中配置（pydantic-settings，读取 .env）
 │   │   ├── security.py     # 密码哈希 · JWT 签发 · 凭据加密
 │   │   ├── sessions.py     # 会话池（异步签到 · 并发限流）
@@ -548,8 +551,11 @@ CheckInHelper/
 │   └── index.html          # 前端 SPA 模板
 │
 ├── static/                 # 🎨 前端资源（本地化，无 CDN）
-│   ├── index.css           # 应用样式
-│   ├── index.js            # 应用逻辑（Vue 3 Composition API）
+│   ├── common.css          # 公共样式（全局重置、表单字段、密码切换）
+│   ├── login.css           # 登录页专用样式
+│   ├── login.js            # 登录/注册 Vue 应用逻辑
+│   ├── index.css           # 主应用样式（侧栏、表格、签到、扫码）
+│   ├── index.js            # 主应用逻辑（Vue 3 Composition API）
 │   ├── mdui.css            # MDUI 2 组件样式
 │   ├── mdui.global.js      # MDUI 2 脚本
 │   ├── vue.global.prod.js  # Vue 3 运行时
