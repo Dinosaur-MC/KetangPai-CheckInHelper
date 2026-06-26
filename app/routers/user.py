@@ -39,6 +39,14 @@ def _is_last_admin(session: Session, user: User) -> bool:
 # ================================
 
 
+@router.get("/api/users/me")
+async def get_my_info(
+    current_user: User = Depends(get_current_user),
+):
+    """获取当前登录用户信息。"""
+    return BaseResponse(data=current_user.model_dump(exclude=["password"]))
+
+
 @router.get("/api/users")
 async def list_users(
     current_user: User = Depends(get_current_user),

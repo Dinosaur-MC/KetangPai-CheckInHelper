@@ -37,11 +37,17 @@ def get_current_user(
     session: Session = Depends(get_session_with),
     redis: Redis = Depends(get_redis),
 ) -> User | None:
+    # 优先从 Authorization header 读取，其次从 httponly cookie
+    token = None
     authorization = request.headers.get("Authorization")
-    if authorization is None or not authorization.startswith("Bearer "):
+    if authorization and authorization.startswith("Bearer "):
+        token = authorization.removeprefix("Bearer ").strip()
+    if not token:
+        token = request.cookies.get("access_token")
+
+    if not token:
         raise HTTPException(status_code=401, detail="缺失令牌")
 
-    token = authorization.removeprefix("Bearer ").strip()
     payload = decode_access_token(token)
     if payload is None:
         raise HTTPException(status_code=401, detail="令牌无效或已过期")

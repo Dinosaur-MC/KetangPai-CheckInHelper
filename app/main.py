@@ -2,7 +2,7 @@ from contextlib import asynccontextmanager
 from pathlib import Path
 from fastapi import FastAPI, Request, Response, Depends, Query
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import JSONResponse, FileResponse
+from fastapi.responses import JSONResponse, FileResponse, RedirectResponse
 from fastapi.staticfiles import StaticFiles
 from starlette.exceptions import HTTPException
 from starlette.middleware.gzip import GZipMiddleware
@@ -119,7 +119,9 @@ async def unhandled_exception_handler(request: Request, exc: Exception):
 
 
 @app.get("/")
-async def root():
+async def root(request: Request):
+    if not request.cookies.get("access_token"):
+        return RedirectResponse(url="/login")
     path = Path(__file__).parent / "index.html"
     return FileResponse(path)
 

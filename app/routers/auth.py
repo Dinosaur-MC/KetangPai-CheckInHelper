@@ -1,8 +1,10 @@
 import re
 import time
 from datetime import datetime, timezone
+from datetime import timedelta
 from starlette.exceptions import HTTPException
 from fastapi import APIRouter, Request, Depends, Body
+from fastapi.responses import JSONResponse
 from sqlmodel import select
 
 from app.core.security import (
@@ -28,6 +30,26 @@ logger = logging.getLogger(__name__)
 auth_rate_limiter = RateLimiter(times=5, seconds=60)
 
 router = APIRouter()
+
+
+def _set_auth_cookies(response: JSONResponse, access_token: str, refresh_token: str):
+    """设置 httponly auth cookie（access_token 24h, refresh_token 30d）。"""
+    response.set_cookie(
+        key="access_token", value=access_token,
+        httponly=True, samesite="lax", path="/",
+        max_age=86400,  # 24h
+    )
+    response.set_cookie(
+        key="refresh_token", value=refresh_token,
+        httponly=True, samesite="lax", path="/",
+        max_age=86400 * 30,  # 30d
+    )
+
+
+def _clear_auth_cookies(response: JSONResponse):
+    """清除 auth cookie。"""
+    response.set_cookie(key="access_token", value="", httponly=True, samesite="lax", path="/", max_age=0)
+    response.set_cookie(key="refresh_token", value="", httponly=True, samesite="lax", path="/", max_age=0)
 
 
 @router.post("/api/register")
@@ -113,19 +135,24 @@ async def register(
 
     access_token = create_access_token(str(user.id))
     refresh_token = create_refresh_token(str(user.id))
-    return BaseResponse(
-        message="注册成功",
-        data={
-            "access_token": access_token,
-            "refresh_token": refresh_token,
-            "token_type": "bearer",
-            "user": {
-                "id": user.id,
-                "email": user.email,
-                "role": user.role,
+    resp = JSONResponse(
+        status_code=200,
+        content=BaseResponse(
+            message="注册成功",
+            data={
+                "access_token": access_token,
+                "refresh_token": refresh_token,
+                "token_type": "bearer",
+                "user": {
+                    "id": user.id,
+                    "email": user.email,
+                    "role": user.role,
+                },
             },
-        },
+        ).model_dump(),
     )
+    _set_auth_cookies(resp, access_token, refresh_token)
+    return resp
 
 
 @router.post("/api/login")
@@ -153,37 +180,49 @@ async def login(
 
     access_token = create_access_token(str(user.id))
     refresh_token = create_refresh_token(str(user.id))
-    return BaseResponse(
-        message="登录成功",
-        data={
-            "access_token": access_token,
-            "refresh_token": refresh_token,
-            "token_type": "bearer",
-            "user": {
-                "id": user.id,
-                "email": user.email,
-                "role": user.role,
+    resp = JSONResponse(
+        status_code=200,
+        content=BaseResponse(
+            message="登录成功",
+            data={
+                "access_token": access_token,
+                "refresh_token": refresh_token,
+                "token_type": "bearer",
+                "user": {
+                    "id": user.id,
+                    "email": user.email,
+                    "role": user.role,
+                },
             },
-        },
+        ).model_dump(),
     )
+    _set_auth_cookies(resp, access_token, refresh_token)
+    return resp
 
 
 @router.post("/api/logout")
 async def logout(
     request: Request,
     redis: Redis = Depends(get_redis),
-) -> BaseResponse:
-    """登出 — 将当前 token 加入黑名单"""
+) -> JSONResponse:
+    """登出 — 将当前 token 加入黑名单并清除 cookies"""
+    # 尝试从 header 或 cookie 获取 token 加入黑名单
+    token = None
     authorization = request.headers.get("Authorization")
     if authorization and authorization.startswith("Bearer "):
         token = authorization.removeprefix("Bearer ").strip()
+    if not token:
+        token = request.cookies.get("access_token")
+    if token:
         payload = decode_access_token(token)
         if payload and payload.get("jti"):
             jti = payload["jti"]
             exp = payload.get("exp", 0)
             ttl = max(int(exp - time.time()), 60)
             blacklist_token(jti, redis, ttl=ttl)
-    return BaseResponse(message="已登出")
+    resp = JSONResponse(content=BaseResponse(message="已登出").model_dump())
+    _clear_auth_cookies(resp)
+    return resp
 
 
 @router.post("/api/refresh")
@@ -191,16 +230,21 @@ async def refresh_token(
     request: Request,
     redis: Redis = Depends(get_redis),
     session: Session = Depends(get_session_with),
-) -> BaseResponse:
+) -> JSONResponse:
     """刷新令牌 — 使用 refresh_token 换取新的 access_token + refresh_token。
 
     采用 rotation 策略：旧的 refresh_token 被标记为已使用，无法再次刷新。
     """
+    # 优先从 Authorization header，其次从 httponly cookie
+    token = None
     authorization = request.headers.get("Authorization")
-    if authorization is None or not authorization.startswith("Bearer "):
-        raise HTTPException(status_code=401, detail="缺失令牌")
+    if authorization and authorization.startswith("Bearer "):
+        token = authorization.removeprefix("Bearer ").strip()
+    if not token:
+        token = request.cookies.get("refresh_token")
+    if not token:
+        raise HTTPException(status_code=401, detail="缺失刷新令牌")
 
-    token = authorization.removeprefix("Bearer ").strip()
     payload = decode_refresh_token(token)
     if payload is None:
         raise HTTPException(status_code=401, detail="刷新令牌无效或已过期")
@@ -230,15 +274,19 @@ async def refresh_token(
     # 签发新令牌对
     new_access = create_access_token(user_id)
     new_refresh = create_refresh_token(user_id)
-    return BaseResponse(
-        data={
-            "access_token": new_access,
-            "refresh_token": new_refresh,
-            "token_type": "bearer",
-            "user": {
-                "id": user.id,
-                "email": user.email,
-                "role": user.role,
+    resp = JSONResponse(
+        content=BaseResponse(
+            data={
+                "access_token": new_access,
+                "refresh_token": new_refresh,
+                "token_type": "bearer",
+                "user": {
+                    "id": user.id,
+                    "email": user.email,
+                    "role": user.role,
+                },
             },
-        },
+        ).model_dump(),
     )
+    _set_auth_cookies(resp, new_access, new_refresh)
+    return resp
