@@ -33,6 +33,8 @@ async def check_in(
     from app.core.sessions import session_pool
 
     client_ip = get_client_ip(request)
+    logger.info("QR check-in request user=%s course=%s ticket=%s ip=%s",
+                current_user.id, data.courseid, data.ticketid, client_ip)
 
     course_id = data.courseid
     accounts = session.exec(
@@ -57,6 +59,8 @@ async def check_in(
     )
 
     success_count = sum(1 for r in result.values() if r is not None and r.success)
+    logger.info("QR check-in done user=%s success=%s/%s ip=%s",
+                current_user.id, success_count, len(account_ids), client_ip)
     return BaseResponse(
         data={
             "success_count": success_count,
@@ -78,6 +82,8 @@ async def gps_check_in(
     from app.core.sessions import session_pool
 
     client_ip = get_client_ip(request)
+    logger.info("GPS check-in request user=%s course=%s attendance=%s ip=%s",
+                current_user.id, data.courseid, data.id, client_ip)
 
     course_id = data.courseid
     if not course_id:
@@ -105,6 +111,8 @@ async def gps_check_in(
     )
 
     success_count = sum(1 for r in result.values() if r is not None and r.success)
+    logger.info("GPS check-in done user=%s success=%s/%s ip=%s",
+                current_user.id, success_count, len(account_ids), client_ip)
     if success_count:
         msg = f"成功签到{success_count}个账号"
     else:
