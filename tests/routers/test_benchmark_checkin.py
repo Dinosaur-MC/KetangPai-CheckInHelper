@@ -235,6 +235,12 @@ class TestCheckinBenchmark:
             f"avg={avg*1000:.1f} ms   min={_min_val*1000:.1f} ms   max={_max_val*1000:.1f} ms"
         )
 
+        # 逻辑链路延迟必须控制在 50ms 内
+        assert avg < 0.050, (
+            f"execute_checkin avg latency {avg*1000:.1f}ms exceeds 50ms limit "
+            f"for {num_accounts} accounts"
+        )
+
     # ── 测试 2：全链路 HTTP 延迟 ──
 
     def test_endpoint_to_api_latency(self, client, db_engine, num_accounts):
@@ -293,6 +299,8 @@ class TestCheckinBenchmark:
             f"avg={avg*1000:.1f} ms   min={_min_val*1000:.1f} ms   max={_max_val*1000:.1f} ms"
         )
 
-        assert avg < 8.0, (
-            f"Avg HTTP latency {avg*1000:.1f}ms exceeds 8000ms for {num_accounts} accounts"
+        # 逻辑链路延迟必须控制在 50ms 内（含 HTTP 框架开销）
+        assert avg < 0.050, (
+            f"HTTP endpoint avg latency {avg*1000:.1f}ms exceeds 50ms limit "
+            f"for {num_accounts} accounts"
         )
