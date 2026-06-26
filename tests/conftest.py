@@ -2,11 +2,42 @@
 
 from __future__ import annotations
 
+import json
 import os
 from pathlib import Path
 from typing import Generator
 
 import pytest
+from datetime import datetime, timezone
+
+
+# ---------------------------------------------------------------------------
+# Benchmark results collector
+# ---------------------------------------------------------------------------
+
+BENCHMARK_RESULTS: list[dict] = []
+BENCHMARK_RESULTS_FILE = (
+    Path(__file__).parent / "routers" / ".benchmark_results.json"
+)
+
+
+def pytest_sessionfinish(session):
+    """将 benchmark 测试结果写入 JSON 文件。"""
+    if BENCHMARK_RESULTS:
+        history: list[dict] = []
+        if BENCHMARK_RESULTS_FILE.exists():
+            try:
+                history = json.loads(BENCHMARK_RESULTS_FILE.read_text("utf-8"))
+            except (json.JSONDecodeError, OSError):
+                pass
+        history.append({
+            "timestamp": datetime.now(timezone.utc).isoformat(),
+            "results": list(BENCHMARK_RESULTS),
+        })
+        BENCHMARK_RESULTS_FILE.write_text(
+            json.dumps(history, ensure_ascii=False, indent=2),
+            encoding="utf-8",
+        )
 
 # ---------------------------------------------------------------------------
 # Environment: set minimal settings BEFORE any app module is imported.

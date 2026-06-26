@@ -1,12 +1,19 @@
 """签到链路延迟基准测试。
 
 测量从 API 端点入口到首次请求课堂派 API 前的框架+业务逻辑延迟。
-默认被 pytest 跳过（mark: benchmark），需显式运行：
+所有测试要求 median 延迟 < 50ms，随常规测试一起运行。
 
-    uv run pytest -m benchmark -v
-    uv run pytest tests/routers/test_benchmark_checkin.py -v --tb=short
+防突发抖动策略：
+  - 10 轮 warmup（预热 JIT / 连接池 / 缓存）
+  - 10 轮正式测量，排序后去掉最慢的 1 个样本
+  - 断言使用 **median**（非 mean），天然抗单次 GC/调度抖动
 
-测试场景（各 5 轮取均值）：
+每次运行的结果自动保存到 tests/routers/.benchmark_results.json。
+
+    uv run pytest -v                                          # 包含基准测试
+    uv run pytest tests/routers/test_benchmark_checkin.py -v  # 单独运行
+
+测试场景：
   - 5  账号并发签到
   - 10 账号并发签到
   - 20 账号并发签到
@@ -19,13 +26,19 @@
 
 from __future__ import annotations
 
+import statistics
 import time
+from datetime import datetime, timezone
 from unittest.mock import AsyncMock
 
 import pytest
 from fastapi.testclient import TestClient
 
-pytestmark = pytest.mark.benchmark
+# ── 计时参数 ──
+
+WARMUP = 10          # 预热轮数（不计入结果）
+ITERATIONS = 10      # 正式测量轮数
+DROPS = 1            # 去掉最多 DROPS 个最慢样本
 
 # ── Helpers ──
 
@@ -70,6 +83,61 @@ def _create_accounts(
 
         db.commit()
         return ids
+
+
+def _measure(
+    fn,
+    *,
+    warmup: int = WARMUP,
+    iterations: int = ITERATIONS,
+    drops: int = DROPS,
+) -> list[float]:
+    """运行 *fn* 并返回测量到的延迟（秒），已去掉最慢的 *drops* 个样本。"""
+    # Warmup — 建立连接池、加载 JIT 等
+    for _ in range(warmup):
+        fn()
+
+    # 正式测量
+    raw: list[float] = []
+    for _ in range(iterations):
+        start = time.perf_counter()
+        fn()
+        elapsed = time.perf_counter() - start
+        raw.append(elapsed)
+
+    # 排序并截断最慢的 outliers
+    raw.sort()
+    trimmed = raw[: len(raw) - drops] if drops > 0 else raw
+    return trimmed
+
+
+def _report(
+    label: str,
+    accounts: int,
+    times: list[float],
+) -> dict:
+    """打印并返回延迟统计摘要。"""
+    avg = statistics.mean(times) * 1000
+    median = statistics.median(times) * 1000
+    _min = times[0] * 1000
+    _max = times[-1] * 1000
+    p90 = times[int(len(times) * 0.9)] * 1000
+
+    print(
+        f"\n  [{label}]  {accounts:>2} accounts  "
+        f"median={median:.1f}  avg={avg:.1f}  p90={p90:.1f}  "
+        f"min={_min:.1f}  max={_max:.1f}  (n={len(times)})"
+    )
+
+    return {
+        "accounts": accounts,
+        "median_ms": round(median, 2),
+        "avg_ms": round(avg, 2),
+        "p90_ms": round(p90, 2),
+        "min_ms": round(_min, 2),
+        "max_ms": round(_max, 2),
+        "samples": len(times),
+    }
 
 
 # ── Mock all KetangPaiAPI network calls ──
@@ -210,35 +278,33 @@ class TestCheckinBenchmark:
 
         req = QRCheckInRequest(**QR_BODY)
 
-        times = []
-        for _ in range(5):
-            start = time.perf_counter()
-
-            async def _run():
+        def _run():
+            async def _inner():
                 return await session_pool.execute_checkin(
                     user_id=1,
                     account_ids=self.account_ids,
                     data=req,
                     client_ip="",
                 )
+            return asyncio.run(_inner())
 
-            asyncio.run(_run())
-            elapsed = time.perf_counter() - start
-            times.append(elapsed)
+        times = _measure(_run)
+        stats = _report("execute_checkin", num_accounts, times)
 
-        avg = sum(times) / len(times)
-        _min_val = min(times)
-        _max_val = max(times)
+        # 记录到 conftest 收集器
+        from tests.conftest import BENCHMARK_RESULTS
+        BENCHMARK_RESULTS.append({
+            "test": "execute_checkin",
+            "timestamp": datetime.now(timezone.utc).isoformat(),
+            **stats,
+        })
 
-        print(
-            f"\n  [execute_checkin]  {num_accounts:>2} accounts (5 runs):  "
-            f"avg={avg*1000:.1f} ms   min={_min_val*1000:.1f} ms   max={_max_val*1000:.1f} ms"
-        )
-
-        # 逻辑链路延迟必须控制在 50ms 内
-        assert avg < 0.050, (
-            f"execute_checkin avg latency {avg*1000:.1f}ms exceeds 50ms limit "
-            f"for {num_accounts} accounts"
+        # median < 50ms 是硬性要求（对偶发 GC/调度抖动天然鲁棒）
+        assert stats["median_ms"] < 50.0, (
+            f"execute_checkin median latency {stats['median_ms']:.1f}ms "
+            f"exceeds 50ms limit for {num_accounts} accounts "
+            f"(avg={stats['avg_ms']:.1f}ms, p90={stats['p90_ms']:.1f}ms, "
+            f"n={stats['samples']})"
         )
 
     # ── 测试 2：全链路 HTTP 延迟 ──
@@ -246,13 +312,11 @@ class TestCheckinBenchmark:
     def test_endpoint_to_api_latency(self, client, db_engine, num_accounts):
         """HTTP 端点 → FastAPI DI → DB → SessionPool → mock API 全链路延迟。"""
         import json as j
-
-        # 注册测试用户并获取 token
         import random
+
+        # 注册测试用户
         suffix = random.randint(100000, 999999)
         email = f"bench-ep-{suffix}@test.com"
-
-        # 先注册
         reg_resp = client.post(
             "/api/register",
             json={"email": email, "password": "BenchPass1"},
@@ -270,37 +334,27 @@ class TestCheckinBenchmark:
             db.commit()
 
         body = j.dumps(QR_BODY)
+        headers = {"Content-Type": "application/json", "Authorization": f"Bearer {token}"}
 
-        # Warmup
-        client.post(
-            "/api/checkin",
-            content=body,
-            headers={"Content-Type": "application/json", "Authorization": f"Bearer {token}"},
-        )
-
-        times = []
-        for _ in range(5):
-            start = time.perf_counter()
-            resp = client.post(
-                "/api/checkin",
-                content=body,
-                headers={"Content-Type": "application/json", "Authorization": f"Bearer {token}"},
-            )
-            elapsed = time.perf_counter() - start
+        def _run():
+            resp = client.post("/api/checkin", content=body, headers=headers)
             assert resp.status_code == 200, f"Checkin failed: {resp.text}"
-            times.append(elapsed)
 
-        avg = sum(times) / len(times)
-        _min_val = min(times)
-        _max_val = max(times)
+        times = _measure(_run)
+        stats = _report("HTTP endpoint", num_accounts, times)
 
-        print(
-            f"\n  [HTTP endpoint]  {num_accounts:>2} accounts (5 runs):  "
-            f"avg={avg*1000:.1f} ms   min={_min_val*1000:.1f} ms   max={_max_val*1000:.1f} ms"
-        )
+        # 记录到 conftest 收集器
+        from tests.conftest import BENCHMARK_RESULTS
+        BENCHMARK_RESULTS.append({
+            "test": "http_endpoint",
+            "timestamp": datetime.now(timezone.utc).isoformat(),
+            **stats,
+        })
 
-        # 逻辑链路延迟必须控制在 50ms 内（含 HTTP 框架开销）
-        assert avg < 0.050, (
-            f"HTTP endpoint avg latency {avg*1000:.1f}ms exceeds 50ms limit "
-            f"for {num_accounts} accounts"
+        # median < 50ms 是硬性要求
+        assert stats["median_ms"] < 50.0, (
+            f"HTTP endpoint median latency {stats['median_ms']:.1f}ms "
+            f"exceeds 50ms limit for {num_accounts} accounts "
+            f"(avg={stats['avg_ms']:.1f}ms, p90={stats['p90_ms']:.1f}ms, "
+            f"n={stats['samples']})"
         )

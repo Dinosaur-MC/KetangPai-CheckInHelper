@@ -12,3 +12,6 @@ wheels/
 .env
 .temp/
 docs/superpowers/*
+
+# Benchmark runtime artifacts
+.benchmark_results.json
