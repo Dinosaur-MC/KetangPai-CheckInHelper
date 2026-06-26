@@ -844,12 +844,28 @@ class SessionPool:
                     logger.warning("Failed to pre-fetch building GPS: %s", e)
 
         # 尝试获取围栏半径（不论经纬度是否已提供）
+        location_resp = None
         if first_client is not None:
             try:
-                loc_resp = await first_client.get_attence_location(data.id)
-                fence_radius = _extract_radius(loc_resp)
+                location_resp = await first_client.get_attence_location(data.id)
+                fence_radius = _extract_radius(location_resp)
             except Exception as e:
                 logger.warning("Failed to pre-fetch fence radius: %s", e)
+
+        # get_attence_location 返回空 → 考勤不存在，提前跳过
+        if location_resp is not None and not location_resp:
+            logger.info("Attendance %s location is empty — skipping all accounts", data.id)
+            try:
+                r_early = get_redis_client()
+                if r_early:
+                    r_early.set(f"gps_ended:{data.id}", "1", 3600)
+            except Exception:
+                pass
+            return {aid: CheckInResult(
+                email=self._resolve_client_email(snapshot, aid) or f"account:{aid}",
+                success=False,
+                message="已跳过（该GPS考勤不存在或已删除）",
+            ) for aid in account_ids}
 
         async with self.exec_lock:
             results: dict[int, CheckInResult | None] = {}
