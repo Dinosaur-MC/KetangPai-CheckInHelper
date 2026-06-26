@@ -33,7 +33,6 @@ async def check_in(
     session: Session = Depends(get_session_with),
     _rate_limit: None = Depends(RateLimiter(times=60, seconds=60)),
 ):
-    import asyncio
     from app.core.sessions import session_pool
 
     client_ip = get_client_ip(request)
@@ -54,8 +53,12 @@ async def check_in(
     if not accounts:
         raise HTTPException(status_code=404, detail="无绑定此课程的账号")
 
-    if not await asyncio.to_thread(session_pool.create, accounts):
-        return BaseResponse(code=500, message="创建会话失败")
+    if not await session_pool.create(accounts):
+        logger.warning(
+            "Some accounts failed to create session for user=%s, "
+            "continuing with on-demand fallback",
+            current_user.id,
+        )
 
     account_ids = [a.id for a in accounts]
     result: dict[int, CheckInResult | None] = await session_pool.execute_checkin(
@@ -82,7 +85,6 @@ async def gps_check_in(
     session: Session = Depends(get_session_with),
     _rate_limit: None = Depends(RateLimiter(times=60, seconds=60)),
 ):
-    import asyncio
     from app.core.sessions import session_pool
 
     client_ip = get_client_ip(request)
@@ -106,8 +108,12 @@ async def gps_check_in(
     if not accounts:
         raise HTTPException(status_code=404, detail="无绑定此课程的账号")
 
-    if not await asyncio.to_thread(session_pool.create, accounts):
-        return BaseResponse(code=500, message="创建会话失败")
+    if not await session_pool.create(accounts):
+        logger.warning(
+            "Some accounts failed to create session for user=%s, "
+            "continuing with on-demand fallback",
+            current_user.id,
+        )
 
     account_ids = [a.id for a in accounts]
     result: dict[int, CheckInResult | None] = await session_pool.execute_gps_checkin(

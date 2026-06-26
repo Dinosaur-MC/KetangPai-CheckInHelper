@@ -1,6 +1,5 @@
 from typing import Optional
 
-import asyncio
 from redis import Redis
 from starlette.exceptions import HTTPException
 from fastapi import APIRouter, Depends, Body, Query
@@ -115,10 +114,10 @@ async def create_account(
         token = None
         try:
             client = KetangPaiAPI(email, password)
-            response = await asyncio.to_thread(client.login)
+            response = await client.login()
             token = response.data.token
             uid = response.data.uid
-            client.close()
+            await client.close()
             if not token:
                 raise HTTPException(status_code=400, detail="账号验证失败")
         except RuntimeError as e:
@@ -132,9 +131,9 @@ async def create_account(
         userinfo = None
         try:
             client = KetangPaiAPI(email, password, token)
-            resp = await asyncio.to_thread(client.get_user_info)
+            resp = await client.get_user_info()
             userinfo = resp.data
-            client.close()
+            await client.close()
         except Exception as e:
             logger.warning("Failed to get user info for %s: %s", email, e)
 
@@ -160,7 +159,7 @@ async def create_account(
         # 4. 加入会话池
         from app.core.sessions import session_pool
 
-        await asyncio.to_thread(session_pool.create, [account], False)
+        await session_pool.create([account], False)
 
     # 建立用户-账号关联
     user_account = UserAccount(
@@ -174,7 +173,7 @@ async def create_account(
     try:
         from app.core.sessions import session_pool
 
-        courses = await asyncio.to_thread(session_pool.get_course_list, account.id)
+        courses = await session_pool.get_course_list(account.id)
         if courses:
             for course_data in courses:
                 # 检查课程是否已存在，不存在则创建
@@ -260,14 +259,14 @@ async def update_account(
             client = KetangPaiAPI(
                 email if email is not None else account.email, password
             )
-            response = await asyncio.to_thread(client.login)
+            response = await client.login()
             token = response.data.token
             if not token:
                 raise HTTPException(status_code=400, detail="账号验证失败")
             if redis:
                 redis.set(f"account:{account.id}:token", token)
             try:
-                resp = await asyncio.to_thread(client.get_user_info)
+                resp = await client.get_user_info()
                 info = resp.data
                 account.username = info.username
                 account.avatar = info.avatar
@@ -278,7 +277,7 @@ async def update_account(
                 account.ktp_account = info.account
             except Exception:
                 pass
-            client.close()
+            await client.close()
         except Exception as e:
             logger.warning("Password updated but re-login failed: %s", e)
 
@@ -321,10 +320,10 @@ async def verify_account(
     password = decrypt_credential(account.password)
     try:
         client = KetangPaiAPI(account.email, password)
-        await asyncio.to_thread(client.login)
+        await client.login()
         # 验证成功后顺便刷新用户详情
         try:
-            resp = await asyncio.to_thread(client.get_user_info)
+            resp = await client.get_user_info()
             info = resp.data
             account.username = info.username
             account.avatar = info.avatar
@@ -335,7 +334,7 @@ async def verify_account(
             account.ktp_account = info.account
         except Exception as e:
             logger.warning("Failed to refresh user info for %s: %s", account.email, e)
-        client.close()
+        await client.close()
         account.status = 1
         account.status_message = ""
         session.add(account)

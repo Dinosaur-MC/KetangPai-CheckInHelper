@@ -1,7 +1,7 @@
 import time
 import random
 import logging
-import requests
+import httpx
 from typing import Optional, List
 from pydantic import BaseModel, Field
 from urllib.parse import urlparse, parse_qs
@@ -25,6 +25,9 @@ COMMON_HEADERS = {
     "Sec-Fetch-Site": "same-site",
     "User-Agent": "Mozilla/5.0 (Linux; Android 13; SM-S9080) AppleWebKit/537.36 (KHTML, like Gecko) Version/4.0 Chrome/116.0.5845.163 Mobile Safari/537.36 MicroMessenger/8.0.50.2700(0x28003237) WeChat/arm64 Weixin NetType/WIFI Language/zh_CN ABI/arm64",
 }
+
+# 公用超时设置
+HTTP_TIMEOUT = 30.0
 
 
 # -------------------- Pydantic 模型 --------------------
@@ -204,19 +207,11 @@ class SemesterCourseListResponse(BaseModel):
     data: list[CourseItem] = []
 
 
-# -------------------- 请求函数 --------------------
-def build_session(token: Optional[str] = None) -> requests.Session:
-    """创建带基础 headers 的 Session，可选注入 token"""
-    s = requests.Session()
-    s.headers.update(COMMON_HEADERS)
-    if token:
-        s.headers["token"] = token
-    return s
-
+# pylint: disable=method-async
 
 class KetangPaiAPI:
     """
-    ketangpai.com API
+    ketangpai.com API（异步，使用 httpx.AsyncClient）
 
     :function login: 登录接口
     :function get_user_info: 获取用户信息接口
@@ -227,51 +222,50 @@ class KetangPaiAPI:
     def __init__(self, email: str, password: str, token: Optional[str] = None):
         self.email = email
         self.password = password
-        self.session = build_session(token)
         self.token = token
         self.user_info = None
+        self._client = httpx.AsyncClient(
+            headers={**COMMON_HEADERS},
+            timeout=HTTP_TIMEOUT,
+        )
+        if token:
+            self._client.headers["token"] = token
 
-    def close(self):
-        self.session.close()
+    async def close(self):
+        await self._client.aclose()
 
-    def login(self) -> LoginResponse:
+    async def login(self) -> LoginResponse:
         """
-        登录接口
-        :param email: 邮箱/手机号
-        :param password: 密码
-        :return: 登录响应（包含 token、uid 等）
-        :raises RuntimeError: 业务失败时抛出，消息包含 API 返回的错误原因
+        登录接口。
+
+        :raises RuntimeError: 业务失败时抛出，消息包含 API 返回的错误原因。
         """
         req = LoginRequest(email=self.email, password=self.password)
-        resp = self.session.post(f"{API_BASE}/UserApi/login", json=req.model_dump())
+        resp = await self._client.post(f"{API_BASE}/UserApi/login", json=req.model_dump())
         resp.raise_for_status()
         result = LoginResponse(**resp.json())
-        # 检查业务状态：status!=1 或 token 为空视为登录失败
         if result.status != 1 or not result.data.token:
             msg = result.message or "登录失败（未知原因）"
             raise RuntimeError(msg)
         self.token = result.data.token
-        self.session.headers["token"] = result.data.token
+        self._client.headers["token"] = result.data.token
         return result
 
-    def get_user_info(self) -> GetUserInfoResponse:
-        """
-        获取用户信息
-        :return: 用户信息响应
-        """
+    async def get_user_info(self) -> GetUserInfoResponse:
+        """获取用户信息。"""
         req = GetUserInfoRequest()
-        resp = self.session.post(
+        resp = await self._client.post(
             f"{API_BASE}/UserApi/getUserInfo", json=req.model_dump()
         )
         resp.raise_for_status()
         return GetUserInfoResponse(**resp.json())
 
-    def get_course_list(self) -> list[CourseItem]:
+    async def get_course_list(self) -> list[CourseItem]:
         """获取学期课程列表。"""
         req = SemesterCourseListRequest(
             reqtimestamp=int(time.time() * 1000) + random.randint(-100, 100),
         )
-        resp = self.session.post(
+        resp = await self._client.post(
             f"{API_BASE}/CourseApi/semesterCourseList",
             json=req.model_dump(),
         )
@@ -283,9 +277,10 @@ class KetangPaiAPI:
             )
         return [CourseItem(**item) for item in data.get("data", [])]
 
-    def check_in_with_url(self, url: str) -> CheckInResult:
+    async def check_in_with_url(self, url: str) -> CheckInResult:
+        """通过签到 URL 执行 QR 签到。"""
         query = parse_qs(urlparse(url).query)
-        return self.qr_check_in(
+        return await self.qr_check_in(
             QRCheckInRequest(
                 ticketid=query.get("ticketid", [""])[0],
                 expire=query.get("expire", [0])[0],
@@ -294,13 +289,10 @@ class KetangPaiAPI:
             )
         )
 
-    def get_attence_building_gps(self, attenceid: str) -> dict | list:
-        """获取考勤关联的建筑 GPS 坐标。
-
-        POST 请求，响应解包后返回 data 层。
-        """
+    async def get_attence_building_gps(self, attenceid: str) -> dict | list:
+        """获取考勤关联的建筑 GPS 坐标。"""
         try:
-            resp = self.session.post(
+            resp = await self._client.post(
                 f"{API_BASE}/AttenceV2Api/getAttenceBuildingGps",
                 json={"attenceid": attenceid},
             )
@@ -310,20 +302,14 @@ class KetangPaiAPI:
                 return j.get("data", {})
             logger.warning("getAttenceBuildingGps status!=1 for %s: %s", attenceid, j.get("message"))
             return {}
-        except requests.exceptions.RequestException as e:
+        except httpx.HTTPError as e:
             logger.warning("Failed to get building GPS for %s: %s", attenceid, e)
             return {}
-        except ValueError:
-            logger.warning("Invalid JSON response from getAttenceBuildingGps for %s", attenceid)
-            return {}
 
-    def get_attence_location(self, attenceid: str) -> dict:
-        """获取考勤位置配置。
-
-        POST 请求，响应包含考勤的定位设置（中心点坐标、签到半径等）。
-        """
+    async def get_attence_location(self, attenceid: str) -> dict:
+        """获取考勤位置配置。"""
         try:
-            resp = self.session.post(
+            resp = await self._client.post(
                 f"{API_BASE}/AttenceApi/getLocation",
                 json={"attenceid": attenceid},
             )
@@ -333,22 +319,14 @@ class KetangPaiAPI:
                 return j.get("data", {})
             logger.warning("getLocation status!=1 for %s: %s", attenceid, j.get("message"))
             return {}
-        except requests.exceptions.RequestException as e:
+        except httpx.HTTPError as e:
             logger.warning("Failed to get location for %s: %s", attenceid, e)
             return {}
-        except ValueError:
-            logger.warning("Invalid JSON response from getLocation for %s", attenceid)
-            return {}
 
-    def get_not_finish_attence_student(self, courseid: str) -> list[dict]:
-        """获取课程未完成的签到列表。
-
-        POST /AttenceApi/getNotFinishAttenceStudent
-        返回 data.lists，每项包含 id / type 等。
-        type: 1=数字, 2=GPS, 3=二维码, 4=签入签出
-        """
+    async def get_not_finish_attence_student(self, courseid: str) -> list[dict]:
+        """获取课程未完成的签到列表。"""
         try:
-            resp = self.session.post(
+            resp = await self._client.post(
                 f"{API_BASE}/AttenceApi/getNotFinishAttenceStudent",
                 json={"courseid": courseid, "reqtimestamp": int(time.time() * 1000)},
             )
@@ -361,14 +339,10 @@ class KetangPaiAPI:
             logger.warning("Failed to get not finish attence for %s: %s", courseid, e)
             return []
 
-    def get_digit_attence(self, attence_id: str) -> str:
-        """获取数字考勤码。
-
-        POST /AttenceApi/getDigitAttence
-        返回 data.data.code（数字签到码），失败返回空字符串。
-        """
+    async def get_digit_attence(self, attence_id: str) -> str:
+        """获取数字考勤码。"""
         try:
-            resp = self.session.post(
+            resp = await self._client.post(
                 f"{API_BASE}/AttenceApi/getDigitAttence",
                 json={"id": attence_id, "reqtimestamp": int(time.time() * 1000)},
             )
@@ -382,11 +356,10 @@ class KetangPaiAPI:
             logger.warning("Failed to get digit attence for %s: %s", attence_id, e)
             return ""
 
-    def qr_check_in(self, data: QRCheckInRequest, client_ip: str = "") -> CheckInResult:
-        """二维码签到接口（POST AttenceApi/AttenceResult，返回 JSON）。
+    async def qr_check_in(self, data: QRCheckInRequest, client_ip: str = "") -> CheckInResult:
+        """二维码签到接口（异步）。
 
         :param client_ip: 客户端真实 IP，将作为 X-Forward-For 请求头发送给课堂派。
-        :return: 签到结果（success=True 表示签到成功）。
         """
         body = {
             "ticketid": data.ticketid,
@@ -398,7 +371,7 @@ class KetangPaiAPI:
         if client_ip:
             extra_headers["X-Forward-For"] = client_ip
         try:
-            resp = self.session.post(
+            resp = await self._client.post(
                 f"{API_BASE}/AttenceApi/AttenceResult",
                 json=body,
                 headers=extra_headers,
@@ -409,7 +382,6 @@ class KetangPaiAPI:
             code = j.get("code", 0)
             message = j.get("message", "")
 
-            # 重复签到 (30324) 视同成功
             if code == 30324:
                 return CheckInResult(
                     email=self.email,
@@ -418,7 +390,6 @@ class KetangPaiAPI:
                     code=code,
                 )
 
-            # data.state == 8 表示二维码签到成功
             if j.get("status") == 1:
                 data_section = j.get("data") or {}
                 if data_section.get("state") == 8:
@@ -429,44 +400,37 @@ class KetangPaiAPI:
                         code=0,
                     )
 
-            # 其他业务错误 → 失败，message 已有可读文本
             return CheckInResult(
                 email=self.email,
                 success=False,
                 message=message or f"签到失败 (code={code})",
                 code=code,
             )
-        except requests.exceptions.RequestException as e:
+        except httpx.HTTPError as e:
             return CheckInResult(
                 email=self.email,
                 success=False,
                 message=f"请求失败：{e}",
             )
 
-    def gps_check_in(self, data: CheckInRequest, client_ip: str = "") -> CheckInResult:
-        """GPS / 数字码签到接口（POST AttenceApi/checkin，返回 JSON）。
+    async def gps_check_in(self, data: CheckInRequest, client_ip: str = "") -> CheckInResult:
+        """GPS / 数字码签到接口（异步）。
 
-        当 latitude / longitude 为空时，自动调用课堂派的建筑 GPS
-        接口获取坐标填充。
-
-        :param client_ip: 客户端真实 IP，将作为 X-Forward-For 请求头发送给课堂派。
-        :return: 签到结果（success=True 表示签到成功）。
+        当 latitude / longitude 为空时，自动获取建筑 GPS 坐标填充。
         """
         latitude = data.latitude
         longitude = data.longitude
 
-        # 自动获取建筑 GPS 坐标（返回值已解包为 data 层）
         if not latitude or not longitude:
-            gps_resp = self.get_attence_building_gps(data.id)
+            gps_resp = await self.get_attence_building_gps(data.id)
             lat, lng = _extract_gps(gps_resp)
             if lat is not None:
                 latitude = lat
             if lng is not None:
                 longitude = lng
 
-            # 兜底：从考勤位置配置获取
             if not latitude or not longitude:
-                loc_resp = self.get_attence_location(data.id)
+                loc_resp = await self.get_attence_location(data.id)
                 loc_lat, loc_lng = _extract_gps(loc_resp)
                 if loc_lat is not None:
                     latitude = latitude or loc_lat
@@ -487,7 +451,7 @@ class KetangPaiAPI:
         if client_ip:
             extra_headers["X-Forward-For"] = client_ip
         try:
-            resp = self.session.post(
+            resp = await self._client.post(
                 f"{API_BASE}/AttenceApi/checkin",
                 json=body,
                 headers=extra_headers,
@@ -498,7 +462,6 @@ class KetangPaiAPI:
             code = j.get("code", 0)
             message = j.get("message", "")
 
-            # 重复签到 (30324) 视同成功
             if code == 30324:
                 return CheckInResult(
                     email=self.email,
@@ -507,7 +470,6 @@ class KetangPaiAPI:
                     code=code,
                 )
 
-            # data.state == 1 表示 GPS/数字签到成功
             if j.get("status") == 1:
                 data_section = j.get("data") or {}
                 if data_section.get("state") == 1:
@@ -518,14 +480,13 @@ class KetangPaiAPI:
                         code=0,
                     )
 
-            # 其他业务错误 → 失败
             return CheckInResult(
                 email=self.email,
                 success=False,
                 message=message or f"签到失败 (code={code})",
                 code=code,
             )
-        except requests.exceptions.RequestException as e:
+        except httpx.HTTPError as e:
             return CheckInResult(
                 email=self.email,
                 success=False,

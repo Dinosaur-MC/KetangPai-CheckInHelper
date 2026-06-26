@@ -1,7 +1,5 @@
 import asyncio
 import time
-from threading import Lock
-
 from sqlmodel import Session
 from app.core.api import QRCheckInRequest, CheckInRequest, KetangPaiAPI, CheckInResult, is_position_error, _extract_gps
 from app.core.db import get_session, get_redis_client
@@ -22,7 +20,7 @@ class SessionPool:
     """会话池：管理多账号的登录态，支持批量签到。
 
     并发模型：
-    - ``self.lock``（threading.Lock）：保护 ``self.clients`` 字典的读写，
+    - ``self.lock``（asyncio.Lock）：保护 ``self.clients`` 字典的读写，
       create / remove / execute_checkin 的快照阶段都会持有它。
     - ``self.exec_lock``（asyncio.Lock）：序列化签到批次的执行阶段，
       保证同一时刻只有一个批次在跑签到（不同批次之间不交错）。
@@ -33,7 +31,7 @@ class SessionPool:
     def __init__(self):
         # clients: {account_id: (KetangPaiAPI, last_used_timestamp)}
         self.clients: dict[int, tuple[KetangPaiAPI, float]] = {}
-        self.lock = Lock()
+        self.lock = asyncio.Lock()
         self.exec_lock = asyncio.Lock()
         self.semaphore = asyncio.Semaphore(MAX_CONCURRENT_CHECKINS)
         logger.info("会话池初始化完成")
@@ -42,111 +40,122 @@ class SessionPool:
     # 会话过期清理
     # ------------------------------------------------------------------
 
-    def _cleanup_expired(self):
+    async def _cleanup_expired(self):
         """移除过期的会话（调用方需持有 self.lock）。"""
         now = time.time()
-        expired_ids = [
-            aid for aid, (_, ts) in list(self.clients.items()) if now - ts > SESSION_TTL
-        ]
-        for aid in expired_ids:
+        async with self.lock:
+            expired_ids = [
+                aid for aid, (_, ts) in list(self.clients.items()) if now - ts > SESSION_TTL
+            ]
+            expired_clients = []
+            for aid in expired_ids:
+                try:
+                    expired_clients.append(self.clients.pop(aid))
+                except Exception:
+                    pass
+        # 在锁外关闭，避免阻塞
+        for entry in expired_clients:
             try:
-                self.clients.pop(aid)[0].close()
+                await entry[0].close()
+                logger.debug("Session expired for account %s", entry[0].email)
             except Exception:
                 pass
-            logger.debug("Session expired for account %s", aid)
 
-    def _touch(self, account_id: int):
-        """刷新会话最后使用时间（调用方需持有 self.lock）。"""
-        entry = self.clients.get(account_id)
-        if entry is not None:
-            self.clients[account_id] = (entry[0], time.time())
+    async def _touch(self, account_id: int):
+        """刷新会话最后使用时间。"""
+        async with self.lock:
+            entry = self.clients.get(account_id)
+            if entry is not None:
+                self.clients[account_id] = (entry[0], time.time())
 
     # ------------------------------------------------------------------
     # 同步方法：create / remove（通过 threading.Lock 保护）
     # ------------------------------------------------------------------
 
-    def create(self, accounts: list[Account], update_status: bool = True) -> bool:
+    async def create(self, accounts: list[Account], update_status: bool = True) -> bool:
         """为 *accounts* 创建登录会话，已存在的跳过。
 
         :param update_status: 是否数据库更新账号状态（login 成功=1，失败=-1）。
             新建账号验证时应设为 False，因为账号尚未入库。
         :return: True 表示所有会话均就绪；False 表示有账号登录失败。
         """
-        with self.lock:
-            self._cleanup_expired()
-            r = get_redis_client()
+        await self._cleanup_expired()
+        r = get_redis_client()
+        async with self.lock:
             vacc = [x for x in accounts if x.id not in self.clients]
-            if len(vacc) == 0:
-                return True
-            all_ok = True
-            for account in vacc:
-                if account is None:
-                    continue
+        if len(vacc) == 0:
+            return True
+        all_ok = True
+        for account in vacc:
+            if account is None:
+                continue
+            try:
+                token = r.get(f"account:{account.id}:token")
+            except Exception:
+                token = None
+            client = KetangPaiAPI(
+                account.email, decrypt_credential(account.password), token
+            )
+            if not token:
                 try:
-                    token = r.get(f"account:{account.id}:token")
-                except Exception:
-                    token = None
-                client = KetangPaiAPI(
-                    account.email, decrypt_credential(account.password), token
-                )
-                if not token:
+                    await client.login()
                     try:
-                        client.login()
-                        try:
-                            r.set(
-                                f"account:{account.id}:token",
-                                client.token,
-                                TOKEN_EXPIRE_TIME,
-                            )
-                        except Exception:
-                            pass  # Redis 写入失败非致命
-                        if update_status:
-                            self._set_account_status(account.id, 1)
-                    except Exception as e:
-                        msg = str(e) or "登录失败"
-                        logger.warning(
-                            "Failed to login account %s: %s",
-                            account.email[:5] + "..." + account.email[-5:],
-                            msg,
+                        r.set(
+                            f"account:{account.id}:token",
+                            client.token,
+                            TOKEN_EXPIRE_TIME,
                         )
-                        if update_status:
-                            self._set_account_status(account.id, -1, msg)
-                        all_ok = False
-                        continue
+                    except Exception:
+                        pass  # Redis 写入失败非致命
+                    if update_status:
+                        self._set_account_status(account.id, 1)
+                except Exception as e:
+                    msg = str(e) or "登录失败"
+                    logger.warning(
+                        "Failed to login account %s: %s",
+                        account.email[:5] + "..." + account.email[-5:],
+                        msg,
+                    )
+                    if update_status:
+                        self._set_account_status(account.id, -1, msg)
+                    all_ok = False
+                    continue
+            async with self.lock:
                 self.clients[account.id] = (client, time.time())
-            return all_ok
+        return all_ok
 
-    def remove(self, account_ids: list[int]) -> bool:
+    async def remove(self, account_ids: list[int]) -> bool:
         """关闭并移除指定账号的会话。"""
-        with self.lock:
+        entries = []
+        async with self.lock:
             for x in account_ids:
                 entry = self.clients.pop(x, None)
                 if entry is not None:
-                    try:
-                        entry[0].close()
-                    except Exception:
-                        pass
-            return True
+                    entries.append(entry)
+        for entry in entries:
+            try:
+                await entry[0].close()
+            except Exception:
+                pass
+        return True
 
-    def _ensure_client(
+    async def ensure_client(
         self,
         account_id: int,
         db_session: Session | None = None,
     ) -> KetangPaiAPI | None:
         """确保 *account_id* 在 self.clients 中有可用会话。
 
-        调用方建议持有 self.lock；为安全，本方法内部自行加锁。
         返回客户端或 None（账号不存在或登录失败）。
 
         :param db_session: 可选的现有 DB 会话，避免在事务外创建独立连接。
         """
-        with self.lock:
-            self._cleanup_expired()
+        await self._cleanup_expired()
+        async with self.lock:
             entry = self.clients.get(account_id)
 
         if entry is not None:
-            with self.lock:
-                self._touch(account_id)
+            await self._touch(account_id)
             return entry[0]
 
         # 从 DB 重建
@@ -169,7 +178,7 @@ class SessionPool:
                 account.email, decrypt_credential(account.password), token
             )
             if not token:
-                client.login()
+                await client.login()
                 try:
                     r.set(
                         f"account:{account_id}:token",
@@ -184,7 +193,7 @@ class SessionPool:
                     db_session=db_session,
                 )
 
-            with self.lock:
+            async with self.lock:
                 self.clients[account_id] = (client, time.time())
             return client
 
@@ -196,7 +205,7 @@ class SessionPool:
     # 查询方法（均支持批量：int → result, list[int] → dict[int, result]）
     # ------------------------------------------------------------------
 
-    def get_account_info(self, account_ids: int | list[int]) -> dict | None:
+    async def get_account_info(self, account_ids: int | list[int]) -> dict | None:
         """获取账号用户信息。
 
         :param account_ids: 单个 ID 或 ID 列表。
@@ -207,28 +216,28 @@ class SessionPool:
         result: dict[int, dict | None] = {}
 
         for aid in ids:
-            client = self._ensure_client(aid)
+            client = await self.ensure_client(aid)
             if client is None:
                 result[aid] = None
                 continue
             try:
-                resp = client.get_user_info()
+                resp = await client.get_user_info()
                 result[aid] = resp.data.model_dump()
             except Exception as e:
                 logger.warning("get_user_info failed for account %s: %s", aid, e)
                 # 移除失效会话以便下次重建
-                with self.lock:
+                async with self.lock:
                     old = self.clients.pop(aid, None)
                     if old is not None:
                         try:
-                            old[0].close()
+                            await old[0].close()
                         except Exception:
                             pass
                 result[aid] = None
 
         return result[account_ids] if single else result
 
-    def get_course_list(
+    async def get_course_list(
         self, account_ids: int | list[int]
     ) -> list[dict] | None | dict[int, list[dict] | None]:
         """获取账号的学期课程列表。
@@ -241,20 +250,20 @@ class SessionPool:
         result: dict[int, list[dict] | None] = {}
 
         for aid in ids:
-            client = self._ensure_client(aid)
+            client = await self.ensure_client(aid)
             if client is None:
                 result[aid] = None
                 continue
             try:
-                items = client.get_course_list()
+                items = await client.get_course_list()
                 result[aid] = [item.model_dump() for item in items]
             except Exception as e:
                 logger.warning("get_course_list failed for account %s: %s", aid, e)
-                with self.lock:
+                async with self.lock:
                     old = self.clients.pop(aid, None)
                     if old is not None:
                         try:
-                            old[0].close()
+                            await old[0].close()
                         except Exception:
                             pass
                 result[aid] = None
@@ -337,8 +346,8 @@ class SessionPool:
         )
 
         # ── 快照阶段 ──
-        with self.lock:
-            self._cleanup_expired()
+        await self._cleanup_expired()
+        async with self.lock:
             snapshot = {aid: self.clients.get(aid) for aid in account_ids}
 
         # ── 执行阶段 ──
@@ -412,9 +421,7 @@ class SessionPool:
                             message="已签到（跳过重复调用）",
                         )
                     else:
-                        first_result = await asyncio.to_thread(
-                            first_client.qr_check_in, data, client_ip
-                        )
+                        first_result = await first_client.qr_check_in(data, client_ip)
                 except Exception as e:
                     logger.warning(
                         "Canary check-in exception for account %s: %s",
@@ -444,7 +451,7 @@ class SessionPool:
                     first_client,
                     first_result,
                 )
-                self._touch(first_aid)
+                await self._touch(first_aid)
                 results[first_aid] = first_result
 
                 logger.info(
@@ -611,13 +618,12 @@ class SessionPool:
             if entry is not None:
                 client = entry[0]
             else:
-                # 快照中无会话，尝试按需创建（to_thread 避免阻塞事件循环）
+                # 快照中无会话，尝试按需创建
                 logger.info(
                     "Account %s not in session pool, creating on demand",
                     account_id,
                 )
-                client = await asyncio.to_thread(
-                    self._ensure_client,
+                client = await self.ensure_client(
                     account_id,
                     db_session=db,
                 )
@@ -653,7 +659,7 @@ class SessionPool:
                 pass  # Redis 不可用时放行
 
             try:
-                result = await asyncio.to_thread(client.qr_check_in, data, client_ip)
+                result = await client.qr_check_in(data, client_ip)
             except Exception as e:
                 logger.error(
                     "Check-in failed for account %s (%s): %s",
@@ -676,8 +682,20 @@ class SessionPool:
                     r.set(dedup_key, "1", ttl)
                 except Exception:
                     pass
-            with self.lock:
-                self._touch(account_id)
+            else:
+                # 全局性失败（二维码过期/考勤已结束）→ 缓存 invalid_key
+                if result.code in (30319, 30322):
+                    try:
+                        invalid_key = f"checkin:{data.courseid}:invalid:{data.ticketid}"
+                        r.set(invalid_key, "1", 3600)
+                        logger.info(
+                            "Cached invalid_key from _checkin_one_ensure: "
+                            "course=%s ticket=%s code=%s",
+                            data.courseid, data.ticketid, result.code,
+                        )
+                    except Exception:
+                        pass
+            await self._touch(account_id)
             self._record(
                 db,
                 r,
@@ -755,8 +773,8 @@ class SessionPool:
             data.id,
         )
 
-        with self.lock:
-            self._cleanup_expired()
+        await self._cleanup_expired()
+        async with self.lock:
             snapshot = {aid: self.clients.get(aid) for aid in account_ids}
 
         # ── 预取建筑 GPS 中心点 + 围栏半径（仅用快照中已有 client）──
@@ -801,7 +819,7 @@ class SessionPool:
             )
             if first_client is not None:
                 try:
-                    gps_resp = first_client.get_attence_building_gps(data.id)
+                    gps_resp = await first_client.get_attence_building_gps(data.id)
                     lat, lng = _extract_gps(gps_resp)
                     if lat is not None:
                         center_lat = lat
@@ -828,7 +846,7 @@ class SessionPool:
         # 尝试获取围栏半径（不论经纬度是否已提供）
         if first_client is not None:
             try:
-                loc_resp = first_client.get_attence_location(data.id)
+                loc_resp = await first_client.get_attence_location(data.id)
                 fence_radius = _extract_radius(loc_resp)
             except Exception as e:
                 logger.warning("Failed to pre-fetch fence radius: %s", e)
@@ -843,14 +861,22 @@ class SessionPool:
                 try:
                     if r and r.get(ended_key):
                         logger.info("Attendance %s is cached as ended — skipping all accounts", data.id)
-                        return {
-                            aid: CheckInResult(
-                                email=f"account:{aid}",
+                        skip_results = {}
+                        for aid in account_ids:
+                            email = self._resolve_client_email(snapshot, aid)
+                            cr = CheckInResult(
+                                email=email or f"account:{aid}",
                                 success=False,
                                 message="已跳过（该GPS考勤已结束）",
                             )
-                            for aid in account_ids
-                        }
+                            skip_results[aid] = cr
+                            self._record(db, r, user_id, aid, data.courseid, email, cr)
+                        try:
+                            db.commit()
+                        except Exception as e:
+                            logger.error("Failed to commit: %s", e)
+                            db.rollback()
+                        return skip_results
                 except Exception:
                     pass
 
@@ -901,12 +927,26 @@ class SessionPool:
                 canary = self._pick_canary(snapshot, dedup_filtered)
                 if canary is None:
                     # 快照中无可用会话，逐个按需创建
-                    return await self._gps_checkin_all_ensure(
+                    gps_results = await self._gps_checkin_all_ensure(
                         snapshot, db, r, user_id, dedup_filtered, data,
                         client_ip=client_ip,
                         center_lat=center_lat, center_lng=center_lng,
                         fence_radius=fence_radius,
                     )
+                    results.update(gps_results)
+                    try:
+                        db.commit()
+                    except Exception as e:
+                        logger.error("Failed to commit: %s", e)
+                        db.rollback()
+                    succeeded = sum(1 for r in results.values() if r is not None and r.success)
+                    logger.info(
+                        "GPS check-in completed for user=%s: %s/%s succeeded",
+                        user_id,
+                        succeeded,
+                        len(account_ids),
+                    )
+                    return results
 
                 canary_aid, canary_client = canary
 
@@ -926,8 +966,7 @@ class SessionPool:
                             message="已签到（跳过重复调用）",
                         )
                     else:
-                        canary_result = await asyncio.to_thread(
-                            canary_client.gps_check_in,
+                        canary_result = await canary_client.gps_check_in(
                             CheckInRequest(
                                 id=data.id,
                                 code=data.code,
@@ -956,7 +995,7 @@ class SessionPool:
                         pass
 
                 self._record(db, r, user_id, canary_aid, data.courseid, canary_client, canary_result)
-                self._touch(canary_aid)
+                await self._touch(canary_aid)
                 results[canary_aid] = canary_result
 
                 logger.info(
@@ -1104,8 +1143,7 @@ class SessionPool:
                     "Account %s not in session pool, creating on demand",
                     account_id,
                 )
-                client = await asyncio.to_thread(
-                    self._ensure_client,
+                client = await self.ensure_client(
                     account_id,
                     db_session=db,
                 )
@@ -1158,10 +1196,26 @@ class SessionPool:
             except Exception:
                 pass
 
+            # 二次检查考勤是否已结束（可能在等待 semaphore 期间远端结束）
             try:
-                result = await asyncio.to_thread(
-                    client.gps_check_in, checkin_data, client_ip
-                )
+                if r and r.get(f"gps_ended:{data.id}"):
+                    logger.info(
+                        "Attendance %s ended while queuing — skipping account %s",
+                        data.id, account_id,
+                    )
+                    return (
+                        account_id,
+                        CheckInResult(
+                            email=client.email,
+                            success=False,
+                            message="已跳过（该GPS考勤已结束）",
+                        ),
+                    )
+            except Exception:
+                pass
+
+            try:
+                result = await client.gps_check_in(checkin_data, client_ip)
             except Exception as e:
                 logger.error(
                     "GPS check-in failed for account %s (%s): %s",
@@ -1203,8 +1257,7 @@ class SessionPool:
                 except Exception:
                     pass
 
-            with self.lock:
-                self._touch(account_id)
+            await self._touch(account_id)
             self._record(
                 db,
                 r,
@@ -1260,6 +1313,16 @@ class SessionPool:
 
         *client_or_email* 可以是 KetangPaiAPI 实例（有 token）或纯邮箱字符串。
         """
+        # 先刷新 token 缓存，再写日志
+        if hasattr(client_or_email, "token") and client_or_email.token:
+            try:
+                r.set(
+                    f"account:{account_id}:token",
+                    client_or_email.token,
+                    TOKEN_EXPIRE_TIME,
+                )
+            except Exception:
+                pass
         try:
             db.add(
                 CheckInLog(
@@ -1272,15 +1335,6 @@ class SessionPool:
             )
         except Exception as e:
             logger.error("Failed to write CheckInLog: %s", e)
-        if hasattr(client_or_email, "token") and client_or_email.token:
-            try:
-                r.set(
-                    f"account:{account_id}:token",
-                    client_or_email.token,
-                    TOKEN_EXPIRE_TIME,
-                )
-            except Exception:
-                pass
 
 
 # 创建会话池（模块级单例）

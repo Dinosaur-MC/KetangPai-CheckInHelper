@@ -173,7 +173,7 @@ class AutoCheckinWatcher:
                     all_accounts.append(account)
 
             if all_accounts:
-                session_pool.create(all_accounts)
+                await session_pool.create(all_accounts)
 
             # 3. 执行签到
             for plan in plans:
@@ -184,13 +184,25 @@ class AutoCheckinWatcher:
                     if not account_ids:
                         continue
 
-                    try:
-                        first_client = session_pool._ensure_client(account_ids[0])
-                        if first_client is None:
+                    # 尝试多个账号查询考勤列表，任一可用即可
+                    attence_list = []
+                    for aid in account_ids:
+                        try:
+                            client = await session_pool.ensure_client(aid)
+                            if client is None:
+                                continue
+                            attence_list = await client.get_not_finish_attence_student(course_id)
+                            first_client = client
+                            if attence_list:
+                                break
+                        except Exception as e:
+                            logger.warning(
+                                "Failed to query attence for course %s via account %s: %s",
+                                course_id, aid, e,
+                            )
                             continue
-                        attence_list = first_client.get_not_finish_attence_student(course_id)
-                    except Exception as e:
-                        logger.warning("Failed to query attence for course %s: %s", course_id, e)
+                    else:
+                        # 所有账号均失败
                         continue
 
                     for att in attence_list:
@@ -210,7 +222,7 @@ class AutoCheckinWatcher:
                         try:
                             checkin_data = CheckInRequest(id=att_id, courseid=course_id)
                             if att_type == "1":
-                                code = first_client.get_digit_attence(att_id)
+                                code = await first_client.get_digit_attence(att_id)
                                 if not code:
                                     logger.warning("Empty digit code for attendance %s, skipping", att_id)
                                     continue
