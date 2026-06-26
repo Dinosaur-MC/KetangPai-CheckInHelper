@@ -487,9 +487,10 @@
                                             @click="removeTimeWindow(i)"></mdui-button-icon>
                                         <span class="dup-hint" v-if="isDuplicateWindow(w, i)">⚠ 重复时段</span>
                                     </div>
-                                    <div class="auto-add-window" @click="addTimeWindow" v-if="autoEnabled">
+                                    <div class="auto-add-window" @click="addTimeWindow" v-if="autoEnabled && autoTimeWindows.length < MAX_WINDOWS">
                                         <span class="material-icons">add</span> 添加时段
                                     </div>
+                                    <div v-if="autoEnabled" style="font-size:12px;color:#9ca3af;margin-top:4px;">{{ autoTimeWindows.length }} / {{ MAX_WINDOWS }} 个时段</div>
                                 </div>
 
                                 <!-- 运行状态 -->

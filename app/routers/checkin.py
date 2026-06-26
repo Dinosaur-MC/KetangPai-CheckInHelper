@@ -8,7 +8,7 @@ from app.core.db import Session, get_session_with
 from app.models import BaseResponse, User, Account, UserAccount, CourseBinding, AutoCheckinConfig
 
 from datetime import datetime, timezone
-from pydantic import BaseModel
+from pydantic import BaseModel, field_validator, model_validator
 
 import json
 import logging
@@ -135,10 +135,49 @@ async def gps_check_in(
 # ================================
 
 
+class TimeWindow(BaseModel):
+    """单个运行时段，严格校验。"""
+    start: int
+    end: int
+
+    @field_validator("start", "end")
+    @classmethod
+    def hour_range(cls, v):
+        if v < 0 or v > 23:
+            raise ValueError("时段小时必须在 0-23 之间")
+        return v
+
+    @model_validator(mode="after")
+    def start_before_end(self):
+        if self.start >= self.end:
+            raise ValueError("start 必须小于 end")
+        return self
+
+
 class AutoCheckinConfigBody(BaseModel):
     enabled: bool = False
     checkin_types: str = "1,2"
     time_windows: str = '[]'
+
+    @field_validator("time_windows", mode="before")
+    @classmethod
+    def validate_time_windows(cls, v):
+        # 解析 JSON 字符串或列表
+        raw = json.loads(v) if isinstance(v, str) else v
+        if not isinstance(raw, list):
+            raise ValueError("time_windows 必须是数组")
+        if len(raw) > 16:
+            raise ValueError("时段数量不能超过 16 个")
+        # 逐个校验并去重
+        seen = set()
+        validated = []
+        for item in raw:
+            tw = TimeWindow(**item)
+            key = f"{tw.start}-{tw.end}"
+            if key not in seen:
+                seen.add(key)
+                validated.append(tw.model_dump())
+        return json.dumps(validated, ensure_ascii=False)
 
 
 @router.get("/api/auto-checkin/config")
@@ -159,7 +198,7 @@ async def get_auto_checkin_config(
         windows = json.loads(config.time_windows)
     except Exception as e:
         logger.warning("解析 time_windows JSON 失败: %s, raw=%r", e, config.time_windows)
-        windows = [{"start": 7, "end": 22}]
+        windows = []
     return BaseResponse(
         message="success",
         data={
@@ -178,27 +217,7 @@ async def update_auto_checkin_config(
     current_user: User = Depends(get_current_user),
     session: Session = Depends(get_session_with),
 ):
-    try:
-        windows = json.loads(body.time_windows) if isinstance(body.time_windows, str) else body.time_windows
-        if not isinstance(windows, list):
-            windows = []
-        for w in windows:
-            w["start"] = max(0, min(23, int(w.get("start", 7))))
-            w["end"] = max(0, min(23, int(w.get("end", 22))))
-        # 去重：相同 start/end 的时段只保留一个
-        seen = set()
-        deduped = []
-        for w in windows:
-            key = f"{w['start']}-{w['end']}"
-            if key not in seen:
-                seen.add(key)
-                deduped.append(w)
-        windows = deduped
-    except Exception as e:
-        logger.warning("解析请求 time_windows 失败: %s, raw=%r", e, body.time_windows)
-        windows = [{"start": 7, "end": 22}]
-    time_windows_str = json.dumps(windows, ensure_ascii=False)
-
+    # body.time_windows 已在 Pydantic 中完成校验、清洗、去重
     config = session.exec(
         select(AutoCheckinConfig).where(AutoCheckinConfig.user_id == current_user.id)
     ).first()
@@ -207,13 +226,13 @@ async def update_auto_checkin_config(
             user_id=current_user.id,
             enabled=body.enabled,
             checkin_types=body.checkin_types,
-            time_windows=time_windows_str,
+            time_windows=body.time_windows,
         )
         session.add(config)
     else:
         config.enabled = body.enabled
         config.checkin_types = body.checkin_types
-        config.time_windows = time_windows_str
+        config.time_windows = body.time_windows
         config.updated_at = datetime.now(timezone.utc)
         session.add(config)
     session.commit()

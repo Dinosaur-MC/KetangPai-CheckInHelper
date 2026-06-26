@@ -1027,7 +1027,13 @@ createApp({
           }
         }
 
+        const MAX_WINDOWS = 16;
+
         function addTimeWindow() {
+          if (autoTimeWindows.value.length >= MAX_WINDOWS) {
+            showToast(`时段数量不能超过 ${MAX_WINDOWS} 个`);
+            return;
+          }
           autoTimeWindows.value.push({ start: 8, end: 12 });
         }
 
@@ -1406,6 +1412,7 @@ createApp({
             addTimeWindow,
             removeTimeWindow,
             isDuplicateWindow,
+            MAX_WINDOWS,
             formatTime,
             getAccountEmail,
             getCourseName,
