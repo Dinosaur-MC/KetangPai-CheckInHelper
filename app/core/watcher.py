@@ -9,7 +9,7 @@ import json
 import random
 import time
 import logging
-from datetime import datetime
+from datetime import datetime, timezone
 
 from sqlmodel import select
 
@@ -26,8 +26,6 @@ MIN_DELAY = 2            # 执行前最小随机延迟（秒）
 MAX_DELAY = 8            # 执行前最大随机延迟（秒）
 DEDUP_TTL = 86400        # 去重标记 TTL（24h）
 
-DEFAULT_WINDOWS = [{"start": 7, "end": 22}]
-
 
 def _in_time_windows(time_windows_str: str, now_hour: int) -> bool:
     """检查当前小时是否在 time_windows JSON 的某个时段内。"""
@@ -40,7 +38,6 @@ def _in_time_windows(time_windows_str: str, now_hour: int) -> bool:
                 return True
     except Exception as e:
         logger.warning("解析 time_windows JSON 失败: %s, raw=%r", e, time_windows_str)
-        return DEFAULT_WINDOWS[0]["start"] <= now_hour < DEFAULT_WINDOWS[0]["end"]
     return False
 
 
@@ -97,11 +94,9 @@ class AutoCheckinWatcher:
     def get_status(self) -> dict:
         now = datetime.now()
         return {
-            "is_running": self.is_running,
-            "last_tick_time": datetime.fromtimestamp(self.last_tick_time).isoformat()
+            "last_tick_time": datetime.fromtimestamp(self.last_tick_time, tz=timezone.utc).isoformat()
                 if self.last_tick_time else None,
             "last_result": self.last_result or {},
-            "default_windows": DEFAULT_WINDOWS,
             "current_hour": now.hour,
         }
 

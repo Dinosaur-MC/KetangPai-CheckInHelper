@@ -119,6 +119,6 @@ class AutoCheckinConfig(SQLModel, table=True):
     user_id: int = Field(foreign_key="user.id", unique=True, index=True)
     enabled: bool = False
     checkin_types: str = "1,2"   # "1"=数字考勤, "2"=GPS考勤
-    time_windows: str = '[{"start":7,"end":22}]'  # JSON: 轮询时段数组
+    time_windows: str = '[]'  # JSON: 轮询时段数组
     created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
     updated_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))

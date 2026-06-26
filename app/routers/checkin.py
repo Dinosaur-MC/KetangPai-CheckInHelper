@@ -138,7 +138,7 @@ async def gps_check_in(
 class AutoCheckinConfigBody(BaseModel):
     enabled: bool = False
     checkin_types: str = "1,2"
-    time_windows: str = '[{"start":7,"end":22}]'
+    time_windows: str = '[]'
 
 
 @router.get("/api/auto-checkin/config")
@@ -153,7 +153,7 @@ async def get_auto_checkin_config(
         return BaseResponse(
             message="success",
             data={"enabled": False, "checkin_types": "1,2",
-                  "time_windows": [{"start": 7, "end": 22}]},
+                  "time_windows": []},
         )
     try:
         windows = json.loads(config.time_windows)
@@ -180,8 +180,8 @@ async def update_auto_checkin_config(
 ):
     try:
         windows = json.loads(body.time_windows) if isinstance(body.time_windows, str) else body.time_windows
-        if not isinstance(windows, list) or not windows:
-            windows = [{"start": 7, "end": 22}]
+        if not isinstance(windows, list):
+            windows = []
         for w in windows:
             w["start"] = max(0, min(23, int(w.get("start", 7))))
             w["end"] = max(0, min(23, int(w.get("end", 22))))
@@ -232,10 +232,24 @@ async def update_auto_checkin_config(
 @router.get("/api/auto-checkin/status")
 async def get_auto_checkin_status(
     current_user: User = Depends(get_current_user),
+    session: Session = Depends(get_session_with),
 ):
     from app.core.watcher import auto_checkin_watcher
 
-    return BaseResponse(data=auto_checkin_watcher.get_status(), message="success")
+    status = auto_checkin_watcher.get_status()
+    # 查询当前用户的配置，判断自动签到是否实际生效
+    config = session.exec(
+        select(AutoCheckinConfig).where(AutoCheckinConfig.user_id == current_user.id)
+    ).first()
+    active = False
+    if config and config.enabled:
+        try:
+            windows = json.loads(config.time_windows)
+            active = bool(windows)
+        except Exception:
+            active = False
+    status["user_active"] = active
+    return BaseResponse(data=status, message="success")
 
 
 @router.post("/api/auto-checkin/trigger")
