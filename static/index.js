@@ -43,7 +43,7 @@ async function api(method, path, body) {
             localStorage.removeItem("token");
             localStorage.removeItem("refresh_token");
             localStorage.removeItem("user");
-            throw new Error("登录已过期，请重新登录");
+            window.location.replace("/login");
         }
     }
     _refreshing = false;
@@ -72,8 +72,6 @@ createApp({
         const loading = ref(false);
 
         // 密码显示切换
-        const showLoginPwd = ref(false);
-        const showRegPwd = ref(false);
         const showAcctPwd = ref(false);
         const showUserPwd = ref(false);
         const showChangeOldPwd = ref(false);
@@ -81,7 +79,6 @@ createApp({
         const showChangeConfirmPwd = ref(false);
 
         // 表单
-        const form = reactive({ email: "", password: "", invite_code: "" });
         const accountForm = reactive({ email: "", password: "" });
         const bindingForm = reactive({ course_id: "", account_id: "" });
         const userForm = reactive({ email: "", password: "", role: "user", is_active: true });
@@ -295,73 +292,18 @@ createApp({
             route.value = to;
             window.location.hash = "#" + to;
             if (isMobile()) sidebarOpen.value = false;
-            if (to === "register") loadInviteRequired();
-            if (to !== "login" && to !== "register") loadPageData(to);
+            loadPageData(to);
         }
 
         // ---- 认证 ----
-        async function login() {
-            if (!form.email || !form.password) {
-                showToast("请填写邮箱和密码");
-                return;
-            }
-            loading.value = true;
-            try {
-                const res = await api("POST", "/api/login", { email: form.email, password: form.password });
-                state.token = res.data.access_token;
-                state.currentUser = res.data.user;
-                localStorage.setItem("token", res.data.access_token);
-                localStorage.setItem("refresh_token", res.data.refresh_token);
-                localStorage.setItem("user", JSON.stringify(res.data.user));
-                route.value = "dashboard";
-                window.location.hash = "#dashboard";
-                showToast("登录成功");
-                loadPageData("dashboard");
-            } catch (e) {
-                showToast(e.message || "登录失败");
-            } finally {
-                loading.value = false;
-            }
-        }
-
-        async function register() {
-            if (!form.email || !form.password) {
-                showToast("请填写邮箱和密码");
-                return;
-            }
-            loading.value = true;
-            try {
-                const res = await api("POST", "/api/register", {
-                    email: form.email,
-                    password: form.password,
-                    invite_code: form.invite_code,
-                });
-                state.token = res.data.access_token;
-                state.currentUser = res.data.user;
-                localStorage.setItem("token", res.data.access_token);
-                localStorage.setItem("refresh_token", res.data.refresh_token);
-                localStorage.setItem("user", JSON.stringify(res.data.user));
-                route.value = "dashboard";
-                window.location.hash = "#dashboard";
-                showToast("注册成功");
-                loadPageData("dashboard");
-            } catch (e) {
-                showToast(e.message || "注册失败");
-            } finally {
-                loading.value = false;
-            }
-        }
-
         async function logout() {
             try {
                 await api("POST", "/api/logout");
             } catch {}
-            state.token = null;
-            state.currentUser = null;
             localStorage.removeItem("token");
             localStorage.removeItem("refresh_token");
             localStorage.removeItem("user");
-            window.location.reload();
+            window.location.replace("/login");
         }
 
         // ---- 账号 ----
@@ -1292,24 +1234,10 @@ createApp({
                     userPage.value = 1;
                     adminAcctPage.value = 1;
                     invitePage.value = 1;
-                    await Promise.all([loadUsers(), loadAdminAccounts(), loadInviteCodes()]);
+                    await Promise.all([loadUsers(), loadAdminAccounts(), loadInviteCodes(), loadInviteRequired()]);
                     break;
             }
         }
-
-        // 监听 hashchange 自动加载数据
-        window.addEventListener("hashchange", () => {
-            const to = hashFromURL();
-            if (route.value === to) return;
-            // 未登录时访问需登录页面 → 跳回登录页
-            if (!state.token && to !== "login" && to !== "register") {
-                window.location.hash = "#login";
-                return;
-            }
-            route.value = to;
-            if (to === "register") loadInviteRequired();
-            if (to !== "login" && to !== "register") loadPageData(to);
-        });
 
         // JWT 过期检测（仅解码 exp，不验证签名）
         function isJwtExpired(token) {
@@ -1322,58 +1250,43 @@ createApp({
         }
 
         // ---- 初始化 ----
-        if (!state.token) {
-            const hash = window.location.hash.replace(/^#\/?/, "");
-            if (hash === "register") {
-                route.value = "register";
-                loadInviteRequired();
-            } else {
-                route.value = "login";
-                window.location.hash = "#login";
-            }
-        } else if (isJwtExpired(state.token)) {
-            // 本地就能判断 token 已过期 — 直接清掉，无需发起请求
-            state.token = null;
-            state.currentUser = null;
+        if (!state.token || isJwtExpired(state.token)) {
             localStorage.removeItem("token");
             localStorage.removeItem("refresh_token");
             localStorage.removeItem("user");
-            route.value = "login";
-            window.location.hash = "#login";
-        } else {
-            // 获取最新用户信息
-            const userId = state.currentUser?.id;
-            if (userId) {
-                api("GET", `/api/users/${userId}`)
-                    .then((res) => {
-                        if (res.data) {
-                            state.currentUser = res.data;
-                            localStorage.setItem("user", JSON.stringify(res.data));
-                        }
-                    })
-                    .catch(() => {
-                        // 获取失败时不清除登录状态，保持 localStorage 数据
-                    });
-            }
-            loadPageData(route.value).catch((e) => {
-                console.warn("加载页面数据失败:", e);
-                showToast("加载数据失败，请刷新重试");
-            });
+            window.location.replace("/login");
+            return;
         }
+
+        // 获取最新用户信息
+        const userId = state.currentUser?.id;
+        if (userId) {
+            api("GET", `/api/users/${userId}`)
+                .then((res) => {
+                    if (res.data) {
+                        state.currentUser = res.data;
+                        localStorage.setItem("user", JSON.stringify(res.data));
+                    }
+                })
+                .catch(() => {
+                    // 获取失败时不清除登录状态，保持 localStorage 数据
+                });
+        }
+        loadPageData(route.value).catch((e) => {
+            console.warn("加载页面数据失败:", e);
+            showToast("加载数据失败，请刷新重试");
+        });
 
         return {
             state,
             route,
             sidebarOpen,
             loading,
-            showLoginPwd,
-            showRegPwd,
             showAcctPwd,
             showUserPwd,
             showChangeOldPwd,
             showChangeNewPwd,
             showChangeConfirmPwd,
-            form,
             accountForm,
             bindingForm,
             userForm,
@@ -1420,8 +1333,6 @@ createApp({
             getCourseCode,
             showToast,
             navigate,
-            login,
-            register,
             logout,
             loadAccounts,
             openAccountModal,

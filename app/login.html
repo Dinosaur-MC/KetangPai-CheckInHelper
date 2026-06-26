@@ -1,0 +1,91 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width">
+    <title>登录 — 课堂派签到助手</title>
+    <meta name="description" content="课堂派签到助手 — 登录">
+    <link rel="icon" href="/favicon.ico">
+    <link rel="preload" href="/static/MaterialIcons-Regular.ttf" as="font" type="font/ttf" crossorigin>
+    <link rel="stylesheet" href="/static/mdui.css">
+    <link rel="stylesheet" href="/static/material-icons.css">
+    <link rel="stylesheet" href="/static/common.css">
+    <link rel="stylesheet" href="/static/login.css">
+</head>
+
+<body>
+    <div id="app">
+        <div class="login-page">
+            <div class="login-card">
+                <template v-if="page === 'login'">
+                    <h2>签到助手</h2>
+                    <p class="subtitle">登录以管理课堂派签到</p>
+                    <form @submit.prevent="doLogin">
+                        <div class="field-wrap">
+                            <label class="field-label">邮箱</label>
+                            <input class="field-input" type="email" v-model="form.email"
+                                placeholder="your@email.com" autocomplete="username">
+                        </div>
+                        <div class="field-wrap">
+                            <label class="field-label">密码</label>
+                            <div class="pwd-wrap">
+                                <input class="field-input" :type="showPwd ? 'text' : 'password'"
+                                    v-model="form.password" placeholder="至少 8 位" autocomplete="current-password">
+                                <button class="pwd-toggle" type="button" @click="showPwd = !showPwd"
+                                    tabindex="-1" :title="showPwd ? '隐藏密码' : '显示密码'">
+                                    <span class="material-icons">{{ showPwd ? 'visibility_off' : 'visibility' }}</span>
+                                </button>
+                            </div>
+                        </div>
+                        <button type="submit" style="display:none"></button>
+                        <mdui-button variant="filled" @click="doLogin" :disabled="loading"
+                            style="width:100%;margin-top:8px;height:44px;">{{ loading ? '登录中…' : '登 录' }}</mdui-button>
+                    </form>
+                    <div class="form-footer">
+                        <a @click="page='register'">没有账号？去注册</a>
+                    </div>
+                </template>
+                <template v-else-if="page === 'register'">
+                    <h2>注册账号</h2>
+                    <p class="subtitle">创建签到助手账号</p>
+                    <form @submit.prevent="doRegister">
+                        <div class="field-wrap">
+                            <label class="field-label">邮箱<span class="req">*</span></label>
+                            <input class="field-input" type="email" v-model="form.email"
+                                placeholder="your@email.com" autocomplete="username">
+                        </div>
+                        <div class="field-wrap">
+                            <label class="field-label">密码<span class="req">*</span></label>
+                            <div class="pwd-wrap">
+                                <input class="field-input" :type="showPwd ? 'text' : 'password'"
+                                    v-model="form.password" placeholder="至少 8 位" autocomplete="new-password">
+                                <button class="pwd-toggle" type="button" @click="showPwd = !showPwd"
+                                    tabindex="-1" :title="showPwd ? '隐藏密码' : '显示密码'">
+                                    <span class="material-icons">{{ showPwd ? 'visibility_off' : 'visibility' }}</span>
+                                </button>
+                            </div>
+                        </div>
+                        <div class="field-wrap">
+                            <label class="field-label">邀请码 <span v-if="!inviteRequired"
+                                    style="color:#9ca3af;font-weight:400;">（选填）</span><span v-else
+                                    class="req">*</span></label>
+                            <input class="field-input" v-model="form.invite_code" placeholder="邀请码" autocomplete="off">
+                        </div>
+                        <button type="submit" style="display:none"></button>
+                        <mdui-button variant="filled" @click="doRegister" :disabled="loading"
+                            style="width:100%;margin-top:8px;height:44px;">{{ loading ? '注册中…' : '注 册' }}</mdui-button>
+                    </form>
+                    <div class="form-footer">
+                        <a @click="page='login'">已有账号？去登录</a>
+                    </div>
+                </template>
+            </div>
+        </div>
+    </div>
+
+    <script src="/static/vue.global.prod.js"></script>
+    <script src="/static/mdui.global.js"></script>
+    <script src="/static/login.js"></script>
+</body>
+</html>

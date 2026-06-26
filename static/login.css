@@ -1,0 +1,71 @@
+/* ============================================================
+   登录页专用样式
+   ============================================================ */
+
+.login-page {
+    min-height: 100dvh;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    background: #e8eaed url("/static/img(64).webp") no-repeat center;
+    background-size: cover;
+    padding: 16px;
+}
+.login-card {
+    width: 100%;
+    max-width: 420px;
+    padding: 40px 32px 32px;
+    border-radius: 20px;
+    background: rgba(255, 255, 255, 0.8);
+    box-shadow: 0 4px 24px rgba(0, 0, 0, 0.08);
+}
+.login-card h2 {
+    margin: 0 0 6px;
+    font-size: 26px;
+    font-weight: 700;
+    text-align: center;
+    color: #111827;
+}
+.login-card .subtitle {
+    color: #6b7280;
+    text-align: center;
+    margin-bottom: 32px;
+    font-size: 14px;
+}
+.login-card .form-footer {
+    margin-top: 20px;
+    text-align: center;
+}
+.login-card .form-footer a {
+    color: #6366f1;
+    cursor: pointer;
+    font-size: 13px;
+    font-weight: 500;
+}
+.login-card .form-footer a:hover {
+    color: #4f46e5;
+}
+
+@media (max-width: 640px) {
+    .login-card {
+        padding: 32px 20px 24px;
+    }
+}
+
+/* ============================================================
+   暗色主题适配
+   ============================================================ */
+@media (prefers-color-scheme: dark) {
+    .login-page {
+        background-color: #1a1b2e;
+    }
+    .login-card {
+        background: rgba(30, 32, 48, 0.9);
+    }
+    .login-card h2 {
+        color: #e4e6ed;
+    }
+    .login-card .subtitle {
+        color: #9ca3af;
+    }
+}

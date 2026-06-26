@@ -124,6 +124,12 @@ async def root():
     return FileResponse(path)
 
 
+@app.get("/login")
+async def login_page():
+    path = Path(__file__).parent / "login.html"
+    return FileResponse(path)
+
+
 @app.head("/")
 async def root_head():
     return Response(status_code=200)
