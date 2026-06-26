@@ -22,6 +22,11 @@ uv run python -c "from cryptography.fernet import Fernet; print(Fernet.generate_
 # Backfill user details for legacy accounts
 uv run python scripts/backfill_accounts.py
 
+# Run tests (179 tests covering security, models, utils, db, auth routes)
+uv run pytest
+uv run pytest -v           # verbose
+uv run pytest --tb=long    # full traceback on failures
+
 # Docker deployment (full stack: MySQL + Redis + App)
 docker compose up -d
 docker compose logs -f app
@@ -57,6 +62,15 @@ main.py                     # Entry point — loads .env, starts uvicorn
 │   │   └── settings.py     # system settings (invite-required toggle)
 │   ├── index.html          # Vue 3 SPA template（已登录）
 │   └── login.html          # 独立登录/注册页面
+├── tests/                  # ✅ 单元测试与集成测试 (179 tests)
+│   ├── conftest.py         # 共享 fixtures（SQLite + Mock Redis + JWT reset）
+│   ├── test_security.py    # 密码哈希、JWT、Fernet 加密、令牌黑名单
+│   ├── test_models.py      # Pydantic/SQLModel 模型、_extract_gps、is_position_error
+│   ├── test_utils.py       # get_client_ip、RateLimiter、_in_time_windows 等
+│   ├── test_db.py          # _RedisWrapper 断路器、check_redis_health
+│   └── routers/
+│       ├── __init__.py
+│       └── test_auth.py    # 注册/登录/登出/令牌刷新集成测试
 ├── static/                 # Client-side assets (local, no CDN)
 │   ├── common.css          # 公共样式（全局重置、表单字段、密码切换）
 │   ├── login.js            # 登录/注册 Vue 应用
@@ -72,7 +86,8 @@ main.py                     # Entry point — loads .env, starts uvicorn
 │   └── test.html           # QR decoder test page
 ├── scripts/                # Utility scripts
 │   └── backfill_accounts.py  # Backfill user details for legacy accounts
-└── docker-compose.yml      # MySQL 8 + Redis 7 + App
+├── docker-compose.yml      # MySQL 8 + Redis 7 + App
+└── pyproject.toml           # 依赖管理 + pytest 配置
 ```
 
 ## Key Design Decisions
@@ -101,6 +116,8 @@ main.py                     # Entry point — loads .env, starts uvicorn
 - **Auto CheckIn API (`app/routers/checkin.py`)**: Four endpoints — `GET/PUT /api/auto-checkin/config` (per-user config with strict Pydantic validation via `TimeWindow`/`AutoCheckinConfigBody`), `GET /api/auto-checkin/status` (watcher status + per-user `user_active` flag), `POST /api/auto-checkin/trigger` (manual scan trigger).
 - **Pydantic strict validation on config**: `TimeWindow` model validates start/end hours (0-23, start < end), `AutoCheckinConfigBody` validates `checkin_types` (only "1"/"2"), `time_windows` (max 16 items, dedup). All manual JSON parsing/handling eliminated in favor of Pydantic validators.
 - **Status uses `user_active` instead of `is_running`**: The global watcher is always running. Frontend shows meaningful status per user based on `user_active` (enabled + has time windows), not `is_running`.
+- **Testing (179 tests)**: Tests are organized by module under `tests/`. Pure logic (security, models, utils, sessions helpers) is tested without external deps. Auth route tests use FastAPI TestClient with SQLite temp file (not `:memory:`, to avoid TestClient background thread isolation) and mocked Redis (`None`). Run via `uv run pytest`. See `pyproject.toml` for pytest config.
+- **`_in_time_windows` midnight-crossing support**: Time windows like `{start:22, end:6}` now correctly match hours 22–23 and 0–5, not just same-day ranges. Zero-width windows (`start == end`) never match.
 
 ## Data Model
 
