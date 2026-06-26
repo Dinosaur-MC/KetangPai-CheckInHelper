@@ -28,6 +28,7 @@
         - [📚 课程绑定](#-课程绑定)
         - [🚀 批量签到](#-批量签到)
         - [📷 扫码签到](#-扫码签到)
+        - [⏰ 自动签到](#-自动签到)
         - [📊 签到日志](#-签到日志)
         - [🔐 安全机制](#-安全机制)
         - [🛠️ 管理后台（仅管理员）](#️-管理后台仅管理员)
@@ -154,52 +155,36 @@
 
 ## 系统架构
 
-```mermaid
-graph TB
-    subgraph 用户浏览器["🌐 用户浏览器 (Vue 3 SPA)"]
-        direction TB
-        A1[登录 / 注册]
-        A2[账号管理]
-        A3[课程绑定]
-        A4[签到执行]
-        A5[日志查看]
-    end
-
-    subgraph 后端["⚡ FastAPI 后端 (uvicorn)"]
-        direction TB
-        B1[认证路由<br/>/api/auth]
-        B2[账号路由<br/>/api/accounts]
-        B3[签到路由<br/>/api/checkin]
-        B4[管理路由<br/>/api/admin]
-        B5[业务层<br/>SessionPool · KetangPaiAPI<br/>并发控制 · Canary · 缓存]
-    end
-
-    subgraph 数据层["💾 数据层"]
-        C1[("MySQL<br/>SQLModel 持久化")]
-        C2[("Redis<br/>缓存 · 限流 · TTL")]
-    end
-
-    D[("🌍 课堂派 API<br/>ketangpai.com/v5")]
-
-    用户浏览器 -->|HTTP / JSON| 后端
-    B1 --> B5
-    B2 --> B5
-    B3 --> B5
-    B4 --> B5
-    B5 --> C1
-    B5 --> C2
-    B5 --> D
-```
+<table align="center">
+  <tbody>
+    <tr><th colspan="2" align="center">🌐 前端 Vue 3 SPA</th></tr>
+    <tr>
+      <td><strong>页面路由</strong><br/>登录 · 注册 · 首页<br/>账号管理 · 课程绑定<br/>签到执行 · 签到日志 · 用户管理</td>
+      <td><strong>扫码引擎</strong><br/>OpenCV WeChat QR<br/>ZXing WASM</td>
+    </tr>
+    <tr><th colspan="2" align="center">⚡ FastAPI 后端</th></tr>
+    <tr><td colspan="2"><strong>🛡️ 中间件</strong><br/>JWT 认证 (Access + Refresh Rotation) · Redis 滑动窗口限流 · CORS · 全局异常处理</td></tr>
+    <tr><td colspan="2"><strong>🧭 路由层 · 8 领域模块</strong><br/>auth / account / course / checkin / log / user / invite_code / settings</td></tr>
+    <tr><td colspan="2"><strong>⚙️ 业务逻辑层</strong><br/>SessionPool 会话池 · KetangPaiAPI · AutoCheckinWatcher · Canary 引擎 · Fernet/AES 加密 · Argon2 哈希 · 缓存策略</td></tr>
+    <tr><td colspan="2"><strong>💾 数据层</strong></td></tr>
+    <tr>
+      <td><strong>MySQL 8</strong><br/>SQLModel ORM · 增量迁移</td>
+      <td><strong>Redis 7</strong><br/>缓存 · 限流 · 断路器</td>
+    </tr>
+    <tr><th colspan="2" align="center"><strong>🌍 课堂派 API</strong><br/>ketangpai.com — 签到接口</th></tr>
+  </tbody>
+</table>
 
 ### 分层说明
 
-| 层级         | 职责                                                    |
-| ------------ | ------------------------------------------------------- |
-| **前端 SPA** | Vue 3 响应式 UI，MDUI 2 Material Design 组件，Hash 路由 |
-| **API 路由** | FastAPI 路由，依赖注入（DB Session / Redis / 当前用户） |
-| **业务逻辑** | 会话池管理、第三方 API 封装、Canary 签到策略            |
-| **数据层**   | SQLModel ORM（MySQL）+ Redis 缓存 + 速率限制            |
-| **外部依赖** | 课堂派 OpenAPI v5 + 签到页面接口                        |
+| 层级             | 职责                                                                                                              |
+| ---------------- | ----------------------------------------------------------------------------------------------------------------- |
+| **前端 SPA**     | Vue 3 响应式 UI，MDUI 2 Material Design 组件，Hash 路由，扫码引擎 (WeChat QR + ZXing)                             |
+| **安全与中间件** | JWT 认证（Access + Refresh Token Rotation）、Redis 滑动窗口限流、全局异常处理、CORS                               |
+| **路由层**       | 8 个领域路由模块（auth/account/course/checkin/log/user/invite_code/settings），依赖注入                           |
+| **业务逻辑层**   | SessionPool 会话池、KetangPaiAPI 封装、AutoCheckinWatcher 自动签到、Canary 签到引擎、Fernet/Argon2 加密、缓存策略 |
+| **数据层**       | SQLModel ORM（MySQL 8）持久化 + Redis 7 缓存/限流/断路器                                                          |
+| **外部依赖**     | 课堂派 OpenAPI + 签到页面接口                                                                                     |
 
 ## 技术栈
 
@@ -212,8 +197,8 @@ graph TB
 | **前端**   | **Vue 3** (Composition API)                  | 响应式 SPA                                            |
 | UI 框架    | **MDUI 2** (Web Components)                  | Material Design 界面                                  |
 | 图标       | **Material Icons**                           | 图标系统                                              |
-| 扫码(主)  | **OpenCV.js (WeChat QR)**                    | C++ WASM 解码引擎，抗畸变倾斜，识别率更高             |
-| 扫码(备)  | **ZXing WASM**                               | WASM 备用 QR 解码引擎                                |
+| 扫码(主)   | **OpenCV.js (WeChat QR)**                    | C++ WASM 解码引擎，抗畸变倾斜，识别率更高             |
+| 扫码(备)   | **ZXing WASM**                               | WASM 备用 QR 解码引擎                                 |
 | **安全**   | **Passlib (Argon2)**                         | 密码哈希                                              |
 |            | **PyJWT**                                    | JWT 签发与验证                                        |
 |            | **Cryptography (Fernet)**                    | 凭据加密                                              |
@@ -278,22 +263,22 @@ uv run python main.py
 
 > **注意**：`DATABASE_URL` 和 `CREDENTIAL_KEY` 为 **必需项**，未设置时启动会报错退出。
 
-| 变量               | 说明                     | 默认值                             |
-| ------------------ | ------------------------ | ---------------------------------- |
-| `DATABASE_URL`     | **MySQL 连接串（必填）** | 无（未设置时启动失败）             |
-| `REDIS_URL`        | Redis 连接串             | `redis://localhost:6379/0`         |
-| `JWT_SECRET`       | **JWT 签名密钥（必填）** | 未设置时随机生成（重启后失效）     |
-| `JWT_ALGORITHM`    | JWT 算法                 | `HS256`                            |
-| `JWT_EXPIRE_HOURS` | Access Token 有效期      | `24`（小时）                       |
-| `CREDENTIAL_KEY`   | **课堂派密码加密密钥（必填）** | 无（未设置时启动失败）        |
-| `ALLOWED_ORIGINS`  | CORS 白名单（逗号分隔）  | 空（不允许跨域）                   |
-| `PORT`             | 服务端口                 | `8765`                             |
-| `DEBUG`            | 调试模式（热重载）       | `false`                            |
-| `DB_ECHO`          | 打印 SQL 日志            | `false`                            |
-| `DB_POOL_SIZE`     | 数据库连接池大小         | `10`                               |
-| `DB_MAX_OVERFLOW`  | 连接池最大溢出           | `20`                               |
-| `DB_POOL_RECYCLE`  | 连接回收时间（秒）       | `3600`                             |
-| `DB_AUTO_MIGRATE`  | 启动时自动运行增量迁移   | `true`                             |
+| 变量               | 说明                           | 默认值                         |
+| ------------------ | ------------------------------ | ------------------------------ |
+| `DATABASE_URL`     | **MySQL 连接串（必填）**       | 无（未设置时启动失败）         |
+| `REDIS_URL`        | Redis 连接串                   | `redis://localhost:6379/0`     |
+| `JWT_SECRET`       | **JWT 签名密钥（必填）**       | 未设置时随机生成（重启后失效） |
+| `JWT_ALGORITHM`    | JWT 算法                       | `HS256`                        |
+| `JWT_EXPIRE_HOURS` | Access Token 有效期            | `24`（小时）                   |
+| `CREDENTIAL_KEY`   | **课堂派密码加密密钥（必填）** | 无（未设置时启动失败）         |
+| `ALLOWED_ORIGINS`  | CORS 白名单（逗号分隔）        | 空（不允许跨域）               |
+| `PORT`             | 服务端口                       | `8765`                         |
+| `DEBUG`            | 调试模式（热重载）             | `false`                        |
+| `DB_ECHO`          | 打印 SQL 日志                  | `false`                        |
+| `DB_POOL_SIZE`     | 数据库连接池大小               | `10`                           |
+| `DB_MAX_OVERFLOW`  | 连接池最大溢出                 | `20`                           |
+| `DB_POOL_RECYCLE`  | 连接回收时间（秒）             | `3600`                         |
+| `DB_AUTO_MIGRATE`  | 启动时自动运行增量迁移         | `true`                         |
 
 > **生成 `CREDENTIAL_KEY`：**
 >
@@ -305,16 +290,16 @@ uv run python main.py
 
 ### 页面路由
 
-| 路由          | 页面     | 说明                  |
-| ------------- | -------- | --------------------- |
-| `#/login`     | 登录     | 邮箱密码登录          |
-| `#/register`  | 注册     | 支持邀请码注册        |
-| `#/dashboard` | 首页概览 | 统计卡片 + 最近签到   |
-| `#/accounts`  | 账号管理 | 管理课堂派账号        |
-| `#/courses`   | 课程绑定 | 绑定课程到账号        |
+| 路由          | 页面     | 说明                           |
+| ------------- | -------- | ------------------------------ |
+| `#/login`     | 登录     | 邮箱密码登录                   |
+| `#/register`  | 注册     | 支持邀请码注册                 |
+| `#/dashboard` | 首页概览 | 统计卡片 + 最近签到            |
+| `#/accounts`  | 账号管理 | 管理课堂派账号                 |
+| `#/courses`   | 课程绑定 | 绑定课程到账号                 |
 | `#/checkin`   | 签到执行 | URL/手动/扫码/自动签到四种方式 |
-| `#/logs`      | 签到日志 | 历史记录查看与筛选    |
-| `#/users`     | 用户管理 | 管理员专用            |
+| `#/logs`      | 签到日志 | 历史记录查看与筛选             |
+| `#/users`     | 用户管理 | 管理员专用                     |
 
 ### UI 特点
 
@@ -344,40 +329,40 @@ uv run python main.py
 
 ### 账号管理
 
-| 方法   | 路径                 | 说明                                    |
-| ------ | -------------------- | --------------------------------------- |
-| GET    | `/api/accounts`      | 当前用户的课堂派账号列表（分页）       |
-| GET    | `/api/accounts/{id}` | 获取指定账号信息                   |
-| POST   | `/api/accounts`      | 添加课堂派账号（已存在则自动关联） |
-| PUT    | `/api/accounts/{id}` | 更新账号信息（更新密码会自动重置状态并刷新详情） |
-| POST   | `/api/accounts/{id}/verify` | 重新验证账号凭据有效性，刷新用户详情 |
-| DELETE | `/api/accounts/{id}` | 删除账号                           |
+| 方法   | 路径                        | 说明                                             |
+| ------ | --------------------------- | ------------------------------------------------ |
+| GET    | `/api/accounts`             | 当前用户的课堂派账号列表（分页）                 |
+| GET    | `/api/accounts/{id}`        | 获取指定账号信息                                 |
+| POST   | `/api/accounts`             | 添加课堂派账号（已存在则自动关联）               |
+| PUT    | `/api/accounts/{id}`        | 更新账号信息（更新密码会自动重置状态并刷新详情） |
+| POST   | `/api/accounts/{id}/verify` | 重新验证账号凭据有效性，刷新用户详情             |
+| DELETE | `/api/accounts/{id}`        | 删除账号                                         |
 
 ### 课程管理
 
-| 方法   | 路径                         | 说明                           |
-| ------ | ---------------------------- | ------------------------------ |
+| 方法   | 路径                         | 说明                             |
+| ------ | ---------------------------- | -------------------------------- |
 | GET    | `/api/courses`               | 课程列表，管理员查看全部（分页） |
-| GET    | `/api/courses/{id}`          | 课程详情                   |
-| DELETE | `/api/courses/{id}`          | 删除课程（管理员）         |
-| GET    | `/api/courses/bindings`      | 当前用户的课程绑定（分页） |
-| POST   | `/api/courses/bindings`      | 创建课程绑定               |
-| PUT    | `/api/courses/bindings/{id}` | 切换绑定启用状态           |
-| DELETE | `/api/courses/bindings/{id}` | 解绑                       |
+| GET    | `/api/courses/{id}`          | 课程详情                         |
+| DELETE | `/api/courses/{id}`          | 删除课程（管理员）               |
+| GET    | `/api/courses/bindings`      | 当前用户的课程绑定（分页）       |
+| POST   | `/api/courses/bindings`      | 创建课程绑定                     |
+| PUT    | `/api/courses/bindings/{id}` | 切换绑定启用状态                 |
+| DELETE | `/api/courses/bindings/{id}` | 解绑                             |
 
 ### 签到
 
-| 方法   | 路径                     | 说明                                                |
-| ------ | ------------------------ | --------------------------------------------------- |
-| POST   | `/api/checkin`           | 批量签到（Canary 模式）                             |
-| POST   | `/api/checkin/gps`       | GPS 位置签到                                       |
-| GET    | `/api/auto-checkin/config`    | 获取当前用户自动签到配置                       |
-| PUT    | `/api/auto-checkin/config`    | 更新自动签到配置（严格 Pydantic 校验）          |
-| GET    | `/api/auto-checkin/status`    | 自动签到运行状态 + 当前用户生效状态             |
-| POST   | `/api/auto-checkin/trigger`   | 手动触发一次自动签到扫描                         |
-| GET    | `/api/logs/checkin`      | 签到日志列表，支持 `account_email`/`course_id`/`status`/`date_from`/`date_to` 筛选 + 分页 |
-| GET    | `/api/logs/checkin/{id}` | 签到日志详情                                        |
-| DELETE | `/api/logs/checkin/{id}` | 删除签到日志（管理员）                              |
+| 方法   | 路径                        | 说明                                                                                      |
+| ------ | --------------------------- | ----------------------------------------------------------------------------------------- |
+| POST   | `/api/checkin`              | 批量签到（Canary 模式）                                                                   |
+| POST   | `/api/checkin/gps`          | GPS 位置签到                                                                              |
+| GET    | `/api/auto-checkin/config`  | 获取当前用户自动签到配置                                                                  |
+| PUT    | `/api/auto-checkin/config`  | 更新自动签到配置（严格 Pydantic 校验）                                                    |
+| GET    | `/api/auto-checkin/status`  | 自动签到运行状态 + 当前用户生效状态                                                       |
+| POST   | `/api/auto-checkin/trigger` | 手动触发一次自动签到扫描                                                                  |
+| GET    | `/api/logs/checkin`         | 签到日志列表，支持 `account_email`/`course_id`/`status`/`date_from`/`date_to` 筛选 + 分页 |
+| GET    | `/api/logs/checkin/{id}`    | 签到日志详情                                                                              |
+| DELETE | `/api/logs/checkin/{id}`    | 删除签到日志（管理员）                                                                    |
 
 ### 用户管理（管理员）
 
@@ -510,22 +495,22 @@ SessionPool（模块级单例）
 
 ## 安全特性
 
-| 措施                       | 实现                                                |
-| -------------------------- | --------------------------------------------------- |
-| **密码哈希**               | Argon2 via Passlib — 慢哈希抗暴力破解               |
-| **JWT 签名**               | HS256/RS*/ES* 可选，密钥至少 16 字符                |
-| **Refresh Token Rotation** | 每次刷新使旧 token 失效，防止泄露后重放             |
-| **Token 吊销**             | 登出时将 `jti` 加入 Redis 黑名单，TTL 自动过期      |
-| **速率限制**               | Redis 滑动窗口 — 登录/注册 5次/分钟，签到 10次/分钟 |
-| **Redis 熔断**             | 断路器模式，30s 健康检查间隔自动恢复；3s 短超时防连接卡死 |
+| 措施                       | 实现                                                                   |
+| -------------------------- | ---------------------------------------------------------------------- |
+| **密码哈希**               | Argon2 via Passlib — 慢哈希抗暴力破解                                  |
+| **JWT 签名**               | HS256/RS*/ES* 可选，密钥至少 16 字符                                   |
+| **Refresh Token Rotation** | 每次刷新使旧 token 失效，防止泄露后重放                                |
+| **Token 吊销**             | 登出时将 `jti` 加入 Redis 黑名单，TTL 自动过期                         |
+| **速率限制**               | Redis 滑动窗口 — 登录/注册 5次/分钟，签到 10次/分钟                    |
+| **Redis 熔断**             | 断路器模式，30s 健康检查间隔自动恢复；3s 短超时防连接卡死              |
 | **凭据加密**               | Fernet (AES-128-CBC + HMAC) 加密课堂派密码，**启动时强制校验密钥存在** |
-| **登录业务校验**           | 检查 API 返回 status 及 token，拒绝业务级失败（如密码过期） |
-| **状态追踪**               | 每个账号记录 `status_message`，失败原因可追溯       |
-| **密码强度**               | 8-128 字符，必须包含大小写字母和数字                |
-| **CORS**                   | `ALLOWED_ORIGINS` 白名单机制，可配置多个来源        |
-| **SQL 注入防护**           | SQLModel 参数化查询                                 |
-| **客户端 IP 透传**         | 签到请求自动提取客户端真实 IP，以 `X-Forward-For` 透传至课堂派 API |
-| **异常处理**               | 全局异常处理器，敏感信息不暴露                      |
+| **登录业务校验**           | 检查 API 返回 status 及 token，拒绝业务级失败（如密码过期）            |
+| **状态追踪**               | 每个账号记录 `status_message`，失败原因可追溯                          |
+| **密码强度**               | 8-128 字符，必须包含大小写字母和数字                                   |
+| **CORS**                   | `ALLOWED_ORIGINS` 白名单机制，可配置多个来源                           |
+| **SQL 注入防护**           | SQLModel 参数化查询                                                    |
+| **客户端 IP 透传**         | 签到请求自动提取客户端真实 IP，以 `X-Forward-For` 透传至课堂派 API     |
+| **异常处理**               | 全局异常处理器，敏感信息不暴露                                         |
 
 ## 项目结构
 
