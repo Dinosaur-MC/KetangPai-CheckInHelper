@@ -46,7 +46,7 @@ def pytest_sessionfinish(session):
 os.environ.setdefault("DATABASE_URL", "sqlite:///")
 os.environ.setdefault("REDIS_URL", "redis://localhost:6379/0")
 os.environ.setdefault("JWT_SECRET", "test-jwt-secret-16chars")
-os.environ.setdefault("CREDENTIAL_KEY", "dGhpcyBpcyBhIHRlc3QgZmVybmV0IGtleSBiYXNlNjQtMzI=ogi=")
+os.environ.setdefault("CREDENTIAL_KEY", "LdAeiL1oMwefBiYLMVSKu04HCIBcEHiSXW2bs0w0TO8=")
 os.environ.setdefault("ALLOWED_ORIGINS", "")
 os.environ.setdefault("PORT", "8765")
 os.environ.setdefault("DEBUG", "false")
