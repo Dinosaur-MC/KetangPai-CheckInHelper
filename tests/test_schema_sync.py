@@ -280,3 +280,111 @@ class TestInspectCurrent:
         assert _extract_default("'hello'") == "hello"
         assert _extract_default("42") == "42"
         assert _extract_default(True) == "True"
+
+
+# ── detect_rename ──
+
+class TestDetectRename:
+    def test_detects_exact_rename(self):
+        """username -> user_name: 同类型 VARCHAR, 编辑距离 1。"""
+        from app.core.schema_sync import _detect_rename
+        deleted = {"username": "VARCHAR(255)"}
+        added = {"user_name": "VARCHAR(255)"}
+        current_types = {"username": "VARCHAR(255)"}
+        target_types = {"user_name": "VARCHAR(255)"}
+        result = _detect_rename(deleted, added, current_types, target_types)
+        assert result == [("username", "user_name")]
+
+    def test_no_rename_different_type(self):
+        """类型不同不应匹配。"""
+        from app.core.schema_sync import _detect_rename
+        deleted = {"username": "VARCHAR(255)"}
+        added = {"user_count": "INTEGER"}
+        current_types = {"username": "VARCHAR(255)"}
+        target_types = {"user_count": "INTEGER"}
+        result = _detect_rename(deleted, added, current_types, target_types)
+        assert result == []
+
+    def test_no_rename_too_different(self):
+        """编辑距离 > 3 不应匹配。"""
+        from app.core.schema_sync import _detect_rename
+        deleted = {"a": "VARCHAR"}
+        added = {"zzzzzzzzz": "VARCHAR"}
+        current_types = {"a": "VARCHAR"}
+        target_types = {"zzzzzzzzz": "VARCHAR"}
+        result = _detect_rename(deleted, added, current_types, target_types)
+        assert result == []
+
+    def test_type_family(self):
+        from app.core.schema_sync import _type_family
+        assert _type_family("VARCHAR(255)") == "string"
+        assert _type_family("INTEGER") == "integer"
+        assert _type_family("FLOAT") == "numeric"
+        assert _type_family("BOOLEAN") == "boolean"
+        assert _type_family("DATETIME") == "datetime"
+
+
+# ── compute_diff ──
+
+class TestComputeDiff:
+    def test_new_table(self):
+        from app.core.schema_sync import compute_diff, TableDef, ColumnDef
+        target = {"new_table": TableDef(name="new_table", columns={
+            "id": ColumnDef(name="id", type_str="INTEGER", nullable=False, primary_key=True),
+        })}
+        current = {}
+        diff = compute_diff(target, current)
+        assert len(diff.tables_to_create) == 1
+        assert diff.tables_to_create[0].name == "new_table"
+
+    def test_new_column(self):
+        from app.core.schema_sync import compute_diff, TableDef, ColumnDef
+        target = {"user": TableDef(name="user", columns={
+            "id": ColumnDef(name="id", type_str="INTEGER"),
+            "email": ColumnDef(name="email", type_str="VARCHAR(255)"),
+            "nickname": ColumnDef(name="nickname", type_str="VARCHAR(100)", nullable=True),
+        })}
+        current = {"user": TableDef(name="user", columns={
+            "id": ColumnDef(name="id", type_str="INTEGER"),
+            "email": ColumnDef(name="email", type_str="VARCHAR(255)"),
+        })}
+        diff = compute_diff(target, current)
+        adds = [c for c in diff.column_changes if c.change_type == "add"]
+        assert len(adds) == 1
+        assert adds[0].column_name == "nickname"
+
+    def test_dropped_column_is_warn_only(self):
+        from app.core.schema_sync import compute_diff, TableDef, ColumnDef
+        target = {"user": TableDef(name="user", columns={
+            "id": ColumnDef(name="id", type_str="INTEGER"),
+        })}
+        current = {"user": TableDef(name="user", columns={
+            "id": ColumnDef(name="id", type_str="INTEGER"),
+            "obsolete": ColumnDef(name="obsolete", type_str="VARCHAR(255)"),
+        })}
+        diff = compute_diff(target, current)
+        drops = [c for c in diff.column_changes if c.change_type == "drop"]
+        assert len(drops) == 0  # 不生成 drop 操作
+
+    def test_column_type_change(self):
+        from app.core.schema_sync import compute_diff, TableDef, ColumnDef
+        target = {"user": TableDef(name="user", columns={
+            "name": ColumnDef(name="name", type_str="VARCHAR(100)"),
+        })}
+        current = {"user": TableDef(name="user", columns={
+            "name": ColumnDef(name="name", type_str="VARCHAR(255)"),
+        })}
+        diff = compute_diff(target, current)
+        alters = [c for c in diff.column_changes if c.change_type == "alter"]
+        assert len(alters) == 1
+
+    def test_no_diff_when_identical(self):
+        from app.core.schema_sync import compute_diff, TableDef, ColumnDef
+        td = TableDef(name="user", columns={
+            "id": ColumnDef(name="id", type_str="INTEGER", nullable=False, primary_key=True),
+        })
+        diff = compute_diff({"user": td}, {"user": td})
+        assert not diff.tables_to_create
+        assert not diff.column_changes
+        assert not diff.index_changes
+        assert not diff.fk_changes
