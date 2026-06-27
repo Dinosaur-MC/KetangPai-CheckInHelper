@@ -12,7 +12,7 @@
 [![Redis](https://img.shields.io/badge/Redis-8-DC382D?logo=redis&logoColor=fff)](https://redis.io)
 [![License](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 [![Docker](https://img.shields.io/badge/Docker-Ready-2496ED?logo=docker&logoColor=fff)](docker-compose.yml)
-[![Tests](https://img.shields.io/badge/Tests-234%20passed-2ea44f?logo=pytest&logoColor=fff)](tests/)
+[![Tests](https://github.com/Dinosaur-MC/KetangPai-CheckInHelper/actions/workflows/pytest.yml/badge.svg)](https://github.com/Dinosaur-MC/KetangPai-CheckInHelper/actions/workflows/pytest.yml)
 [![Benchmark](https://img.shields.io/badge/Latency-%3C50ms-4FC08D)](tests/routers/.benchmark_results.json)
 
 </div>
