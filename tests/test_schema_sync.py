@@ -18,7 +18,9 @@ from app.core.schema_sync import (
     ForeignKeyChange,
     SchemaDiff,
     _type_to_string,
+    _extract_default,
     inspect_target,
+    inspect_current,
 )
 from sqlalchemy import String, Integer, Boolean, DateTime, Float
 
@@ -221,3 +223,60 @@ class TestInspectTarget:
         result = inspect_target(SQLModel.metadata)
         for name, table in result.items():
             assert len(table.columns) > 0, f"Table '{name}' has zero columns"
+
+
+# ── inspect_current ──
+
+class TestInspectCurrent:
+    def test_inspect_returns_created_tables(self):
+        """在 SQLite 中创建所有表后，inspect_current 应返回相同表集合。"""
+        from sqlmodel import create_engine
+        from app.core.schema_sync import inspect_current
+        engine = create_engine("sqlite://", echo=False)
+        SQLModel.metadata.create_all(engine)
+        tables = inspect_current(engine)
+        # 应该包含业务表名
+        for name in ("user", "account", "course", "coursebinding",
+                      "checkinlog", "invitecode", "systemsetting", "autocheckinconfig"):
+            assert name in tables, f"Missing table: {name}"
+        engine.dispose()
+
+    def test_column_def_has_correct_fields(self):
+        from sqlmodel import create_engine
+        from app.core.schema_sync import inspect_current
+        engine = create_engine("sqlite://", echo=False)
+        SQLModel.metadata.create_all(engine)
+        tables = inspect_current(engine)
+        user = tables["user"]
+        assert user.columns["id"].primary_key
+        assert not user.columns["email"].nullable
+        assert user.name == "user"
+        engine.dispose()
+
+    def test_skips_underscore_tables(self):
+        from sqlmodel import create_engine
+        from sqlalchemy import text
+        from app.core.schema_sync import inspect_current
+        engine = create_engine("sqlite://", echo=False)
+        SQLModel.metadata.create_all(engine)
+        # 手动创建 _test 表
+        with engine.begin() as conn:
+            conn.execute(text("CREATE TABLE _test (id INTEGER)"))
+        tables = inspect_current(engine)
+        assert "_test" not in tables
+        engine.dispose()
+
+    def test_empty_db_returns_empty(self):
+        from sqlmodel import create_engine
+        from app.core.schema_sync import inspect_current
+        engine = create_engine("sqlite://", echo=False)
+        tables = inspect_current(engine)
+        assert isinstance(tables, dict)
+        engine.dispose()
+
+    def test_extract_default(self):
+        from app.core.schema_sync import _extract_default
+        assert _extract_default(None) is None
+        assert _extract_default("'hello'") == "hello"
+        assert _extract_default("42") == "42"
+        assert _extract_default(True) == "True"

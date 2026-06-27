@@ -85,6 +85,17 @@ class SchemaDiff:
     fk_changes: list[ForeignKeyChange] = field(default_factory=list)
 
 
+def _extract_default(default_val) -> str | None:
+    """提取列默认值的可读文本形式。"""
+    if default_val is None:
+        return None
+    if isinstance(default_val, str):
+        if len(default_val) >= 2 and default_val[0] == "'" and default_val[-1] == "'":
+            return default_val[1:-1]
+        return default_val
+    return str(default_val)
+
+
 def _type_to_string(col_type) -> str:
     """将 SQLAlchemy 类型规范化为统一字符串表示。"""
     raw = str(col_type)
@@ -133,6 +144,46 @@ def inspect_target(metadata) -> dict[str, TableDef]:
                     ref_columns=[str(col.name) for col in ref_col_table.columns],
                     ondelete=fk.ondelete or "",
                 ))
+
+        result[table_name] = TableDef(name=table_name, columns=columns, indexes=indexes, foreign_keys=fks)
+    return result
+
+
+def inspect_current(engine: Engine) -> dict[str, TableDef]:
+    """使用 SQLAlchemy 反射获取数据库当前 schema。"""
+    inspector = sa_inspect(engine)
+    result: dict[str, TableDef] = {}
+    for table_name in inspector.get_table_names():
+        if table_name.startswith("_"):
+            continue
+
+        columns: dict[str, ColumnDef] = {}
+        for col in inspector.get_columns(table_name):
+            columns[col["name"]] = ColumnDef(
+                name=col["name"],
+                type_str=_type_to_string(col["type"]),
+                nullable=col.get("nullable", True),
+                default=_extract_default(col.get("default")),
+                autoincrement=col.get("autoincrement", False),
+                primary_key=col.get("primary_key", False),
+            )
+
+        indexes: list[IndexDef] = []
+        for idx in inspector.get_indexes(table_name):
+            indexes.append(IndexDef(
+                name=idx["name"] or f"ix_{table_name}_{'_'.join(idx['column_names'])}",
+                columns=list(idx["column_names"]),
+                unique=idx.get("unique", False),
+            ))
+
+        fks: list[ForeignKeyDef] = []
+        for fk in inspector.get_foreign_keys(table_name):
+            fks.append(ForeignKeyDef(
+                columns=list(fk["constrained_columns"]),
+                ref_table=fk["referred_table"],
+                ref_columns=list(fk["referred_columns"]),
+                ondelete=fk.get("options", {}).get("ondelete", ""),
+            ))
 
         result[table_name] = TableDef(name=table_name, columns=columns, indexes=indexes, foreign_keys=fks)
     return result
