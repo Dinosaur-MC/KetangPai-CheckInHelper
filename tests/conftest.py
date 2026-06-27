@@ -51,6 +51,7 @@ os.environ.setdefault("ALLOWED_ORIGINS", "")
 os.environ.setdefault("PORT", "8765")
 os.environ.setdefault("DEBUG", "false")
 os.environ.setdefault("DB_AUTO_MIGRATE", "false")
+os.environ.setdefault("DB_BACKUP_DIR", "./backups_test")
 
 
 @pytest.fixture(autouse=True)

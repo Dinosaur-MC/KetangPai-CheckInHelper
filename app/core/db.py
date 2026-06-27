@@ -10,6 +10,7 @@ from redis import Redis, ConnectionPool
 
 from app.core.settings import settings
 from app.models import *
+from app.core.schema_sync import SchemaSync, wait_db_ready
 
 logger = logging.getLogger(__name__)
 
@@ -219,60 +220,18 @@ def get_redis_client() -> "Redis | None":
         return None
 
 
-def _existing_columns(table: str) -> set[str]:
-    """查询 MySQL 表现有的列名。"""
-    try:
-        with _engine.connect() as conn:
-            rows = conn.execute(
-                text(
-                    "SELECT COLUMN_NAME FROM INFORMATION_SCHEMA.COLUMNS "
-                    "WHERE TABLE_SCHEMA = (SELECT DATABASE()) AND TABLE_NAME = :t"
-                ),
-                {"t": table},
-            ).all()
-            return {r[0].lower() for r in rows}
-    except Exception:
-        return set()
-
-
-def _migrate():
-    """增量迁移：对比模型字段与数据库实际列，自动补缺。"""
-    wanted: dict[str, list[tuple[str, str]]] = {
-        "account": [
-            ("username", "VARCHAR(255) NOT NULL DEFAULT ''"),
-            ("avatar", "VARCHAR(512) NOT NULL DEFAULT ''"),
-            ("school", "VARCHAR(255) NOT NULL DEFAULT ''"),
-            ("stno", "VARCHAR(128) NOT NULL DEFAULT ''"),
-            ("department", "VARCHAR(255) NOT NULL DEFAULT ''"),
-            ("mobile", "VARCHAR(64) NOT NULL DEFAULT ''"),
-            ("ktp_account", "VARCHAR(128) NOT NULL DEFAULT ''"),
-            ("status_message", "VARCHAR(255) NOT NULL DEFAULT ''"),
-        ],
-        "checkinlog": [
-            ("message", "VARCHAR(255) NOT NULL DEFAULT ''"),
-        ],
-    }
-    for table, columns in wanted.items():
-        existing = _existing_columns(table)
-        for name, definition in columns:
-            if name.lower() in existing:
-                logger.debug("Column %s.%s already exists", table, name)
-                continue
-            sql = f"ALTER TABLE {table} ADD COLUMN {name} {definition}"
-            try:
-                with _engine.connect() as conn:
-                    conn.execute(text(sql))
-                    conn.commit()
-                logger.info("Added column %s.%s", table, name)
-            except Exception as e:
-                logger.warning("Failed to add %s.%s: %s", table, name, e)
-
-
 def init_db():
-    """在应用启动时调用，确保表已创建并运行增量迁移。"""
+    """在应用启动时调用，确保表已创建并自动同步 schema。"""
+    if settings.db_auto_migrate:
+        wait_db_ready(_engine)
     SQLModel.metadata.create_all(_engine)
     if settings.db_auto_migrate:
-        _migrate()
+        sync = SchemaSync(
+            _engine,
+            backup_dir=settings.db_backup_dir,
+            mysqldump_path=settings.mysqldump_path,
+        )
+        sync.execute()
 
 
 def get_session() -> Session:

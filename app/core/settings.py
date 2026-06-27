@@ -33,6 +33,8 @@ class Settings(BaseSettings):
     db_max_overflow: int = 20
     db_pool_recycle: int = 3600
     db_auto_migrate: bool = True
+    db_backup_dir: str = "./backups"
+    mysqldump_path: str = "mysqldump"
 
     # ── Redis ──
     redis_url: str = "redis://localhost:6379/0"
