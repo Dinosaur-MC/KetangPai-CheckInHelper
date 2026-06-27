@@ -6,13 +6,13 @@
 > 多用户 · 多账号 · 多课程 · 扫码签到 · 全栈管理
 
 [![Python](https://img.shields.io/badge/Python-3.13+-3776AB?logo=python&logoColor=fff)](https://python.org)
-[![FastAPI](https://img.shields.io/badge/FastAPI-0.136+-009688?logo=fastapi&logoColor=fff)](https://fastapi.tiangolo.com)
+[![FastAPI](https://img.shields.io/badge/FastAPI-0.138+-009688?logo=fastapi&logoColor=fff)](https://fastapi.tiangolo.com)
 [![Vue](https://img.shields.io/badge/Vue-3-4FC08D?logo=vue.js&logoColor=fff)](https://vuejs.org)
 [![MySQL](https://img.shields.io/badge/MySQL-8.0-4479A1?logo=mysql&logoColor=fff)](https://mysql.com)
-[![Redis](https://img.shields.io/badge/Redis-7-DC382D?logo=redis&logoColor=fff)](https://redis.io)
+[![Redis](https://img.shields.io/badge/Redis-8-DC382D?logo=redis&logoColor=fff)](https://redis.io)
 [![License](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 [![Docker](https://img.shields.io/badge/Docker-Ready-2496ED?logo=docker&logoColor=fff)](docker-compose.yml)
-[![Tests](https://img.shields.io/badge/Tests-187%20passed-2ea44f?logo=pytest&logoColor=fff)](tests/)
+[![Tests](https://img.shields.io/badge/Tests-234%20passed-2ea44f?logo=pytest&logoColor=fff)](tests/)
 [![Benchmark](https://img.shields.io/badge/Latency-%3C50ms-4FC08D)](tests/routers/.benchmark_results.json)
 
 </div>
@@ -40,6 +40,8 @@
     - [快速开始](#快速开始)
         - [Docker 部署（推荐）](#docker-部署推荐)
         - [手动部署](#手动部署)
+        - [运行测试](#运行测试)
+        - [延迟基准测试](#延迟基准测试)
     - [环境变量](#环境变量)
     - [前端界面](#前端界面)
         - [页面路由](#页面路由)
@@ -171,7 +173,7 @@
     <tr><td colspan="2"><strong>💾 数据层</strong></td></tr>
     <tr>
       <td><strong>MySQL 8</strong><br/>SQLModel ORM · 增量迁移</td>
-      <td><strong>Redis 7</strong><br/>缓存 · 限流 · 断路器</td>
+      <td><strong>Redis 8</strong><br/>缓存 · 限流 · 断路器</td>
     </tr>
     <tr><th colspan="2" align="center"><strong>🌍 课堂派 API</strong><br/>ketangpai.com — 签到接口</th></tr>
   </tbody>
@@ -185,7 +187,7 @@
 | **安全与中间件** | JWT 认证（Access + Refresh Token Rotation）、Redis 滑动窗口限流、全局异常处理、CORS                               |
 | **路由层**       | 8 个领域路由模块（auth/account/course/checkin/log/user/invite_code/settings），依赖注入                           |
 | **业务逻辑层**   | SessionPool 会话池、KetangPaiAPI 封装、AutoCheckinWatcher 自动签到、Canary 签到引擎、Fernet/Argon2 加密、缓存策略 |
-| **数据层**       | SQLModel ORM（MySQL 8）持久化 + Redis 7 缓存/限流/断路器                                                          |
+| **数据层**       | SQLModel ORM（MySQL 8）持久化 + Redis 8 缓存/限流/断路器                                                          |
 | **外部依赖**     | 课堂派 OpenAPI + 签到页面接口                                                                                     |
 
 ## 技术栈
@@ -195,7 +197,7 @@
 | **后端**   | **Python 3.13+** → **FastAPI** → **uvicorn** | 高性能异步 Web 框架                                   |
 | ORM        | **SQLModel** + **PyMySQL**                   | 类型安全的异步 ORM                                    |
 | 数据库     | **MySQL 8.0**                                | 持久化存储                                            |
-| 缓存       | **Redis 7**                                  | JWT 黑名单、会话 Token 缓存、速率限制、邀请码设置缓存 |
+| 缓存       | **Redis 8**                                  | JWT 黑名单、会话 Token 缓存、速率限制、邀请码设置缓存 |
 | API 客户端 | **httpx**                                    | 异步 KetangPai API 客户端（async, 非阻塞）            |
 | **前端**   | **Vue 3** (Composition API)                  | 响应式 SPA（独立登录页 + 主应用）                     |
 | UI 框架    | **MDUI 2** (Web Components)                  | Material Design 界面                                  |
@@ -207,7 +209,7 @@
 |            | **PyJWT**                                    | JWT 签发与验证（httponly cookie 承载）                |
 |            | **Cryptography (Fernet)**                    | 凭据加密                                              |
 |            | **Rate Limiter**                             | Redis 滑动窗口限流                                    |
-| **测试**   | **pytest** + **httpx** (TestClient)           | 187+ 个单元 + 集成 + 基准测试 |
+| **测试**   | **pytest** + **httpx** (TestClient)           | 234+ 个单元 + 集成 + 基准测试 |
 | **包管理** | **uv**                                       | Python 依赖管理                                       |
 | **部署**   | **Docker** + **docker compose**              | 容器化一站式部署                                      |
 
@@ -244,7 +246,7 @@ docker compose down -v
 
 ### 手动部署
 
-**环境要求：** Python ≥ 3.13，MySQL 8.0，Redis 7
+**环境要求：** Python ≥ 3.13，MySQL 8.0，Redis 8
 
 ```bash
 # 1. 安装依赖
@@ -264,7 +266,7 @@ uv run python main.py
 
 ### 运行测试
 
-项目包含 **187 个测试**（单元测试 + 集成测试 + 延迟基准测试），覆盖安全模块、数据模型、工具函数、数据库层和认证路由：
+项目包含 **234 个测试**（单元测试 + 集成测试 + 延迟基准测试），覆盖安全模块、数据模型、工具函数、数据库层、账号模块、课程模块、自动签到模块和认证路由：
 
 ```bash
 # 运行全部测试
@@ -607,7 +609,7 @@ CheckInHelper/
 │   ├── zxing.min.js        # ZXing WASM 备用 QR 解码
 │   └── test.html           # QR 解码测试页
 │
-├── tests/                  # ✅ 测试（187+ 个，覆盖核心模块 + 路由 + 基准测试）
+├── tests/                  # ✅ 测试（234+ 个，覆盖核心模块 + 路由 + 基准测试）
 │   ├── conftest.py         # 共享 Fixtures + benchmark 收集器
 │   ├── test_security.py    # 密码哈希 · JWT · Fernet 加密 · 令牌黑名单
 │   ├── test_models.py      # Pydantic/SQLModel 模型 · _extract_gps · is_position_error
