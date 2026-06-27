@@ -20,13 +20,15 @@ if not settings.database_url:
         "DATABASE_URL=mysql+pymysql://user:password@host:port/dbname?charset=utf8mb4"
     )
 
-_engine = create_engine(
-    settings.database_url,
-    echo=settings.db_echo,
-    pool_size=settings.db_pool_size,
-    max_overflow=settings.db_max_overflow,
-    pool_recycle=settings.db_pool_recycle,
-)
+_engine_kwargs: dict = {"echo": settings.db_echo}
+# pool_size / max_overflow / pool_recycle 是 MySQL 连接池参数，
+# SQLite 的 SingletonThreadPool 不接受这些参数。仅在 MySQL 方言时传入。
+if settings.database_url.startswith("mysql"):
+    _engine_kwargs["pool_size"] = settings.db_pool_size
+    _engine_kwargs["max_overflow"] = settings.db_max_overflow
+    _engine_kwargs["pool_recycle"] = settings.db_pool_recycle
+
+_engine = create_engine(settings.database_url, **_engine_kwargs)
 
 # ── Redis 连接管理（断路器模式）──────────────────────────────────────────
 #
