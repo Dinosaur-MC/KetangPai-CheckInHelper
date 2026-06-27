@@ -43,6 +43,7 @@ class ForeignKeyDef:
     ref_table: str
     ref_columns: list[str]
     ondelete: str = ""
+    constraint_name: str = ""
 
 
 @dataclass
@@ -309,6 +310,7 @@ def inspect_target(metadata) -> dict[str, TableDef]:
                     ref_table=list(fk.elements)[0].column.table.name,
                     ref_columns=[str(elem.column.name) for elem in fk.elements],
                     ondelete=fk.ondelete or "",
+                    constraint_name=fk.name or "",
                 ))
 
         result[table_name] = TableDef(name=table_name, columns=columns, indexes=indexes, foreign_keys=fks)
@@ -349,6 +351,7 @@ def inspect_current(engine: Engine) -> dict[str, TableDef]:
                 ref_table=fk["referred_table"],
                 ref_columns=list(fk["referred_columns"]),
                 ondelete=fk.get("options", {}).get("ondelete", ""),
+                constraint_name=fk.get("name", "") or "",
             ))
 
         result[table_name] = TableDef(name=table_name, columns=columns, indexes=indexes, foreign_keys=fks)
@@ -356,6 +359,24 @@ def inspect_current(engine: Engine) -> dict[str, TableDef]:
 
 
 # ── DDL 编译 ──
+
+
+def _format_default(default_val: str) -> str:
+    """将默认值格式化为 SQL 片段。数字和 SQL 关键字不加引号。"""
+    # 已知 SQL 关键字（函数调用）
+    sql_keywords = {"CURRENT_TIMESTAMP", "NOW()", "CURRENT_DATE", "CURRENT_TIME", "TRUE", "FALSE", "NULL"}
+    upper = default_val.upper()
+    if upper in sql_keywords:
+        return f"DEFAULT {default_val}"
+    # 数字（整数、浮点数）
+    try:
+        float(default_val)
+        return f"DEFAULT {default_val}"
+    except ValueError:
+        pass
+    # 字符串 — 需要引号并转义内部的单引号
+    escaped = default_val.replace("'", "\\'")
+    return f"DEFAULT '{escaped}'"
 
 
 def _compile_ddl(change: ColumnChange) -> str:
@@ -368,7 +389,7 @@ def _compile_ddl(change: ColumnChange) -> str:
         if not col.nullable:
             parts.append("NOT NULL")
         if col.default is not None:
-            parts.append(f"DEFAULT '{col.default}'")
+            parts.append(_format_default(col.default))
         if col.autoincrement:
             parts.append("AUTO_INCREMENT")
         if col.primary_key:
@@ -383,7 +404,7 @@ def _compile_ddl(change: ColumnChange) -> str:
         if not col.nullable:
             parts.append("NOT NULL")
         if col.default is not None:
-            parts.append(f"DEFAULT '{col.default}'")
+            parts.append(_format_default(col.default))
         return " ".join(parts)
     elif change.change_type == "drop":
         raise NotImplementedError("列删除不自动执行，请手动处理")
@@ -410,8 +431,8 @@ def _compile_fk_ddl(change: ForeignKeyChange) -> str:
         ondelete = f" ON DELETE {fk.ondelete}" if fk.ondelete else ""
         return f"ALTER TABLE {change.table} ADD FOREIGN KEY ({cols}) REFERENCES {fk.ref_table} ({ref_cols}){ondelete}"
     else:
-        constraint_name = f"fk_{change.table}_{'_'.join(fk.columns)}"
-        return f"ALTER TABLE {change.table} DROP FOREIGN KEY {constraint_name}"
+        name = fk.constraint_name or f"fk_{change.table}_{'_'.join(fk.columns)}"
+        return f"ALTER TABLE {change.table} DROP FOREIGN KEY {name}"
 
 
 def _affected_tables(diff: SchemaDiff) -> set[str]:
@@ -443,7 +464,12 @@ def _compute_schema_hash(metadata) -> str:
         idx_strs: list[str] = []
         for idx in sorted(table.indexes, key=lambda x: x.name or ""):
             idx_strs.append(f"{idx.name}:{sorted(idx.columns.keys())}:{idx.unique}")
-        ordered_parts.append(f"{table_name}({';'.join(col_strs)})({';'.join(idx_strs)})")
+        fk_strs: list[str] = []
+        for fk in sorted(table.foreign_key_constraints, key=lambda x: x.name or ""):
+            fk_strs.append(
+                f"{fk.name}:{sorted(fk.columns.keys())}->{list(fk.elements)[0].column.table.name}:{sorted(str(e.column.name) for e in fk.elements)}:{fk.ondelete}"
+            )
+        ordered_parts.append(f"{table_name}({';'.join(col_strs)})({';'.join(idx_strs)})({';'.join(fk_strs)})")
     return hashlib.sha256("|".join(ordered_parts).encode()).hexdigest()
 
 
