@@ -12,7 +12,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Literal
 
-from sqlalchemy import Engine, inspect as sa_inspect
+from sqlalchemy import Engine, inspect as sa_inspect, text as sa_text
 from sqlmodel import SQLModel
 
 logger = logging.getLogger(__name__)
@@ -302,13 +302,11 @@ def inspect_target(metadata) -> dict[str, TableDef]:
         fks: list[ForeignKeyDef] = []
         for fk in table.foreign_key_constraints:
             cols = list(fk.columns.keys())
-            elements = list(fk.elements)
-            if elements:
-                ref_col_table = elements[0].column.table
+            if fk.elements:
                 fks.append(ForeignKeyDef(
                     columns=cols,
-                    ref_table=ref_col_table.name,
-                    ref_columns=[str(col.name) for col in ref_col_table.columns],
+                    ref_table=list(fk.elements)[0].column.table.name,
+                    ref_columns=[str(elem.column.name) for elem in fk.elements],
                     ondelete=fk.ondelete or "",
                 ))
 
@@ -354,3 +352,210 @@ def inspect_current(engine: Engine) -> dict[str, TableDef]:
 
         result[table_name] = TableDef(name=table_name, columns=columns, indexes=indexes, foreign_keys=fks)
     return result
+
+
+# ── DDL 编译 ──
+
+
+def _compile_ddl(change: ColumnChange) -> str:
+    """将 ColumnChange 编译为 MySQL DDL 语句。"""
+    table = change.table
+    if change.change_type == "add":
+        col = change.definition
+        assert col is not None
+        parts = [f"ALTER TABLE {table} ADD COLUMN {col.name} {col.type_str}"]
+        if not col.nullable:
+            parts.append("NOT NULL")
+        if col.default is not None:
+            parts.append(f"DEFAULT '{col.default}'")
+        if col.autoincrement:
+            parts.append("AUTO_INCREMENT")
+        if col.primary_key:
+            parts.append("PRIMARY KEY")
+        return " ".join(parts)
+    elif change.change_type == "rename":
+        return f"ALTER TABLE {table} RENAME COLUMN {change.old_name} TO {change.column_name}"
+    elif change.change_type == "alter":
+        col = change.definition
+        assert col is not None
+        parts = [f"ALTER TABLE {table} MODIFY COLUMN {col.name} {col.type_str}"]
+        if not col.nullable:
+            parts.append("NOT NULL")
+        if col.default is not None:
+            parts.append(f"DEFAULT '{col.default}'")
+        return " ".join(parts)
+    elif change.change_type == "drop":
+        raise NotImplementedError("列删除不自动执行，请手动处理")
+    raise ValueError(f"Unknown change_type: {change.change_type}")
+
+
+def _compile_index_ddl(change: IndexChange) -> str:
+    """将 IndexChange 编译为 DDL。"""
+    idx = change.definition
+    cols = ", ".join(idx.columns)
+    if change.change_type == "add":
+        unique = "UNIQUE " if idx.unique else ""
+        return f"CREATE {unique}INDEX {idx.name} ON {change.table} ({cols})"
+    else:
+        return f"DROP INDEX {idx.name} ON {change.table}"
+
+
+def _compile_fk_ddl(change: ForeignKeyChange) -> str:
+    """将 ForeignKeyChange 编译为 DDL。"""
+    fk = change.definition
+    cols = ", ".join(fk.columns)
+    ref_cols = ", ".join(fk.ref_columns)
+    if change.change_type == "add":
+        ondelete = f" ON DELETE {fk.ondelete}" if fk.ondelete else ""
+        return f"ALTER TABLE {change.table} ADD FOREIGN KEY ({cols}) REFERENCES {fk.ref_table} ({ref_cols}){ondelete}"
+    else:
+        constraint_name = f"fk_{change.table}_{'_'.join(fk.columns)}"
+        return f"ALTER TABLE {change.table} DROP FOREIGN KEY {constraint_name}"
+
+
+def _affected_tables(diff: SchemaDiff) -> set[str]:
+    """收集所有受变更影响的表名。"""
+    tables: set[str] = set()
+    for t in diff.tables_to_create:
+        tables.add(t.name)
+    for cc in diff.column_changes:
+        tables.add(cc.table)
+    for ic in diff.index_changes:
+        tables.add(ic.table)
+    for fc in diff.fk_changes:
+        tables.add(fc.table)
+    return tables
+
+
+def _compute_schema_hash(metadata) -> str:
+    """对 SQLModel metadata 中所有表的定义计算确定性 SHA-256 哈希。"""
+    ordered_parts: list[str] = []
+    for table_name in sorted(metadata.tables.keys()):
+        if table_name.startswith("_"):
+            continue
+        table = metadata.tables[table_name]
+        col_strs: list[str] = []
+        for col in table.columns:
+            nullable = "NULL" if col.nullable else "NOT NULL"
+            default = str(col.server_default.arg.text) if col.server_default is not None else ""
+            col_strs.append(f"{col.name}:{_type_to_string(col.type)}:{nullable}:{default}")
+        idx_strs: list[str] = []
+        for idx in sorted(table.indexes, key=lambda x: x.name or ""):
+            idx_strs.append(f"{idx.name}:{sorted(idx.columns.keys())}:{idx.unique}")
+        ordered_parts.append(f"{table_name}({';'.join(col_strs)})({';'.join(idx_strs)})")
+    return hashlib.sha256("|".join(ordered_parts).encode()).hexdigest()
+
+
+# ── SchemaSync orchestrator ──
+
+
+class SchemaSync:
+    """全自动 Schema 同步引擎。
+
+    启动时完成：检测 schema 差异 → 自动备份 → DDL 执行 → 审计追踪。
+    """
+
+    def __init__(self, engine: Engine, backup_dir: str = "./backups", mysqldump_path: str = "mysqldump"):
+        self._engine = engine
+        self._backup_dir = Path(backup_dir)
+        self._mysqldump_path = mysqldump_path
+        self._backup_dir.mkdir(parents=True, exist_ok=True)
+
+    def execute(self) -> SchemaDiff | None:
+        """执行完整的 Schema 同步流程。
+
+        Returns:
+            SchemaDiff — 有变更时返回 diff 对象。
+            None — schema 已是最新，无需同步。
+        """
+        current_hash = _compute_schema_hash(SQLModel.metadata)
+        stored_hash = self._get_schema_version()
+        if current_hash == stored_hash:
+            logger.debug("Schema 哈希未变，跳过同步")
+            return None
+
+        target = inspect_target(SQLModel.metadata)
+        current = inspect_current(self._engine)
+        diff = compute_diff(target, current)
+
+        if not self._has_changes(diff):
+            self._set_schema_version(current_hash)
+            return diff
+
+        logger.info(
+            "发现 schema 变更: %d 新表, %d 列变更, %d 索引变更, %d 外键变更",
+            len(diff.tables_to_create), len(diff.column_changes),
+            len(diff.index_changes), len(diff.fk_changes),
+        )
+
+        backup_paths = self.backup_tables(diff)
+        change_count = self.apply_changes(diff)
+        self.record_migration(diff, backup_paths)
+        logger.info("Schema 同步完成，执行了 %d 个变更", change_count)
+        return diff
+
+    @staticmethod
+    def _has_changes(diff: SchemaDiff) -> bool:
+        return bool(diff.tables_to_create or diff.column_changes
+                    or diff.index_changes or diff.fk_changes)
+
+    def backup_tables(self, diff: SchemaDiff) -> dict[str, str]:
+        """备份受影响的表。由 Task 5 实现完整逻辑。"""
+        return {}
+
+    def apply_changes(self, diff: SchemaDiff) -> int:
+        """执行 DDL 变更。由 Task 5 实现完整逻辑。"""
+        return 0
+
+    def record_migration(self, diff: SchemaDiff, backup_paths: dict[str, str]) -> None:
+        """记录迁移审计日志。由 Task 5 实现完整逻辑。"""
+        pass
+
+    # ── Schema version tracking ──
+
+    def _ensure_schema_version_table(self) -> None:
+        """确保 _schema_version 表存在。兼容 MySQL 和 SQLite。"""
+        if "sqlite" in str(self._engine.url):
+            sql = (
+                "CREATE TABLE IF NOT EXISTS _schema_version ("
+                "  skey VARCHAR(64) PRIMARY KEY,"
+                "  svalue VARCHAR(128) NOT NULL,"
+                "  updated_at DATETIME DEFAULT CURRENT_TIMESTAMP"
+                ")"
+            )
+        else:
+            sql = (
+                "CREATE TABLE IF NOT EXISTS _schema_version ("
+                "  skey VARCHAR(64) PRIMARY KEY,"
+                "  svalue VARCHAR(128) NOT NULL,"
+                "  updated_at DATETIME DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP"
+                ")"
+            )
+        with self._engine.begin() as conn:
+            conn.execute(sa_text(sql))
+
+    def _get_schema_version(self) -> str | None:
+        """读取数据库中的 schema 哈希。"""
+        self._ensure_schema_version_table()
+        try:
+            with self._engine.connect() as conn:
+                row = conn.execute(
+                    sa_text("SELECT svalue FROM _schema_version WHERE skey = 'schema_hash'")
+                ).first()
+                return row[0] if row else None
+        except Exception:
+            return None
+
+    def _set_schema_version(self, hash_val: str) -> None:
+        """写入 schema 哈希。兼容 MySQL 和 SQLite。"""
+        self._ensure_schema_version_table()
+        with self._engine.begin() as conn:
+            if "sqlite" in str(self._engine.url):
+                conn.execute(sa_text(
+                    "INSERT OR REPLACE INTO _schema_version (skey, svalue) VALUES ('schema_hash', :val)"
+                ), {"val": hash_val})
+            else:
+                conn.execute(sa_text(
+                    "INSERT INTO _schema_version (skey, svalue) VALUES ('schema_hash', :val) "
+                    "ON DUPLICATE KEY UPDATE svalue = :val"
+                ), {"val": hash_val})

@@ -1,4 +1,4 @@
-"""Tests for app/core/schema_sync.py — dataclasses + _type_to_string + inspect_target."""
+"""Tests for app/core/schema_sync.py — SchemaSync module."""
 
 from __future__ import annotations
 
@@ -21,6 +21,12 @@ from app.core.schema_sync import (
     _extract_default,
     inspect_target,
     inspect_current,
+    _compile_ddl,
+    _compile_index_ddl,
+    _compile_fk_ddl,
+    _affected_tables,
+    _compute_schema_hash,
+    SchemaSync,
 )
 from sqlalchemy import String, Integer, Boolean, DateTime, Float
 
@@ -388,3 +394,96 @@ class TestComputeDiff:
         assert not diff.column_changes
         assert not diff.index_changes
         assert not diff.fk_changes
+
+
+# ── DDL compilation ──
+
+class TestCompileDDL:
+    def test_add_column(self):
+        from app.core.schema_sync import _compile_ddl, ColumnChange, ColumnDef
+        change = ColumnChange(table="user", change_type="add", column_name="nickname",
+            definition=ColumnDef(name="nickname", type_str="VARCHAR(100)", nullable=True))
+        sql = _compile_ddl(change)
+        assert "ALTER TABLE user" in sql
+        assert "ADD COLUMN" in sql
+        assert "VARCHAR(100)" in sql
+
+    def test_add_column_not_null_with_default(self):
+        from app.core.schema_sync import _compile_ddl, ColumnChange, ColumnDef
+        change = ColumnChange(table="user", change_type="add", column_name="status",
+            definition=ColumnDef(name="status", type_str="VARCHAR(20)", nullable=False, default="active"))
+        sql = _compile_ddl(change)
+        assert "NOT NULL" in sql
+        assert "DEFAULT" in sql
+
+    def test_rename_column(self):
+        from app.core.schema_sync import _compile_ddl, ColumnChange
+        change = ColumnChange(table="user", change_type="rename", column_name="nickname",
+            old_name="nick_name")
+        sql = _compile_ddl(change)
+        assert "RENAME COLUMN" in sql
+        assert "nick_name" in sql
+        assert "nickname" in sql
+
+    def test_alter_column_type(self):
+        from app.core.schema_sync import _compile_ddl, ColumnChange, ColumnDef
+        change = ColumnChange(table="user", change_type="alter", column_name="name",
+            definition=ColumnDef(name="name", type_str="VARCHAR(100)", nullable=False))
+        sql = _compile_ddl(change)
+        assert "MODIFY COLUMN" in sql
+        assert "VARCHAR(100)" in sql
+
+    def test_drop_raises(self):
+        import pytest
+        from app.core.schema_sync import _compile_ddl, ColumnChange
+        change = ColumnChange(table="user", change_type="drop", column_name="old_col")
+        with pytest.raises(NotImplementedError):
+            _compile_ddl(change)
+
+
+class TestAffectedTables:
+    def test_collects_all(self):
+        from app.core.schema_sync import (
+            _affected_tables, SchemaDiff, TableDef,
+            ColumnChange, IndexChange, ForeignKeyChange,
+            IndexDef, ForeignKeyDef, ColumnDef,
+        )
+        diff = SchemaDiff(
+            tables_to_create=[TableDef(name="new_table", columns={})],
+            column_changes=[ColumnChange(table="user", change_type="add", column_name="x")],
+            index_changes=[IndexChange(table="course", change_type="add",
+                definition=IndexDef(name="ix", columns=["id"]))],
+            fk_changes=[ForeignKeyChange(table="log", change_type="add",
+                definition=ForeignKeyDef(columns=["uid"], ref_table="user", ref_columns=["id"]))],
+        )
+        assert _affected_tables(diff) == {"new_table", "user", "course", "log"}
+
+
+class TestSchemaHash:
+    def test_is_deterministic(self):
+        from app.core.schema_sync import _compute_schema_hash
+        from sqlmodel import SQLModel
+        assert _compute_schema_hash(SQLModel.metadata) == _compute_schema_hash(SQLModel.metadata)
+        assert len(_compute_schema_hash(SQLModel.metadata)) == 64
+
+    def test_differs_when_metadata_changes(self, monkeypatch):
+        from app.core.schema_sync import _compute_schema_hash
+        from sqlmodel import SQLModel
+        h1 = _compute_schema_hash(SQLModel.metadata)
+        monkeypatch.setattr(SQLModel.metadata, "tables", {})
+        h2 = _compute_schema_hash(SQLModel.metadata)
+        assert h1 != h2
+
+
+class TestSchemaSyncIntegration:
+    def test_execute_twice_returns_none_second_time(self):
+        """在 SQLite 上首次执行后，第二次执行应返回 None（哈希一致）。"""
+        from sqlmodel import SQLModel, create_engine
+        from app.core.schema_sync import SchemaSync
+        engine = create_engine("sqlite://", echo=False)
+        SQLModel.metadata.create_all(engine)
+        sync = SchemaSync(engine, backup_dir="./backups_test")
+        result1 = sync.execute()
+        result2 = sync.execute()
+        assert result2 is None  # 第二次应跳过
+        engine.dispose()
