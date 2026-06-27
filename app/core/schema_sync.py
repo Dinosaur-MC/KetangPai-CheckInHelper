@@ -12,8 +12,9 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Literal
 
+import tenacity
 from sqlalchemy import Engine, inspect as sa_inspect, text as sa_text
-from sqlmodel import SQLModel
+from sqlmodel import SQLModel, Session, select
 
 logger = logging.getLogger(__name__)
 
@@ -446,6 +447,34 @@ def _compute_schema_hash(metadata) -> str:
     return hashlib.sha256("|".join(ordered_parts).encode()).hexdigest()
 
 
+# ── wait_db_ready ──
+
+
+def wait_db_ready(
+    engine: Engine,
+    max_tries: int = 300,
+    wait_seconds: int = 1,
+) -> None:
+    """重试等待数据库就绪。每次重试间隔 1s，最多重试 300 次（5 分钟）。"""
+
+    @tenacity.retry(
+        stop=tenacity.stop_after_attempt(max_tries),
+        wait=tenacity.wait_fixed(wait_seconds),
+        before=tenacity.before_log(logger, logging.INFO),
+        after=tenacity.after_log(logger, logging.WARN),
+    )
+    def _ping():
+        with Session(engine) as session:
+            session.exec(select(1))
+
+    try:
+        _ping()
+        logger.info("数据库连接就绪")
+    except Exception as e:
+        logger.error("数据库连接失败，已达最大重试次数: %s", e)
+        raise
+
+
 # ── SchemaSync orchestrator ──
 
 
@@ -500,16 +529,131 @@ class SchemaSync:
                     or diff.index_changes or diff.fk_changes)
 
     def backup_tables(self, diff: SchemaDiff) -> dict[str, str]:
-        """备份受影响的表。由 Task 5 实现完整逻辑。"""
-        return {}
+        """备份受影响的表。跳过纯新增列操作。"""
+        tables = _affected_tables(diff)
+        if not tables:
+            return {}
+
+        # 检查是否有破坏性变更（需备份）
+        has_destructive = any(
+            c.change_type in ("drop", "rename", "alter")
+            for c in diff.column_changes
+        ) or bool(diff.index_changes or diff.fk_changes)
+
+        if not has_destructive:
+            logger.info("仅新增列操作，跳过备份")
+            return {}
+
+        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+        backup_dir = self._backup_dir / timestamp
+        backup_dir.mkdir(parents=True, exist_ok=True)
+
+        url = self._engine.url
+        paths: dict[str, str] = {}
+        for table in sorted(tables):
+            path = backup_dir / f"{table}.sql"
+            cmd = [
+                self._mysqldump_path,
+                f"--host={url.host or 'localhost'}",
+                f"--port={url.port or 3306}",
+                f"--user={url.username or 'root'}",
+                f"--result-file={path}",
+                "--single-transaction",
+                "--quick",
+                url.database or "",
+                table,
+            ]
+            try:
+                env = os.environ.copy()
+                if url.password:
+                    env["MYSQL_PWD"] = url.password
+                subprocess.run(cmd, check=True, capture_output=True, text=True, env=env)
+                paths[table] = str(path)
+                logger.info("备份完成: %s", path)
+            except subprocess.CalledProcessError as e:
+                logger.warning("备份表 %s 失败 (stderr): %s", table, e.stderr)
+                raise
+
+        return paths
 
     def apply_changes(self, diff: SchemaDiff) -> int:
-        """执行 DDL 变更。由 Task 5 实现完整逻辑。"""
-        return 0
+        """执行 DDL 变更。返回执行的操作数。"""
+        count = 0
+
+        # Phase 1: CREATE TABLE（新表）
+        for tdef in diff.tables_to_create:
+            logger.info("创建表: %s", tdef.name)
+            tdef_sa = SQLModel.metadata.tables.get(tdef.name)
+            if tdef_sa is not None:
+                tdef_sa.create(self._engine)
+                count += 1
+
+        # Phase 2: 按表分组列变更（安全顺序：add → rename → alter）
+        table_column_changes: dict[str, list[ColumnChange]] = {}
+        for cc in diff.column_changes:
+            table_column_changes.setdefault(cc.table, []).append(cc)
+
+        order = {"add": 0, "rename": 1, "alter": 2}
+        for table, changes in table_column_changes.items():
+            changes_sorted = sorted(changes, key=lambda c: order.get(c.change_type, 9))
+            for change in changes_sorted:
+                sql = _compile_ddl(change)
+                logger.debug("执行 DDL: %s", sql)
+                with self._engine.begin() as conn:
+                    conn.execute(sa_text(sql))
+                count += 1
+
+        # Phase 3: 索引变更（先 drop 后 add）
+        table_index_changes: dict[str, list[IndexChange]] = {}
+        for ic in diff.index_changes:
+            table_index_changes.setdefault(ic.table, []).append(ic)
+        for table, changes in table_index_changes.items():
+            for change in sorted(changes, key=lambda c: 0 if c.change_type == "drop" else 1):
+                sql = _compile_index_ddl(change)
+                with self._engine.begin() as conn:
+                    conn.execute(sa_text(sql))
+                count += 1
+
+        # Phase 4: 外键变更（先 drop 后 add）
+        table_fk_changes: dict[str, list[ForeignKeyChange]] = {}
+        for fc in diff.fk_changes:
+            table_fk_changes.setdefault(fc.table, []).append(fc)
+        for table, changes in table_fk_changes.items():
+            for change in sorted(changes, key=lambda c: 0 if c.change_type == "drop" else 1):
+                sql = _compile_fk_ddl(change)
+                with self._engine.begin() as conn:
+                    conn.execute(sa_text(sql))
+                count += 1
+
+        return count
 
     def record_migration(self, diff: SchemaDiff, backup_paths: dict[str, str]) -> None:
-        """记录迁移审计日志。由 Task 5 实现完整逻辑。"""
-        pass
+        """记录迁移审计日志和 schema 哈希。"""
+        audit_record = {
+            "executed_at": datetime.now(timezone.utc).isoformat(),
+            "schema_hash": _compute_schema_hash(SQLModel.metadata),
+            "changes": {
+                "tables_created": [t.name for t in diff.tables_to_create],
+                "columns_changed": [
+                    f"{c.table}.{c.column_name}:{c.change_type}" for c in diff.column_changes
+                ],
+                "indexes_changed": [
+                    f"{c.table}.{c.definition.name}:{c.change_type}" for c in diff.index_changes
+                ],
+                "foreign_keys_changed": [
+                    f"{c.table}.{'_'.join(c.definition.columns)}:{c.change_type}"
+                    for c in diff.fk_changes
+                ],
+            },
+            "backups": backup_paths,
+        }
+        audit_dir = self._backup_dir / "_audit"
+        audit_dir.mkdir(parents=True, exist_ok=True)
+        audit_file = audit_dir / f"{datetime.now():%Y%m%d_%H%M%S}_migration.json"
+        audit_file.write_text(json.dumps(audit_record, indent=2, default=str), encoding="utf-8")
+        logger.info("审计日志写入: %s", audit_file)
+
+        self._set_schema_version(_compute_schema_hash(SQLModel.metadata))
 
     # ── Schema version tracking ──
 

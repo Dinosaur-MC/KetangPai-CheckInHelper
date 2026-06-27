@@ -487,3 +487,98 @@ class TestSchemaSyncIntegration:
         result2 = sync.execute()
         assert result2 is None  # 第二次应跳过
         engine.dispose()
+
+
+# ── Task 5: wait_db_ready ──
+
+
+class TestWaitDbReady:
+    def test_wait_db_ready_ok(self):
+        """可用数据库应快速通过。"""
+        from sqlmodel import create_engine
+        from app.core.schema_sync import wait_db_ready
+        engine = create_engine("sqlite://", echo=False)
+        wait_db_ready(engine, max_tries=3)
+        engine.dispose()
+
+    def test_wait_db_ready_fails(self):
+        """不可用的数据库应抛出异常。"""
+        from sqlmodel import create_engine
+        from app.core.schema_sync import wait_db_ready
+        engine = create_engine("sqlite:///nonexistent_dir_xyz/db.sqlite", echo=False)
+        with pytest.raises(Exception):
+            wait_db_ready(engine, max_tries=2)
+
+
+class TestSchemaSyncFull:
+    def test_backup_tables_no_destructive_changes(self):
+        """纯 ADD COLUMN 时应跳过备份。"""
+        from sqlmodel import SQLModel, create_engine
+        from app.core.schema_sync import (
+            SchemaSync, SchemaDiff, ColumnChange, ColumnDef, TableDef,
+        )
+        engine = create_engine("sqlite://", echo=False)
+        SQLModel.metadata.create_all(engine)
+        sync = SchemaSync(engine, backup_dir="./backups_test")
+
+        diff = SchemaDiff(
+            column_changes=[
+                ColumnChange(table="user", change_type="add", column_name="nickname",
+                    definition=ColumnDef(name="nickname", type_str="VARCHAR(100)")),
+            ]
+        )
+        paths = sync.backup_tables(diff)
+        assert paths == {}  # 应跳过备份
+        engine.dispose()
+
+    def test_record_migration_creates_audit_file(self, tmp_path):
+        """验证 audit 文件被正确创建。"""
+        from sqlmodel import SQLModel, create_engine
+        from app.core.schema_sync import SchemaSync, SchemaDiff
+        engine = create_engine("sqlite://", echo=False)
+        SQLModel.metadata.create_all(engine)
+        backup_dir = tmp_path / "backups"
+        sync = SchemaSync(engine, backup_dir=str(backup_dir))
+
+        diff = SchemaDiff()
+        sync.record_migration(diff, {})
+
+        # 验证 audit 文件存在
+        audit_dir = backup_dir / "_audit"
+        files = list(audit_dir.glob("*_migration.json"))
+        assert len(files) >= 1
+
+        # 验证内容
+        import json
+        content = json.loads(files[0].read_text(encoding="utf-8"))
+        assert "executed_at" in content
+        assert "schema_hash" in content
+        assert "changes" in content
+
+        engine.dispose()
+
+    def test_apply_changes_add_column(self):
+        """验证 apply_changes 能执行 ADD COLUMN。"""
+        from sqlmodel import SQLModel, create_engine
+        from sqlalchemy import inspect as sa_inspect
+        from app.core.schema_sync import (
+            SchemaSync, SchemaDiff, ColumnChange, ColumnDef,
+        )
+        engine = create_engine("sqlite://", echo=False)
+        SQLModel.metadata.create_all(engine)
+        sync = SchemaSync(engine, backup_dir="./backups_test")
+
+        diff = SchemaDiff(
+            column_changes=[
+                ColumnChange(table="user", change_type="add", column_name="test_col",
+                    definition=ColumnDef(name="test_col", type_str="VARCHAR(50)", nullable=True)),
+            ]
+        )
+        count = sync.apply_changes(diff)
+        assert count >= 1
+
+        # 验证列已添加
+        inspector = sa_inspect(engine)
+        cols = [c["name"] for c in inspector.get_columns("user")]
+        assert "test_col" in cols
+        engine.dispose()
