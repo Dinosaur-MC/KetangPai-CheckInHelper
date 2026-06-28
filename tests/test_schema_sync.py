@@ -150,7 +150,7 @@ class TestTypeToString:
     @pytest.mark.parametrize(
         ("sqlalchemy_type", "expected"),
         [
-            (String(), "VARCHAR"),
+            (String(), "VARCHAR(255)"),
             (String(255), "VARCHAR(255)"),
             (Integer(), "INTEGER"),
             (Boolean(), "BOOLEAN"),

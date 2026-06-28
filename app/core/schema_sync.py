@@ -265,9 +265,17 @@ def _extract_default(default_val) -> str | None:
 
 
 def _type_to_string(col_type) -> str:
-    """将 SQLAlchemy 类型规范化为统一字符串表示。"""
+    """将 SQLAlchemy 类型规范化为统一字符串表示。
+
+    MySQL 要求 VARCHAR 必须有长度，AutoString 默认无长度 → 补为 VARCHAR(255)。
+    其他类型直接返回大写形式。
+    """
     raw = str(col_type)
-    return raw.upper()
+    upper = raw.upper()
+    # VARCHAR 无长度时补默认值（MySQL 必要）
+    if upper == "VARCHAR":
+        return "VARCHAR(255)"
+    return upper
 
 
 def inspect_target(metadata) -> dict[str, TableDef]:
