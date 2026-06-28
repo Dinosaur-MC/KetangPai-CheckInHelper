@@ -925,7 +925,8 @@ createApp({
               time_windows: JSON.stringify(autoTimeWindows.value),
             });
             showToast(res.message || "配置已保存");
-            autoConfig.value = res.data;
+            // 保存后从服务端重新获取最新配置和状态，确保 UI 一致性
+            await Promise.all([loadAutoConfig(), loadAutoStatus()]);
           } catch (e) {
             showToast(e.message || "保存失败");
           } finally {
@@ -965,6 +966,27 @@ createApp({
         function removeTimeWindow(index) {
           autoTimeWindows.value.splice(index, 1);
         }
+
+        // 未保存更改检测 — 比较本地状态与服务端已保存配置
+        const autoDirty = computed(() => {
+          const saved = autoConfig.value;
+          if (!saved) return false;
+
+          if (autoEnabled.value !== (saved.enabled === true)) return true;
+
+          const savedTypes = ((saved.checkin_types || "1,2").split(",").map(s => s.trim()).filter(Boolean).sort());
+          const currentTypes = [];
+          if (autoTypeDigit.value) currentTypes.push("1");
+          if (autoTypeGps.value) currentTypes.push("2");
+          currentTypes.sort();
+          if (savedTypes.join(",") !== currentTypes.join(",")) return true;
+
+          const savedWindows = (saved.time_windows || []).map(w => `${w.start}-${w.end}`).sort().join(",");
+          const currentWindows = autoTimeWindows.value.map(w => `${w.start}-${w.end}`).sort().join(",");
+          if (savedWindows !== currentWindows) return true;
+
+          return false;
+        });
 
         // ---- 日志 ----
         async function loadLogs() {
@@ -1293,6 +1315,7 @@ createApp({
             autoConfig,
             autoStatus,
             autoSaving,
+            autoDirty,
             loadAutoConfig,
             saveAutoConfig,
             loadAutoStatus,

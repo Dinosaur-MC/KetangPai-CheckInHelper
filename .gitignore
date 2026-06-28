@@ -19,3 +19,4 @@ docs/superpowers/*
 
 # Database backups
 backups/
+backups_test/

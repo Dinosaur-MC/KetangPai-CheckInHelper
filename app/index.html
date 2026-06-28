@@ -431,9 +431,14 @@
                                     </div>
                                 </div>
 
+                                <!-- 未保存提示 -->
+                                <div class="auto-section" v-if="autoDirty && autoConfig">
+                                    <div class="unsaved-badge">⚠ 配置已更改，请保存后生效</div>
+                                </div>
+
                                 <!-- 按钮 -->
                                 <div class="auto-actions">
-                                    <mdui-button variant="outlined" :disabled="!autoEnabled || autoSaving"
+                                    <mdui-button variant="outlined" :disabled="!autoConfig?.enabled || autoSaving"
                                         @click="triggerAutoCheckin">
                                         ↻ 立即扫描
                                     </mdui-button>
