@@ -468,15 +468,18 @@ class TestCompileDDL:
         assert "MODIFY COLUMN" in sql
         assert "VARCHAR(100)" in sql
 
-    def test_alter_auto_increment_pk(self):
-        """alter 主键自增列时，DDL 应包含 AUTO_INCREMENT 和 PRIMARY KEY。"""
+    def test_alter_auto_increment_only(self):
+        """alter 自增列时 DDL 应包含 AUTO_INCREMENT，但不含 PRIMARY KEY。
+
+        MySQL MODIFY COLUMN 不支持 PRIMARY KEY（表已有 PK 时报 1068）。
+        """
         from app.core.schema_sync import _compile_ddl, ColumnChange, ColumnDef
         change = ColumnChange(table="user", change_type="alter", column_name="id",
             definition=ColumnDef(name="id", type_str="BIGINT",
                                 nullable=False, autoincrement=True, primary_key=True))
         sql = _compile_ddl(change)
         assert "AUTO_INCREMENT" in sql
-        assert "PRIMARY KEY" in sql
+        assert "PRIMARY KEY" not in sql  # MODIFY COLUMN 不应含 PK
         assert "MODIFY COLUMN" in sql
         assert "`id`" in sql
         assert "BIGINT" in sql
@@ -515,7 +518,7 @@ class TestCompileDDL:
         assert "PRIMARY KEY" in sql
 
     def test_alter_varchar_pk_no_autoincrement(self):
-        """ALTER VARCHAR 主键不应生成 AUTO_INCREMENT。"""
+        """ALTER VARCHAR 主键不应生成 AUTO_INCREMENT，也不应有 PRIMARY KEY。"""
         from app.core.schema_sync import _compile_ddl, ColumnChange, ColumnDef
         col = ColumnDef(name="id", type_str="VARCHAR(255)", nullable=False,
                        primary_key=True, autoincrement=True)
@@ -523,7 +526,7 @@ class TestCompileDDL:
                             column_name="id", definition=col)
         sql = _compile_ddl(change)
         assert "AUTO_INCREMENT" not in sql
-        assert "PRIMARY KEY" in sql
+        assert "PRIMARY KEY" not in sql
 
     def test_autoincrement_only_for_integer(self):
         """AUTO_INCREMENT 应只对整数类型生效。"""

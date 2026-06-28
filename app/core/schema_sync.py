@@ -500,6 +500,8 @@ def _compile_ddl(change: ColumnChange) -> str:
     elif change.change_type == "alter":
         col = change.definition
         assert col is not None
+        # 注意：MySQL 的 MODIFY COLUMN 不支持 PRIMARY KEY（表已有 PK 时报 1068）
+        # PK 约束由 CREATE TABLE 阶段处理，alter 阶段不应触及
         parts = [f"ALTER TABLE {table} MODIFY COLUMN {_qt(col.name)} {col.type_str}"]
         if not col.nullable:
             parts.append("NOT NULL")
@@ -513,8 +515,6 @@ def _compile_ddl(change: ColumnChange) -> str:
                     "列 %s.%s 类型 %s 不支持 AUTO_INCREMENT，已跳过",
                     change.table, col.name, col.type_str,
                 )
-        if col.primary_key:
-            parts.append("PRIMARY KEY")
         if col.comment:
             escaped = col.comment.replace("'", "\\'")
             parts.append(f"COMMENT '{escaped}'")
