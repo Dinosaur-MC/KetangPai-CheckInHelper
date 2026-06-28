@@ -59,6 +59,7 @@ async def lifespan(app: FastAPI):
                         retention_days=settings.log_retention_days,
                         max_per_account=settings.log_max_per_account,
                     )
+                    session.commit()
             except Exception as e:
                 logger.warning("签到日志后台清理异常: %s", e)
             await asyncio.sleep(86400)
