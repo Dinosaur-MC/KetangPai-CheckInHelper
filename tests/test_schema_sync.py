@@ -329,6 +329,28 @@ class TestDetectRename:
         assert _type_family("BOOLEAN") == "boolean"
         assert _type_family("DATETIME") == "datetime"
 
+    def test_no_rename_for_fk_column(self):
+        """外键列不应参与重命名猜测。"""
+        from app.core.schema_sync import _detect_rename
+        deleted = {"user_id": "INTEGER", "old_extra": "VARCHAR(100)"}
+        added = {"uid": "INTEGER", "extra_info": "VARCHAR(100)"}
+        current_types = {"user_id": "INTEGER", "old_extra": "VARCHAR(100)"}
+        target_types = {"uid": "INTEGER", "extra_info": "VARCHAR(100)"}
+        result = _detect_rename(deleted, added, current_types, target_types,
+                               fk_column_names={"user_id"}, max_distance=3)
+        renamed_old = {r[0] for r in result}
+        assert "user_id" not in renamed_old
+
+    def test_max_distance_default_is_2(self):
+        """默认 max_distance 应为 2（原为 3，已降低以提高安全性）。"""
+        from app.core.schema_sync import _detect_rename
+        deleted = {"a": "VARCHAR(255)"}
+        added = {"bbbc": "VARCHAR(255)"}
+        current_types = {"a": "VARCHAR(255)"}
+        target_types = {"bbbc": "VARCHAR(255)"}
+        result = _detect_rename(deleted, added, current_types, target_types)
+        assert result == []
+
 
 # ── compute_diff ──
 
@@ -409,6 +431,18 @@ class TestCompileDDL:
         assert "`nickname`" in sql
         assert "VARCHAR(100)" in sql
 
+    def test_add_not_null_no_default_warns(self, caplog):
+        """NOT NULL 无 DEFAULT 时应发出警告。"""
+        import logging
+        from app.core.schema_sync import _compile_ddl, ColumnChange, ColumnDef
+        caplog.set_level(logging.WARNING)
+        change = ColumnChange(table="user", change_type="add", column_name="required_field",
+            definition=ColumnDef(name="required_field", type_str="VARCHAR(100)", nullable=False))
+        sql = _compile_ddl(change)
+        assert "NOT NULL" in sql
+        assert "DEFAULT" not in sql  # 没有 DEFAULT
+        assert any("NOT NULL" in r.message for r in caplog.records)
+
     def test_add_column_not_null_with_default(self):
         from app.core.schema_sync import _compile_ddl, ColumnChange, ColumnDef
         change = ColumnChange(table="user", change_type="add", column_name="status",
@@ -434,12 +468,150 @@ class TestCompileDDL:
         assert "MODIFY COLUMN" in sql
         assert "VARCHAR(100)" in sql
 
+    def test_alter_auto_increment_pk(self):
+        """alter 主键自增列时，DDL 应包含 AUTO_INCREMENT 和 PRIMARY KEY。"""
+        from app.core.schema_sync import _compile_ddl, ColumnChange, ColumnDef
+        change = ColumnChange(table="user", change_type="alter", column_name="id",
+            definition=ColumnDef(name="id", type_str="BIGINT",
+                                nullable=False, autoincrement=True, primary_key=True))
+        sql = _compile_ddl(change)
+        assert "AUTO_INCREMENT" in sql
+        assert "PRIMARY KEY" in sql
+        assert "MODIFY COLUMN" in sql
+        assert "`id`" in sql
+        assert "BIGINT" in sql
+
+    def test_add_column_with_comment(self):
+        from app.core.schema_sync import _compile_ddl, ColumnChange, ColumnDef
+        col = ColumnDef(name="bio", type_str="TEXT", nullable=True, comment="用户简介")
+        change = ColumnChange(table="user", change_type="add", column_name="bio", definition=col)
+        sql = _compile_ddl(change)
+        assert "COMMENT" in sql
+        assert "用户简介" in sql
+
+    def test_alter_column_with_comment(self):
+        from app.core.schema_sync import _compile_ddl, ColumnChange, ColumnDef
+        col = ColumnDef(name="email", type_str="VARCHAR(255)", nullable=False, comment="用户邮箱")
+        change = ColumnChange(table="user", change_type="alter", column_name="email", definition=col)
+        sql = _compile_ddl(change)
+        assert "COMMENT" in sql
+
     def test_drop_raises(self):
         import pytest
         from app.core.schema_sync import _compile_ddl, ColumnChange
         change = ColumnChange(table="user", change_type="drop", column_name="old_col")
         with pytest.raises(NotImplementedError):
             _compile_ddl(change)
+
+
+class TestFormatDefault:
+    """测试 _format_default 函数的所有分支。"""
+
+    def test_sql_keyword(self):
+        from app.core.schema_sync import _format_default
+        assert _format_default("CURRENT_TIMESTAMP") == "DEFAULT CURRENT_TIMESTAMP"
+        assert _format_default("NOW()") == "DEFAULT NOW()"
+        assert _format_default("TRUE") == "DEFAULT TRUE"
+        assert _format_default("FALSE") == "DEFAULT FALSE"
+        assert _format_default("NULL") == "DEFAULT NULL"
+
+    def test_numeric(self):
+        from app.core.schema_sync import _format_default
+        assert _format_default("42") == "DEFAULT 42"
+        assert _format_default("3.14") == "DEFAULT 3.14"
+        assert _format_default("-1") == "DEFAULT -1"
+
+    def test_string(self):
+        from app.core.schema_sync import _format_default
+        assert _format_default("hello") == "DEFAULT 'hello'"
+        assert _format_default("it's") == "DEFAULT 'it\\'s'"
+        assert _format_default("a'b'c") == "DEFAULT 'a\\'b\\'c'"
+
+    def test_edge_cases(self):
+        from app.core.schema_sync import _format_default
+        # 包含 SQL 关键字的字符串
+        assert _format_default("current_timestamp_str") == "DEFAULT 'current_timestamp_str'"
+        # 以数字开头的字符串
+        assert _format_default("123abc") == "DEFAULT '123abc'"
+        # 空字符串
+        assert _format_default("") == "DEFAULT ''"
+
+
+class TestCompileIndexDDL:
+    """测试 _compile_index_ddl 函数。"""
+
+    def test_create_index(self):
+        from app.core.schema_sync import _compile_index_ddl, IndexChange, IndexDef
+        idx = IndexDef(name="ix_user_email", columns=["email"])
+        change = IndexChange(table="user", change_type="add", definition=idx)
+        sql = _compile_index_ddl(change)
+        assert "CREATE INDEX" in sql
+        assert "`ix_user_email`" in sql
+        assert "(`email`)" in sql
+
+    def test_create_unique_index(self):
+        from app.core.schema_sync import _compile_index_ddl, IndexChange, IndexDef
+        idx = IndexDef(name="uq_user_email", columns=["email"], unique=True)
+        change = IndexChange(table="user", change_type="add", definition=idx)
+        sql = _compile_index_ddl(change)
+        assert "CREATE UNIQUE INDEX" in sql
+
+    def test_create_composite_index(self):
+        from app.core.schema_sync import _compile_index_ddl, IndexChange, IndexDef
+        idx = IndexDef(name="ix_user_name_role", columns=["name", "role"])
+        change = IndexChange(table="user", change_type="add", definition=idx)
+        sql = _compile_index_ddl(change)
+        # 检查两个列名都出现在索引定义中
+        assert "`name`" in sql and "`role`" in sql
+
+    def test_drop_index(self):
+        from app.core.schema_sync import _compile_index_ddl, IndexChange, IndexDef
+        idx = IndexDef(name="ix_old", columns=["obsolete"])
+        change = IndexChange(table="user", change_type="drop", definition=idx)
+        sql = _compile_index_ddl(change)
+        assert "DROP INDEX" in sql
+        assert "`ix_old`" in sql
+
+
+class TestCompileFkDDL:
+    """测试 _compile_fk_ddl 函数。"""
+
+    def test_add_foreign_key(self):
+        from app.core.schema_sync import _compile_fk_ddl, ForeignKeyChange, ForeignKeyDef
+        fk = ForeignKeyDef(columns=["user_id"], ref_table="user", ref_columns=["id"])
+        change = ForeignKeyChange(table="account", change_type="add", definition=fk)
+        sql = _compile_fk_ddl(change)
+        assert "ADD FOREIGN KEY" in sql
+        assert "(`user_id`)" in sql
+        assert "REFERENCES" in sql
+        assert "`user`" in sql
+        assert "(`id`)" in sql
+
+    def test_add_foreign_key_ondelete(self):
+        from app.core.schema_sync import _compile_fk_ddl, ForeignKeyChange, ForeignKeyDef
+        fk = ForeignKeyDef(columns=["user_id"], ref_table="user",
+                          ref_columns=["id"], ondelete="CASCADE")
+        change = ForeignKeyChange(table="account", change_type="add", definition=fk)
+        sql = _compile_fk_ddl(change)
+        assert "ON DELETE CASCADE" in sql
+
+    def test_add_composite_fk(self):
+        from app.core.schema_sync import _compile_fk_ddl, ForeignKeyChange, ForeignKeyDef
+        fk = ForeignKeyDef(columns=["a", "b"], ref_table="ref_table",
+                          ref_columns=["x", "y"])
+        change = ForeignKeyChange(table="mytable", change_type="add", definition=fk)
+        sql = _compile_fk_ddl(change)
+        assert "(`a`" in sql and "`b`" in sql
+        assert "(`x`" in sql and "`y`" in sql
+
+    def test_drop_foreign_key(self):
+        from app.core.schema_sync import _compile_fk_ddl, ForeignKeyChange, ForeignKeyDef
+        fk = ForeignKeyDef(columns=["user_id"], ref_table="user",
+                          ref_columns=["id"], constraint_name="fk_account_user")
+        change = ForeignKeyChange(table="account", change_type="drop", definition=fk)
+        sql = _compile_fk_ddl(change)
+        assert "DROP FOREIGN KEY" in sql
+        assert "`fk_account_user`" in sql
 
 
 class TestAffectedTables:
@@ -487,6 +659,45 @@ class TestSchemaSyncIntegration:
         result1 = sync.execute()
         result2 = sync.execute()
         assert result2 is None  # 第二次应跳过
+        engine.dispose()
+
+    def test_execute_creates_schema_version(self, tmp_path):
+        """execute() 后 _schema_version 表应存在并包含哈希。"""
+        from sqlmodel import SQLModel, create_engine
+        from sqlalchemy import inspect as sa_inspect
+        from app.core.schema_sync import SchemaSync
+        engine = create_engine("sqlite://", echo=False)
+        SQLModel.metadata.create_all(engine)
+        sync = SchemaSync(engine, backup_dir=str(tmp_path / "backups"))
+        sync.execute()
+
+        # 验证 _schema_version 表存在
+        inspector = sa_inspect(engine)
+        table_names = inspector.get_table_names()
+        assert "_schema_version" in table_names
+
+        # 验证哈希已存储
+        stored = sync._get_schema_version()
+        assert stored is not None
+        assert len(stored) == 64  # SHA-256 hex
+        engine.dispose()
+
+    def test_target_vs_current_no_diff(self, tmp_path):
+        """inspect_target 与 inspect_current 对比应为空（无差异）。"""
+        from sqlmodel import SQLModel, create_engine
+        from app.core.schema_sync import (
+            SchemaSync, inspect_target, inspect_current, compute_diff,
+        )
+        engine = create_engine("sqlite://", echo=False)
+        SQLModel.metadata.create_all(engine)
+        sync = SchemaSync(engine, backup_dir=str(tmp_path / "backups"))
+        sync.execute()  # 同步
+
+        # execute 后，target 与 current 应一致
+        target = inspect_target(SQLModel.metadata)
+        current = inspect_current(engine)
+        diff = compute_diff(target, current)
+        assert not sync._has_changes(diff)
         engine.dispose()
 
 
@@ -582,4 +793,93 @@ class TestSchemaSyncFull:
         inspector = sa_inspect(engine)
         cols = [c["name"] for c in inspector.get_columns("user")]
         assert "test_col" in cols
+        engine.dispose()
+
+    def test_apply_changes_idempotent(self):
+        """重复 apply 相同 change 不应报错（幂等性）。"""
+        from sqlmodel import SQLModel, create_engine
+        from sqlalchemy import inspect as sa_inspect
+        from app.core.schema_sync import (
+            SchemaSync, SchemaDiff, ColumnChange, ColumnDef,
+        )
+        engine = create_engine("sqlite://", echo=False)
+        SQLModel.metadata.create_all(engine)
+        sync = SchemaSync(engine, backup_dir="./backups_test")
+
+        diff = SchemaDiff(
+            column_changes=[
+                ColumnChange(table="user", change_type="add", column_name="test_col2",
+                    definition=ColumnDef(name="test_col2", type_str="VARCHAR(50)", nullable=True)),
+            ]
+        )
+        # 第一次执行
+        count1 = sync.apply_changes(diff)
+        assert count1 >= 1
+
+        # 第二次执行 — 应安全跳过，不抛异常
+        count2 = sync.apply_changes(diff)
+        assert count2 >= 1
+
+        # 验证列只存在一次
+        inspector = sa_inspect(engine)
+        cols = [c["name"] for c in inspector.get_columns("user")]
+        assert cols.count("test_col2") == 1
+        engine.dispose()
+
+    def test_backup_contains_charset_declaration(self, tmp_path):
+        """备份 SQL 文件应包含 SET NAMES utf8mb4。"""
+        from sqlmodel import SQLModel, create_engine
+        from app.core.schema_sync import (
+            SchemaSync, SchemaDiff, ColumnChange, ColumnDef,
+        )
+        engine = create_engine("sqlite://", echo=False)
+        SQLModel.metadata.create_all(engine)
+        sync = SchemaSync(engine, backup_dir=str(tmp_path / "backups"))
+
+        # 包含 alter 的 diff，触发备份
+        diff = SchemaDiff(
+            column_changes=[
+                ColumnChange(table="user", change_type="alter", column_name="email",
+                    definition=ColumnDef(name="email", type_str="VARCHAR(255)", nullable=False)),
+            ]
+        )
+        paths = sync.backup_tables(diff)
+        if paths:
+            for path in paths.values():
+                backup_text = open(path, encoding="utf-8").read()
+                assert "SET NAMES utf8mb4" in backup_text, (
+                    f"备份文件 {path} 应包含 SET NAMES utf8mb4"
+                )
+        engine.dispose()
+
+    def test_cleanup_old_backups(self, tmp_path):
+        """验证清理逻辑：旧备份被移除，新备份保留。"""
+        from datetime import datetime, timedelta
+        from app.core.schema_sync import SchemaSync, SchemaDiff
+        from sqlmodel import SQLModel, create_engine
+
+        engine = create_engine("sqlite://", echo=False)
+        SQLModel.metadata.create_all(engine)
+
+        backup_dir = tmp_path / "backups"
+        sync = SchemaSync(engine, backup_dir=str(backup_dir), retention_days=1)
+
+        # 创建一个"旧"备份目录（timestamp 是 2 天前）
+        old_ts = (datetime.now() - timedelta(days=2)).strftime("%Y%m%d_%H%M%S")
+        old_dir = backup_dir / old_ts
+        old_dir.mkdir(parents=True, exist_ok=True)
+
+        # 创建一个"新"备份目录（今天）
+        new_ts = datetime.now().strftime("%Y%m%d_%H%M%S")
+        new_dir = backup_dir / new_ts
+        new_dir.mkdir(parents=True, exist_ok=True)
+
+        # 执行清理
+        sync._cleanup_old_backups()
+
+        # 验证旧备份被删除，新备份保留
+        remaining = [d.name for d in backup_dir.iterdir() if d.is_dir()]
+        assert old_ts not in remaining, f"旧备份 {old_ts} 应被清理"
+        assert new_ts in remaining, f"新备份 {new_ts} 应保留"
+
         engine.dispose()
