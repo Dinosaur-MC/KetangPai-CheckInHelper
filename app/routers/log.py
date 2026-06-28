@@ -119,3 +119,26 @@ async def delete_checkin_log(
     session.flush()
 
     return BaseResponse(message="删除成功")
+
+
+@router.post("/cleanup")
+async def trigger_log_cleanup(
+    current_user: User = Depends(get_current_user),
+    session: Session = Depends(get_session_with),
+):
+    """手动触发签到日志清理（仅管理员）。"""
+    if current_user.role != Role.admin:
+        raise HTTPException(status_code=403, detail="无清理权限")
+
+    from app.core.log_cleanup import run_cleanup
+    from app.core.settings import settings
+
+    result = run_cleanup(
+        session,
+        retention_days=settings.log_retention_days,
+        max_per_account=settings.log_max_per_account,
+    )
+    return BaseResponse(
+        data=result,
+        message=f"清理完成: 过期删除 {result['expired']} 条, 超限删除 {result['excess']} 条",
+    )
