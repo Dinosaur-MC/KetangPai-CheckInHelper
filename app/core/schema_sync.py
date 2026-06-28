@@ -596,6 +596,9 @@ class SchemaSync:
                 subprocess.run(cmd, check=True, capture_output=True, text=True, env=env)
                 paths[table] = str(path)
                 logger.info("备份完成: %s", path)
+            except FileNotFoundError:
+                logger.warning("mysqldump 未找到（%s），跳过备份", self._mysqldump_path)
+                return {}
             except subprocess.CalledProcessError as e:
                 logger.warning("备份表 %s 失败 (stderr): %s", table, e.stderr)
                 raise
