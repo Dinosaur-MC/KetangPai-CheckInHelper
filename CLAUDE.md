@@ -14,6 +14,7 @@ Monolithic architecture: FastAPI backend serves a Vue 3 SPA frontend with MySQL 
 uv sync
 
 # Start dev server (auto-reload when DEBUG=true in .env)
+# 启动时自动运行 SchemaSync 同步数据库结构
 uv run python main.py
 
 # Generate Fernet key for credential encryption (REQUIRED)
@@ -56,7 +57,8 @@ main.py                     # Entry point — loads .env, starts uvicorn
 │   │   ├── security.py     # Argon2 password hashing, JWT create/decode, Fernet encryption
 │   │   ├── sessions.py     # SessionPool singleton — manages KetangPai login sessions
 │   │   ├── watcher.py      # AutoCheckinWatcher — 后台自动签到观察器（轮询 + 执行）
-│   │   └── db.py           # SQLModel engine, Redis connection pool (breaker pattern), migration
+│   │   ├── schema_sync.py  # SchemaSync — 全自动 schema 同步引擎（diff/backup/DDL/审计）
+│   │   └── db.py           # SQLModel engine, Redis connection pool (breaker pattern), init_db (→ SchemaSync)
 │   ├── routers/            # ★ Domain route modules (split from monolithic main.py)
 │   │   ├── auth.py         # register, login, logout, refresh
 │   │   ├── user.py         # user CRUD + change-password
@@ -74,6 +76,7 @@ main.py                     # Entry point — loads .env, starts uvicorn
 │   ├── test_models.py      # Pydantic/SQLModel 模型、_extract_gps、is_position_error
 │   ├── test_utils.py       # get_client_ip、RateLimiter、_in_time_windows 等
 │   ├── test_db.py          # _RedisWrapper 断路器、check_redis_health
+│   ├── test_schema_sync.py # SchemaSync — 数据类、diff 引擎、DDL 编译、备份/审计
 │   └── routers/
 │       ├── __init__.py
 │       ├── test_auth.py              # 注册/登录/登出/令牌刷新
@@ -112,7 +115,7 @@ main.py                     # Entry point — loads .env, starts uvicorn
 - **Credential encryption**: Fernet (AES-128-CBC + HMAC) via `CREDENTIAL_KEY` env var. **Required at startup** — app will crash if unset.
 - **Login business-level check**: `login()` inspects `result.status != 1` and raises with the API error message (e.g., "password expired"), rather than only checking HTTP status.
 - **Account verification**: `POST /api/accounts/{id}/verify` re-logs in to KetangPai, updates status/status_message, and refreshes stored user details. Updating password also resets status automatically.
-- **Incremental migration**: `db.py:_migrate()` queries INFORMATION_SCHEMA.COLUMNS to detect missing columns and runs ALTER TABLE only for what's needed. Controlled by `DB_AUTO_MIGRATE` setting.
+- **SchemaSync (`app/core/schema_sync.py`)**: 自动数据库结构同步引擎，替代旧 `_migrate()`。启动时自动完成：从 SQLModel 模型提取目标 schema → 通过 SQLAlchemy 反射获取当前状态 → `compute_diff()` 计算差异（含列改名启发式检测，Levenshtein + type-family 守卫）→ 纯 Python 备份受影响表 → DDL 执行（列/索引/外键，反引号保护保留字）→ 审计日志。快速路径：模型 SHA-256 哈希未变则跳过。受控于 `DB_AUTO_MIGRATE` 与 `DB_BACKUP_DIR` 设置。
 - **Redis circuit breaker**: `_RedisWrapper` proxy auto-fuses on any operation failure, avoiding repeated timeouts. Health check pings Redis every 5 minutes.
 - **Client IP detection**: `get_client_ip()` in `utils.py` reads `X-Forwarded-For` / `X-Real-IP` headers for reverse proxy setups before falling back to `request.client.host`.
 - **Client IP forwarding to KetangPai**: The `/api/checkin` endpoint extracts the client's real IP via `get_client_ip(request)` and passes it through `SessionPool.execute_checkin()` → `KetangPaiAPI.check_in()`, which adds an `X-Forward-For` header to the outbound request to Ketangpai. Defaults to empty (no header sent) when IP is unavailable.
@@ -124,7 +127,7 @@ main.py                     # Entry point — loads .env, starts uvicorn
 - **Auto CheckIn API (`app/routers/checkin.py`)**: Four endpoints — `GET/PUT /api/auto-checkin/config` (per-user config with strict Pydantic validation via `TimeWindow`/`AutoCheckinConfigBody`), `GET /api/auto-checkin/status` (watcher status + per-user `user_active` flag), `POST /api/auto-checkin/trigger` (manual scan trigger).
 - **Pydantic strict validation on config**: `TimeWindow` model validates start/end hours (0-23, start < end), `AutoCheckinConfigBody` validates `checkin_types` (only "1"/"2"), `time_windows` (max 16 items, dedup). All manual JSON parsing/handling eliminated in favor of Pydantic validators.
 - **Status uses `user_active` instead of `is_running`**: The global watcher is always running. Frontend shows meaningful status per user based on `user_active` (enabled + has time windows), not `is_running`.
-- **Testing (187+ tests)**: Tests organized by module under `tests/`. Pure logic tested standalone; route tests use FastAPI TestClient with SQLite temp file (cross-thread safe) + mocked Redis (`None`). Benchmark tests (`test_benchmark_checkin.py`) measure from endpoint to mock API, use 10 warmup + 10 measure + drop 1 outlier, assert median < 50ms. Results auto-saved to `tests/routers/.benchmark_results.json`.
+- **Testing (289+ tests)**: Tests organized by module under `tests/`. Pure logic tested standalone; route tests use FastAPI TestClient with SQLite temp file (cross-thread safe) + mocked Redis (`None`). SchemaSync tests (`test_schema_sync.py`) cover data classes, schema extraction, diff engine, DDL compilation, backup, and integration flow (55 tests). Benchmark tests (`test_benchmark_checkin.py`) measure from endpoint to mock API, use 10 warmup + 10 measure + drop 1 outlier, assert median < 50ms. Results auto-saved to `tests/routers/.benchmark_results.json`.
 - **`_in_time_windows` midnight-crossing support**: Time windows like `{start:22, end:6}` now correctly match hours 22–23 and 0–5, not just same-day ranges. Zero-width windows (`start == end`) never match.
 
 ## Data Model
