@@ -12,7 +12,7 @@ from pathlib import Path
 from typing import Literal
 
 import tenacity
-from sqlalchemy import Engine, inspect as sa_inspect, text as sa_text
+from sqlalchemy import Boolean, Engine, inspect as sa_inspect, text as sa_text
 from sqlalchemy.exc import SQLAlchemyError
 from sqlmodel import SQLModel, Session, select
 
@@ -307,10 +307,14 @@ def _type_to_string(col_type) -> str:
     """将 SQLAlchemy 类型规范化为统一字符串表示。
 
     MySQL 要求 VARCHAR 必须有长度，AutoString 默认无长度 → 补为 VARCHAR(255)。
+    MySQL BOOLEAN 就是 TINYINT(1)，统一为 BOOLEAN 防止虚假 diff。
     其他类型直接返回大写形式。
     """
     raw = str(col_type)
     upper = raw.upper()
+    # MySQL BOOLEAN = TINYINT(1) — 统一规范化
+    if isinstance(col_type, Boolean) or upper == "TINYINT(1)":
+        return "BOOLEAN"
     # VARCHAR 无长度时补默认值（MySQL 必要）
     if upper == "VARCHAR":
         return "VARCHAR(255)"
@@ -524,6 +528,30 @@ def _compile_ddl(change: ColumnChange) -> str:
     raise ValueError(f"Unknown change_type: {change.change_type}")
 
 
+def _compile_default_alter(change: ColumnChange) -> str | None:
+    """编译 ALTER COLUMN ... SET DEFAULT / DROP DEFAULT 语句。
+
+    MySQL 8.0.13+ 的 MODIFY COLUMN 不指定 DEFAULT 时会保留现有默认值，
+    因此需要单独的 ALTER COLUMN 语句来对齐。
+    当模型无 default（Python 侧默认值）时 → DROP DEFAULT；
+    当模型有 default（server_default）时 → SET DEFAULT。
+    """
+    if change.change_type != "alter":
+        return None
+    col = change.definition
+    if col is None:
+        return None
+    table = _qt(change.table)
+    col_name = _qt(change.column_name)
+    if col.default is not None:
+        default_clause = _format_default(col.default)
+        # _format_default 返回 "DEFAULT 'value'", 替换 DEFAULT→SET DEFAULT
+        value_part = default_clause[len("DEFAULT "):]
+        return f"ALTER TABLE {table} ALTER COLUMN {col_name} SET DEFAULT {value_part}"
+    else:
+        return f"ALTER TABLE {table} ALTER COLUMN {col_name} DROP DEFAULT"
+
+
 def _compile_index_ddl(change: IndexChange) -> str:
     """将 IndexChange 编译为 DDL。"""
     idx = change.definition
@@ -572,7 +600,11 @@ def _compute_schema_hash(metadata) -> str:
         col_strs: list[str] = []
         for col in table.columns:
             nullable = "NULL" if col.nullable else "NOT NULL"
-            default = str(col.server_default.arg.text) if col.server_default is not None else ""
+            # 与 inspect_target 一致的 default 提取方式（兼容 TextClause 和普通值）
+            default = ""
+            if col.server_default is not None:
+                arg = col.server_default.arg
+                default = arg.text if hasattr(arg, 'text') else str(arg)
             col_strs.append(f"{col.name}:{_type_to_string(col.type)}:{nullable}:{default}")
         idx_strs: list[str] = []
         for idx in sorted(table.indexes, key=lambda x: x.name or ""):
@@ -642,6 +674,11 @@ class SchemaSync:
         if current_hash == stored_hash:
             logger.debug("Schema 哈希未变，跳过同步")
             return None
+        if stored_hash is not None:
+            logger.info(
+                "Schema 哈希不匹配，触发同步。存储的哈希: %s, 当前哈希: %s",
+                stored_hash, current_hash,
+            )
 
         target = inspect_target(SQLModel.metadata)
         current = inspect_current(self._engine)
@@ -831,6 +868,15 @@ class SchemaSync:
                 sql = _compile_ddl(change)
                 self._safe_execute_ddl(sql, f"{change.change_type} {table}.{change.column_name}")
                 count += 1
+                # MySQL 8.0.13+ MODIFY COLUMN 省略 DEFAULT 时保留现有值，
+                # 所以需要单独执行 ALTER COLUMN ... SET/DROP DEFAULT 来对齐模型
+                default_sql = _compile_default_alter(change)
+                if default_sql is not None:
+                    self._safe_execute_ddl(
+                        default_sql,
+                        f"default {table}.{change.column_name}",
+                    )
+                    count += 1
 
         # Phase 3: 索引变更（先 drop 后 add）
         table_index_changes: dict[str, list[IndexChange]] = {}

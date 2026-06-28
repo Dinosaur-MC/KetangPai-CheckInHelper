@@ -162,6 +162,7 @@ class TestTypeToString:
         assert _type_to_string(sqlalchemy_type) == expected
 
 
+
 # ── inspect_target ──
 
 class TestInspectTarget:
@@ -417,6 +418,41 @@ class TestComputeDiff:
         assert not diff.index_changes
         assert not diff.fk_changes
 
+    def test_alter_drop_default_when_target_is_none(self):
+        """模型无 server_default 时，DB 有默认值应生成 alter 并 DROP DEFAULT。"""
+        from app.core.schema_sync import compute_diff, TableDef, ColumnDef
+        target = {"user": TableDef(name="user", columns={
+            "role": ColumnDef(name="role", type_str="VARCHAR(255)", nullable=False),
+        })}
+        current = {"user": TableDef(name="user", columns={
+            "role": ColumnDef(name="role", type_str="VARCHAR(255)", nullable=False,
+                             default="user"),
+        })}
+        diff = compute_diff(target, current)
+        alters = [c for c in diff.column_changes if c.change_type == "alter"]
+        assert len(alters) == 1
+
+        # 验证 _compile_default_alter 生成 DROP DEFAULT
+        from app.core.schema_sync import _compile_default_alter
+        default_sql = _compile_default_alter(alters[0])
+        assert default_sql is not None
+        assert "DROP DEFAULT" in default_sql
+
+    def test_alter_when_target_has_server_default(self):
+        """模型有 server_default 时，与 DB 不匹配应触发 alter。"""
+        from app.core.schema_sync import compute_diff, TableDef, ColumnDef
+        target = {"user": TableDef(name="user", columns={
+            "role": ColumnDef(name="role", type_str="VARCHAR(255)", nullable=False,
+                             default="admin"),
+        })}
+        current = {"user": TableDef(name="user", columns={
+            "role": ColumnDef(name="role", type_str="VARCHAR(255)", nullable=False,
+                             default="user"),
+        })}
+        diff = compute_diff(target, current)
+        alters = [c for c in diff.column_changes if c.change_type == "alter"]
+        assert len(alters) == 1
+
 
 # ── DDL compilation ──
 
@@ -539,6 +575,64 @@ class TestCompileDDL:
         sql = _compile_ddl(change)
         assert "AUTO_INCREMENT" in sql
         assert "PRIMARY KEY" in sql
+
+
+class TestCompileDefaultAlter:
+    """测试 _compile_default_alter 函数。"""
+
+    def test_drop_default_when_none(self):
+        """模型无 default 时生成 DROP DEFAULT。"""
+        from app.core.schema_sync import _compile_default_alter, ColumnChange, ColumnDef
+        change = ColumnChange(table="user", change_type="alter", column_name="role",
+            definition=ColumnDef(name="role", type_str="VARCHAR(255)", nullable=False))
+        sql = _compile_default_alter(change)
+        assert sql is not None
+        assert "DROP DEFAULT" in sql
+        assert "`user`" in sql
+        assert "`role`" in sql
+
+    def test_set_default_when_value(self):
+        """模型有 default 时生成 SET DEFAULT。"""
+        from app.core.schema_sync import _compile_default_alter, ColumnChange, ColumnDef
+        change = ColumnChange(table="user", change_type="alter", column_name="role",
+            definition=ColumnDef(name="role", type_str="VARCHAR(255)",
+                                default="admin"))
+        sql = _compile_default_alter(change)
+        assert sql is not None
+        assert "SET DEFAULT 'admin'" in sql
+        assert "DROP DEFAULT" not in sql
+
+    def test_set_default_numeric(self):
+        """数字 default 生成 SET DEFAULT。"""
+        from app.core.schema_sync import _compile_default_alter, ColumnChange, ColumnDef
+        change = ColumnChange(table="user", change_type="alter", column_name="status",
+            definition=ColumnDef(name="status", type_str="INTEGER", default="1"))
+        sql = _compile_default_alter(change)
+        assert sql is not None
+        assert "SET DEFAULT 1" in sql
+
+    def test_set_default_keyword(self):
+        """SQL 关键字 default 生成 SET DEFAULT。"""
+        from app.core.schema_sync import _compile_default_alter, ColumnChange, ColumnDef
+        change = ColumnChange(table="log", change_type="alter", column_name="created_at",
+            definition=ColumnDef(name="created_at", type_str="DATETIME",
+                                default="CURRENT_TIMESTAMP"))
+        sql = _compile_default_alter(change)
+        assert sql is not None
+        assert "SET DEFAULT CURRENT_TIMESTAMP" in sql
+
+    def test_returns_none_for_add(self):
+        """非 alter 类型返回 None。"""
+        from app.core.schema_sync import _compile_default_alter, ColumnChange, ColumnDef
+        change = ColumnChange(table="user", change_type="add", column_name="col",
+            definition=ColumnDef(name="col", type_str="VARCHAR(100)"))
+        assert _compile_default_alter(change) is None
+
+    def test_returns_none_for_no_definition(self):
+        """无 definition 时返回 None。"""
+        from app.core.schema_sync import _compile_default_alter, ColumnChange
+        change = ColumnChange(table="user", change_type="alter", column_name="col")
+        assert _compile_default_alter(change) is None
 
 
 class TestIsIntegerType:
