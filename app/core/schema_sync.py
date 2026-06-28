@@ -6,7 +6,6 @@ import hashlib
 import json
 import logging
 import os
-import subprocess
 from dataclasses import dataclass, field, asdict
 from datetime import datetime, timezone
 from pathlib import Path
@@ -510,10 +509,9 @@ class SchemaSync:
     启动时完成：检测 schema 差异 → 自动备份 → DDL 执行 → 审计追踪。
     """
 
-    def __init__(self, engine: Engine, backup_dir: str = "./backups", mysqldump_path: str = "mysqldump"):
+    def __init__(self, engine: Engine, backup_dir: str = "./backups"):
         self._engine = engine
         self._backup_dir = Path(backup_dir)
-        self._mysqldump_path = mysqldump_path
         self._backup_dir.mkdir(parents=True, exist_ok=True)
 
     def execute(self) -> SchemaDiff | None:
@@ -555,12 +553,11 @@ class SchemaSync:
                     or diff.index_changes or diff.fk_changes)
 
     def backup_tables(self, diff: SchemaDiff) -> dict[str, str]:
-        """备份受影响的表。跳过纯新增列操作。"""
+        """用纯 SQLAlchemy 备份受影响表的数据为 SQL 文件。跨平台，零外部依赖。"""
         tables = _affected_tables(diff)
         if not tables:
             return {}
 
-        # 检查是否有破坏性变更（需备份）
         has_destructive = any(
             c.change_type in ("drop", "rename", "alter")
             for c in diff.column_changes
@@ -574,34 +571,42 @@ class SchemaSync:
         backup_dir = self._backup_dir / timestamp
         backup_dir.mkdir(parents=True, exist_ok=True)
 
-        url = self._engine.url
+        from sqlalchemy import inspect as sa_inspect, text as sa_text
+
         paths: dict[str, str] = {}
-        for table in sorted(tables):
-            path = backup_dir / f"{table}.sql"
-            cmd = [
-                self._mysqldump_path,
-                f"--host={url.host or 'localhost'}",
-                f"--port={url.port or 3306}",
-                f"--user={url.username or 'root'}",
-                f"--result-file={path}",
-                "--single-transaction",
-                "--quick",
-                url.database or "",
-                table,
-            ]
-            try:
-                env = os.environ.copy()
-                if url.password:
-                    env["MYSQL_PWD"] = url.password
-                subprocess.run(cmd, check=True, capture_output=True, text=True, env=env)
+        with self._engine.connect() as conn:
+            inspector = sa_inspect(self._engine)
+            for table in sorted(tables):
+                path = backup_dir / f"{table}.sql"
+                lines: list[str] = []
+                lines.append(f"-- Backup of table `{table}` — {datetime.now().isoformat()}")
+                lines.append(f"TRUNCATE TABLE `{table}`;\n")
+
+                cols = [c["name"] for c in inspector.get_columns(table)]
+                col_list = ", ".join(f"`{c}`" for c in cols)
+                placeholders = ", ".join(f":{c}" for c in cols)
+
+                rows = conn.execute(sa_text(f"SELECT * FROM `{table}`")).all()
+                for row in rows:
+                    vals = []
+                    for i, col in enumerate(cols):
+                        v = row[i]
+                        if v is None:
+                            vals.append("NULL")
+                        elif isinstance(v, (int, float)):
+                            vals.append(str(v))
+                        elif isinstance(v, bool):
+                            vals.append("1" if v else "0")
+                        elif isinstance(v, bytes):
+                            vals.append(f"X'{v.hex()}'")
+                        else:
+                            escaped = str(v).replace("'", "''")
+                            vals.append(f"'{escaped}'")
+                    lines.append(f"INSERT INTO `{table}` ({col_list}) VALUES ({', '.join(vals)});")
+
+                path.write_text("\n".join(lines) + "\n", encoding="utf-8")
                 paths[table] = str(path)
-                logger.info("备份完成: %s", path)
-            except FileNotFoundError:
-                logger.warning("mysqldump 未找到（%s），跳过备份", self._mysqldump_path)
-                return {}
-            except subprocess.CalledProcessError as e:
-                logger.warning("备份表 %s 失败 (stderr): %s", table, e.stderr)
-                raise
+                logger.info("备份完成: %s (%d 行)", path, len(rows))
 
         return paths
 

@@ -229,7 +229,6 @@ def init_db():
         sync = SchemaSync(
             _engine,
             backup_dir=settings.db_backup_dir,
-            mysqldump_path=settings.mysqldump_path,
         )
         sync.execute()
 
