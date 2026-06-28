@@ -21,7 +21,7 @@ class SessionPool:
 
     并发模型：
     - ``self.lock``（asyncio.Lock）：保护 ``self.clients`` 字典的读写，
-      create / remove / execute_checkin 的快照阶段都会持有它。
+      create / remove / execute_checkin / execute_gps_checkin 的快照阶段都会持有它。
     - ``self.exec_lock``（asyncio.Lock）：序列化签到批次的执行阶段，
       保证同一时刻只有一个批次在跑签到（不同批次之间不交错）。
     - ``self.semaphore``（asyncio.Semaphore）：限制同一批次内对第三方
@@ -41,7 +41,7 @@ class SessionPool:
     # ------------------------------------------------------------------
 
     async def _cleanup_expired(self):
-        """移除过期的会话（调用方需持有 self.lock）。"""
+        """移除过期的会话（内部获取 self.lock，调用方无需持锁）。"""
         now = time.time()
         async with self.lock:
             expired_ids = [
@@ -69,7 +69,7 @@ class SessionPool:
                 self.clients[account_id] = (entry[0], time.time())
 
     # ------------------------------------------------------------------
-    # 同步方法：create / remove（通过 threading.Lock 保护）
+    # 会话管理：create / remove（通过 asyncio.Lock 保护）
     # ------------------------------------------------------------------
 
     async def create(self, accounts: list[Account], update_status: bool = True) -> bool:

@@ -183,7 +183,7 @@ def _extract_gps(resp: dict | list) -> tuple[str | None, str | None]:
     return lat, lng
 
 
-# 5. 获取课程列表接口
+# 6. 获取课程列表接口
 class SemesterCourseListRequest(BaseModel):
     isstudy: str = "1"
     search: str = ""
@@ -215,8 +215,14 @@ class KetangPaiAPI:
 
     :function login: 登录接口
     :function get_user_info: 获取用户信息接口
+    :function get_course_list: 学期课程列表接口
     :function qr_check_in: 二维码签到接口
     :function gps_check_in: GPS / 数字码签到接口
+    :function check_in_with_url: 通过 URL 解析参数执行 QR 签到
+    :function get_attence_building_gps: 获取考勤建筑 GPS 坐标
+    :function get_attence_location: 获取考勤位置配置
+    :function get_not_finish_attence_student: 获取课程未完成签到列表
+    :function get_digit_attence: 获取数字考勤码
     """
 
     def __init__(self, email: str, password: str, token: Optional[str | bytes] = None):

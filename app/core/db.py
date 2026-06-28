@@ -35,7 +35,7 @@ _engine = create_engine(settings.database_url, **_engine_kwargs)
 #
 # 设计要点：
 #   - 正常路径不做 ping，避免额外网络往返（每请求开销 ≈1μs）
-#   - check_redis_health() 每 30s 执行一次后台 ping，更新 _redis_available
+#   - check_redis_health() 每 5min 执行一次后台 ping，更新 _redis_available
 #   - get_redis() / get_redis_client() 调用 check_redis_health() 获取缓存标志
 #   - Redis 恢复后最多 30s 自动重新启用
 
@@ -68,11 +68,11 @@ def _get_redis_pool() -> "ConnectionPool | None":
 
 
 def check_redis_health() -> bool:
-    """检查 Redis 可用性，更新断路器标志。线程安全，30 秒内不重复 ping。
+    """检查 Redis 可用性，更新断路器标志。线程安全，5 分钟内不重复 ping。
 
     速率限制
-        - 距上次检查 < 30s → 直接返回缓存标志（零网络开销）
-        - 距上次检查 ≥ 30s → 执行一次 ping（约 1ms），更新标志
+        - 距上次检查 < 5min → 直接返回缓存标志（零网络开销）
+        - 距上次检查 ≥ 5min → 执行一次 ping（约 1ms），更新标志
 
     返回值可直接用于 ``if check_redis_health():`` 判断。
     """
