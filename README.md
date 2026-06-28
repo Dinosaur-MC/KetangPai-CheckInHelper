@@ -172,7 +172,7 @@
     <tr><td colspan="2"><strong>⚙️ 业务逻辑层</strong><br/>SessionPool 会话池 · KetangPaiAPI · AutoCheckinWatcher · Canary 引擎 · Fernet/AES 加密 · Argon2 哈希 · 缓存策略</td></tr>
     <tr><td colspan="2"><strong>💾 数据层</strong></td></tr>
     <tr>
-      <td><strong>MySQL 8</strong><br/>SQLModel ORM · 增量迁移</td>
+      <td><strong>MySQL 8</strong><br/>SQLModel ORM · SchemaSync 自动迁移</td>
       <td><strong>Redis 8</strong><br/>缓存 · 限流 · 断路器</td>
     </tr>
     <tr><th colspan="2" align="center"><strong>🌍 课堂派 API</strong><br/>ketangpai.com — 签到接口</th></tr>
@@ -209,7 +209,7 @@
 |            | **PyJWT**                                    | JWT 签发与验证（httponly cookie 承载）                |
 |            | **Cryptography (Fernet)**                    | 凭据加密                                              |
 |            | **Rate Limiter**                             | Redis 滑动窗口限流                                    |
-| **测试**   | **pytest** + **httpx** (TestClient)           | 339+ 个单元 + 集成 + 基准测试 |
+| **测试**   | **pytest** + **httpx** (TestClient)           | 353+ 个单元 + 集成 + 基准测试 |
 | **包管理** | **uv**                                       | Python 依赖管理                                       |
 | **部署**   | **Docker** + **docker compose**              | 容器化一站式部署                                      |
 
@@ -266,7 +266,7 @@ uv run python main.py
 
 ### 运行测试
 
-项目包含 **339 个测试**（107 个 SchemaSync 测试 + 单元测试 + 集成测试 + 延迟基准测试），覆盖安全模块、数据模型、工具函数、数据库层、SchemaSync（含历史阶段迁移路径、笛卡尔积排列测试、未来变更预测）、账号模块、课程模块、自动签到模块和认证路由：
+项目包含 **353 个测试**（119 个 SchemaSync 测试 + 单元测试 + 集成测试 + 延迟基准测试），覆盖安全模块、数据模型、工具函数、数据库层、SchemaSync（含历史阶段迁移路径、笛卡尔积排列测试、未来变更预测、默认值对齐、BOOLEAN/TINYINT 类型规范化）、账号模块、课程模块、自动签到模块和认证路由：
 
 ```bash
 # 运行全部测试
@@ -612,14 +612,14 @@ CheckInHelper/
 │   ├── zxing.min.js        # ZXing WASM 备用 QR 解码
 │   └── test.html           # QR 解码测试页
 │
-├── tests/                  # ✅ 测试（339+ 个，覆盖核心模块 + 路由 + 基准测试）
+├── tests/                  # ✅ 测试（353+ 个，覆盖核心模块 + 路由 + 基准测试）
 │   ├── conftest.py         # 共享 Fixtures + benchmark 收集器
 │   ├── test_security.py    # 密码哈希 · JWT · Fernet 加密 · 令牌黑名单
 │   ├── test_models.py      # Pydantic/SQLModel 模型 · _extract_gps · is_position_error
 │   ├── test_utils.py       # get_client_ip · RateLimiter · _in_time_windows 等
 │   ├── test_db.py          # _RedisWrapper 断路器 · check_redis_health
-│   ├── test_schema_sync.py # SchemaSync 全流程测试（107 个：数据类/diff/DDL/备份/幂等/排
-│   │                       # 列积迁移路径/历史阶段/未来变更预测）
+│   ├── test_schema_sync.py # SchemaSync 全流程测试（119 个：数据类/diff/DDL/备份/幂等/
+│   │                       # 默认对齐/BOOLEAN 规范化/排列积迁移路径/历史阶段/未来变更预测）
 │   └── routers/
 │       ├── __init__.py
 │       ├── test_auth.py              # 注册/登录/登出/令牌刷新
