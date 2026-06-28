@@ -536,6 +536,28 @@ class TestFormatDefault:
         # 空字符串
         assert _format_default("") == "DEFAULT ''"
 
+    def test_expanded_keywords(self):
+        """验证扩展后的 SQL 关键字集合。"""
+        from app.core.schema_sync import _format_default
+        assert _format_default("LOCALTIME") == "DEFAULT LOCALTIME"
+        assert _format_default("LOCALTIMESTAMP") == "DEFAULT LOCALTIMESTAMP"
+        assert _format_default("SYSDATE") == "DEFAULT SYSDATE"
+        assert _format_default("CURDATE") == "DEFAULT CURDATE"
+        assert _format_default("CURTIME") == "DEFAULT CURTIME"
+        assert _format_default("UTC_DATE") == "DEFAULT UTC_DATE"
+        assert _format_default("UTC_TIME") == "DEFAULT UTC_TIME"
+        assert _format_default("UTC_TIMESTAMP") == "DEFAULT UTC_TIMESTAMP"
+
+    def test_function_call_detection(self):
+        """以 () 结尾的值应被视为函数调用，不加引号。"""
+        from app.core.schema_sync import _format_default
+        # 即使不是已知关键字，以 () 结尾也视为函数调用
+        assert _format_default("CUSTOM_FUNC()") == "DEFAULT CUSTOM_FUNC()"
+        # 关键字 + 括号
+        assert _format_default("NOW()") == "DEFAULT NOW()"
+        # 带参数
+        assert _format_default("TIMESTAMPADD(DAY, 1, NOW())") == "DEFAULT TIMESTAMPADD(DAY, 1, NOW())"
+
 
 class TestCompileIndexDDL:
     """测试 _compile_index_ddl 函数。"""
@@ -698,6 +720,51 @@ class TestSchemaSyncIntegration:
         current = inspect_current(engine)
         diff = compute_diff(target, current)
         assert not sync._has_changes(diff)
+        engine.dispose()
+
+    def test_migration_lock_acquire_release(self, tmp_path):
+        """迁移锁应能正常获取和释放。"""
+        from sqlmodel import SQLModel, create_engine
+        from app.core.schema_sync import SchemaSync
+        engine = create_engine("sqlite://", echo=False)
+        SQLModel.metadata.create_all(engine)
+        sync = SchemaSync(engine, backup_dir=str(tmp_path / "backups"))
+
+        # 首次获取应成功
+        assert sync._acquire_migration_lock() is True
+
+        # 再次获取应失败（锁已持）
+        assert sync._acquire_migration_lock() is False
+
+        # 释放
+        sync._release_migration_lock()
+
+        # 释放后可重新获取
+        assert sync._acquire_migration_lock() is True
+        sync._release_migration_lock()
+        engine.dispose()
+
+    def test_execute_with_lock_contention(self, tmp_path):
+        """模拟锁竞争时 _acquire_migration_lock 应返回 False。"""
+        from sqlmodel import SQLModel, create_engine
+        from app.core.schema_sync import SchemaSync
+        engine = create_engine("sqlite://", echo=False)
+        SQLModel.metadata.create_all(engine)
+        sync1 = SchemaSync(engine, backup_dir=str(tmp_path / "backups"))
+
+        # sync1 获取锁（模拟另一实例正在迁移）
+        assert sync1._acquire_migration_lock() is True
+
+        # sync2 尝试获取同一锁 — 应失败
+        sync2 = SchemaSync(engine, backup_dir=str(tmp_path / "backups"))
+        assert sync2._acquire_migration_lock() is False
+
+        # 释放锁
+        sync1._release_migration_lock()
+
+        # 释放后 sync2 可重新获取
+        assert sync2._acquire_migration_lock() is True
+        sync2._release_migration_lock()
         engine.dispose()
 
 

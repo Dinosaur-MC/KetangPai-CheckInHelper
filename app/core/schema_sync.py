@@ -408,19 +408,38 @@ def inspect_current(engine: Engine) -> dict[str, TableDef]:
 
 
 def _format_default(default_val: str) -> str:
-    """将默认值格式化为 SQL 片段。数字和 SQL 关键字不加引号。"""
-    # 已知 SQL 关键字（函数调用）
-    sql_keywords = {"CURRENT_TIMESTAMP", "NOW()", "CURRENT_DATE", "CURRENT_TIME", "TRUE", "FALSE", "NULL"}
+    """将默认值格式化为 SQL 片段。数字和 SQL 关键字不加引号。
+
+    三种情况：
+    1. SQL 函数/关键字（如 CURRENT_TIMESTAMP, NOW()）→ 不加引号
+    2. 数字（整数、浮点数）→ 不加引号
+    3. 字符串 → 加单引号并转义内部单引号
+    """
     upper = default_val.upper()
+
+    # 1. SQL 函数（以 () 结尾）
+    if "()" in upper:
+        return f"DEFAULT {default_val}"
+
+    # 2. 已知 SQL 关键字
+    sql_keywords = {
+        "CURRENT_TIMESTAMP", "NOW", "CURRENT_DATE", "CURRENT_TIME",
+        "LOCALTIME", "LOCALTIMESTAMP", "SYSDATE",
+        "CURDATE", "CURTIME",
+        "UTC_DATE", "UTC_TIME", "UTC_TIMESTAMP",
+        "TRUE", "FALSE", "NULL",
+    }
     if upper in sql_keywords:
         return f"DEFAULT {default_val}"
-    # 数字（整数、浮点数）
+
+    # 3. 数字（整数、浮点数，包括负数）
     try:
         float(default_val)
         return f"DEFAULT {default_val}"
     except ValueError:
         pass
-    # 字符串 — 需要引号并转义内部的单引号
+
+    # 4. 字符串 — 需要引号并转义内部的单引号
     escaped = default_val.replace("'", "\\'")
     return f"DEFAULT '{escaped}'"
 
@@ -611,18 +630,26 @@ class SchemaSync:
             self._set_schema_version(current_hash)
             return diff
 
-        logger.info(
-            "发现 schema 变更: %d 新表, %d 列变更, %d 索引变更, %d 外键变更",
-            len(diff.tables_to_create), len(diff.column_changes),
-            len(diff.index_changes), len(diff.fk_changes),
-        )
+        # 获取迁移锁 — 防止多实例并发执行 DDL
+        if not self._acquire_migration_lock():
+            logger.info("迁移锁已被其他实例持有，跳过本次同步")
+            return None
 
-        backup_paths = self.backup_tables(diff)
-        change_count = self.apply_changes(diff)
-        self.record_migration(diff, backup_paths)
-        self._cleanup_old_backups()
-        logger.info("Schema 同步完成，执行了 %d 个变更", change_count)
-        return diff
+        try:
+            logger.info(
+                "发现 schema 变更: %d 新表, %d 列变更, %d 索引变更, %d 外键变更",
+                len(diff.tables_to_create), len(diff.column_changes),
+                len(diff.index_changes), len(diff.fk_changes),
+            )
+
+            backup_paths = self.backup_tables(diff)
+            change_count = self.apply_changes(diff)
+            self.record_migration(diff, backup_paths)
+            self._cleanup_old_backups()
+            logger.info("Schema 同步完成，执行了 %d 个变更", change_count)
+            return diff
+        finally:
+            self._release_migration_lock()
 
     @staticmethod
     def _has_changes(diff: SchemaDiff) -> bool:
@@ -656,6 +683,39 @@ class SchemaSync:
             logger.error("DDL 执行失败 [%s]: %s", description, e)
             raise
 
+    def _acquire_migration_lock(self) -> bool:
+        """尝试获取迁移锁（原子 INSERT），防止多实例并发迁移。
+
+        锁以 'migration_lock' 行存在 _schema_version 表中。
+        INSERT 在 PK 冲突时抛出异常 → 锁已被持有。
+
+        Returns:
+            True — 成功获取锁
+            False — 锁已被其他实例持有
+        """
+        self._ensure_schema_version_table()
+        try:
+            with self._engine.begin() as conn:
+                conn.execute(
+                    sa_text("INSERT INTO _schema_version (skey, svalue) "
+                            "VALUES ('migration_lock', 'locked')")
+                )
+            logger.debug("获取迁移锁成功")
+            return True
+        except SQLAlchemyError:
+            logger.debug("迁移锁已被其他实例持有，跳过同步")
+            return False
+
+    def _release_migration_lock(self) -> None:
+        """释放迁移锁。"""
+        try:
+            with self._engine.begin() as conn:
+                conn.execute(
+                    sa_text("DELETE FROM _schema_version WHERE skey = 'migration_lock'")
+                )
+        except Exception as e:
+            logger.warning("释放迁移锁失败: %s", e)
+
     def backup_tables(self, diff: SchemaDiff) -> dict[str, str]:
         """用纯 SQLAlchemy 备份受影响表的数据为 SQL 文件。跨平台，零外部依赖。"""
         tables = _affected_tables(diff)
@@ -682,36 +742,37 @@ class SchemaSync:
             inspector = sa_inspect(self._engine)
             for table in sorted(tables):
                 path = backup_dir / f"{table}.sql"
-                lines: list[str] = []
-                lines.append(f"-- Backup of table `{table}` — {datetime.now().isoformat()}")
-                lines.append("SET NAMES utf8mb4;")
-                lines.append(f"TRUNCATE TABLE `{table}`;\n")
-
                 cols = [c["name"] for c in inspector.get_columns(table)]
                 col_list = ", ".join(f"`{c}`" for c in cols)
-                placeholders = ", ".join(f":{c}" for c in cols)
 
-                rows = conn.execute(sa_text(f"SELECT * FROM `{table}`")).all()
-                for row in rows:
-                    vals = []
-                    for i, col in enumerate(cols):
-                        v = row[i]
-                        if v is None:
-                            vals.append("NULL")
-                        elif isinstance(v, (int, float)):
-                            vals.append(str(v))
-                        elif isinstance(v, bool):
-                            vals.append("1" if v else "0")
-                        elif isinstance(v, bytes):
-                            vals.append(f"X'{v.hex()}'")
-                        else:
-                            escaped = str(v).replace("'", "''")
-                            vals.append(f"'{escaped}'")
-                    lines.append(f"INSERT INTO `{table}` ({col_list}) VALUES ({', '.join(vals)});")
+                # 流式写入备份文件 — 避免全表加载到内存（大表 OOM 防护）
+                row_count = 0
+                with open(path, "w", encoding="utf-8") as f:
+                    f.write(f"-- Backup of table `{table}` — {datetime.now().isoformat()}\n")
+                    f.write("SET NAMES utf8mb4;\n")
+                    f.write(f"TRUNCATE TABLE `{table}`;\n\n")
 
-                path.write_text("\n".join(lines) + "\n", encoding="utf-8")
+                    # yield_per 分批从服务器获取行，不缓存全部到内存
+                    for row in conn.execute(sa_text(f"SELECT * FROM `{table}`")).yield_per(500):
+                        vals = []
+                        for i, col in enumerate(cols):
+                            v = row[i]
+                            if v is None:
+                                vals.append("NULL")
+                            elif isinstance(v, (int, float)):
+                                vals.append(str(v))
+                            elif isinstance(v, bool):
+                                vals.append("1" if v else "0")
+                            elif isinstance(v, bytes):
+                                vals.append(f"X'{v.hex()}'")
+                            else:
+                                escaped = str(v).replace("'", "''")
+                                vals.append(f"'{escaped}'")
+                        f.write(f"INSERT INTO `{table}` ({col_list}) VALUES ({', '.join(vals)});\n")
+                        row_count += 1
+
                 paths[table] = str(path)
-                logger.info("备份完成: %s (%d 行)", path, len(rows))
+                logger.info("备份完成: %s (%d 行)", path, row_count)
 
         return paths
 
