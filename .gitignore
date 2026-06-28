@@ -16,3 +16,6 @@ docs/superpowers/*
 
 # Benchmark runtime artifacts
 .benchmark_results.json
+
+# Database backups
+backups/
