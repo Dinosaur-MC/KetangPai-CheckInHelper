@@ -335,7 +335,7 @@ def inspect_target(metadata) -> dict[str, TableDef]:
                 type_str=_type_to_string(col.type),
                 nullable=col.nullable,
                 default=default_val,
-                autoincrement=col.autoincrement or (col.primary_key and col.autoincrement is not False),
+                autoincrement=col.autoincrement is True or (col.autoincrement == "auto" and col.primary_key),
                 primary_key=col.primary_key,
             )
 
@@ -740,7 +740,11 @@ class SchemaSync:
         paths: dict[str, str] = {}
         with self._engine.connect() as conn:
             inspector = sa_inspect(self._engine)
+            existing_tables = set(inspector.get_table_names())
             for table in sorted(tables):
+                if table not in existing_tables:
+                    logger.debug("表 %s 尚不存在（将在 Phase 1 创建），跳过备份", table)
+                    continue
                 path = backup_dir / f"{table}.sql"
                 cols = [c["name"] for c in inspector.get_columns(table)]
                 col_list = ", ".join(f"`{c}`" for c in cols)
