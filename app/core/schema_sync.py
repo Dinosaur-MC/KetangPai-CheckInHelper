@@ -216,7 +216,8 @@ def compute_diff(target: dict[str, TableDef], current: dict[str, TableDef]) -> S
                     column_name=col_name, definition=tc,
                 ))
 
-        # 索引对比
+        # 索引对比 — 跳过外键列的自动索引（MySQL 自动为 FK 建索引，模型不声明）
+        _fk_col_sets = {frozenset(fk.columns) for fk in cur.foreign_keys}
         current_idx_map = {(idx.name, tuple(idx.columns)): idx for idx in cur.indexes}
         target_idx_map = {(idx.name, tuple(idx.columns)): idx for idx in tdef.indexes}
         for key, idx in target_idx_map.items():
@@ -226,6 +227,9 @@ def compute_diff(target: dict[str, TableDef], current: dict[str, TableDef]) -> S
                 ))
         for key, idx in current_idx_map.items():
             if key not in target_idx_map:
+                if frozenset(idx.columns) in _fk_col_sets:
+                    logger.debug("跳过外键索引 %s.%s", name, idx.name)
+                    continue
                 diff.index_changes.append(IndexChange(
                     table=name, change_type="drop", definition=idx,
                 ))
