@@ -293,7 +293,13 @@ def compute_diff(target: dict[str, TableDef], current: dict[str, TableDef]) -> S
 
 
 def _extract_default(default_val) -> str | None:
-    """提取列默认值的可读文本形式。"""
+    """提取列默认值的可读文本形式。
+
+    注意：此函数会剥离引号，供 diff 比较使用。
+    _compute_schema_hash 和 inspect_target 直接从 server_default.arg 提取
+    （不剥离引号），因此与 _extract_default 存在不对称性。
+    当前项目无模型使用 server_default，此不对称性暂不引发实际差异。
+    """
     if default_val is None:
         return None
     if isinstance(default_val, str):
@@ -313,8 +319,18 @@ def _type_to_string(col_type) -> str:
     raw = str(col_type)
     upper = raw.upper()
     # MySQL BOOLEAN = TINYINT(1) — 统一规范化
-    if isinstance(col_type, Boolean) or upper == "TINYINT(1)":
+    # str(TINYINT(display_width=1)) 只返回 "TINYINT" 不带宽度，
+    # 所以需要额外判断 display_width。
+    if isinstance(col_type, Boolean):
         return "BOOLEAN"
+    if upper == "TINYINT(1)":
+        return "BOOLEAN"
+    try:
+        from sqlalchemy.dialects.mysql import TINYINT as MySQLTINYINT
+        if isinstance(col_type, MySQLTINYINT) and getattr(col_type, 'display_width', None) == 1:
+            return "BOOLEAN"
+    except ImportError:
+        pass
     # VARCHAR 无长度时补默认值（MySQL 必要）
     if upper == "VARCHAR":
         return "VARCHAR(255)"
@@ -607,10 +623,14 @@ def _compute_schema_hash(metadata) -> str:
                 default = arg.text if hasattr(arg, 'text') else str(arg)
             col_strs.append(f"{col.name}:{_type_to_string(col.type)}:{nullable}:{default}")
         idx_strs: list[str] = []
-        for idx in sorted(table.indexes, key=lambda x: x.name or ""):
+        for idx in sorted(table.indexes, key=lambda x: (x.name or "", sorted(x.columns.keys()))):
             idx_strs.append(f"{idx.name}:{sorted(idx.columns.keys())}:{idx.unique}")
         fk_strs: list[str] = []
-        for fk in sorted(table.foreign_key_constraints, key=lambda x: x.name or ""):
+        for fk in sorted(table.foreign_key_constraints, key=lambda x: (
+            x.name or "",
+            sorted(x.columns.keys()),
+            x.elements[0].column.table.name if x.elements else "",
+        )):
             fk_strs.append(
                 f"{fk.name}:{sorted(fk.columns.keys())}->{list(fk.elements)[0].column.table.name}:{sorted(str(e.column.name) for e in fk.elements)}:{fk.ondelete}"
             )
