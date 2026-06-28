@@ -125,7 +125,13 @@ class _RedisWrapper:
         self._client = client
 
     def __getattr__(self, name: str):
-        attr = getattr(self._client, name)
+        # 防止自引用：_client 不可用时访问自身触发无限递归
+        try:
+            client = object.__getattribute__(self, '_client')
+        except AttributeError:
+            raise AttributeError(f"'_RedisWrapper' object has no attribute '{name}'")
+
+        attr = getattr(client, name)
         if not callable(attr):
             return attr
 
