@@ -36,6 +36,10 @@ class Settings(BaseSettings):
     db_backup_dir: str = "./backups"
     db_backup_retention_days: int = 30
 
+    # ── Log cleanup ──
+    log_retention_days: int = 90
+    log_max_per_account: int = 500
+
     # ── Redis ──
     redis_url: str = "redis://localhost:6379/0"
 
