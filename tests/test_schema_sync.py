@@ -404,8 +404,9 @@ class TestCompileDDL:
         change = ColumnChange(table="user", change_type="add", column_name="nickname",
             definition=ColumnDef(name="nickname", type_str="VARCHAR(100)", nullable=True))
         sql = _compile_ddl(change)
-        assert "ALTER TABLE user" in sql
+        assert "ALTER TABLE `user`" in sql
         assert "ADD COLUMN" in sql
+        assert "`nickname`" in sql
         assert "VARCHAR(100)" in sql
 
     def test_add_column_not_null_with_default(self):
@@ -422,8 +423,8 @@ class TestCompileDDL:
             old_name="nick_name")
         sql = _compile_ddl(change)
         assert "RENAME COLUMN" in sql
-        assert "nick_name" in sql
-        assert "nickname" in sql
+        assert "`nick_name`" in sql
+        assert "`nickname`" in sql
 
     def test_alter_column_type(self):
         from app.core.schema_sync import _compile_ddl, ColumnChange, ColumnDef

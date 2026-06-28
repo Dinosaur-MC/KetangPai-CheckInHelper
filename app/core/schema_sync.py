@@ -386,13 +386,23 @@ def _format_default(default_val: str) -> str:
     return f"DEFAULT '{escaped}'"
 
 
+def _qt(ident: str) -> str:
+    """用反引号包装标识符（表名/列名/索引名），防止 MySQL 保留字冲突。"""
+    return f"`{ident}`"
+
+
+def _qteach(items: list[str]) -> str:
+    """用反引号包装每个标识符并以逗号连接。"""
+    return ", ".join(_qt(i) for i in items)
+
+
 def _compile_ddl(change: ColumnChange) -> str:
     """将 ColumnChange 编译为 MySQL DDL 语句。"""
-    table = change.table
+    table = _qt(change.table)
     if change.change_type == "add":
         col = change.definition
         assert col is not None
-        parts = [f"ALTER TABLE {table} ADD COLUMN {col.name} {col.type_str}"]
+        parts = [f"ALTER TABLE {table} ADD COLUMN {_qt(col.name)} {col.type_str}"]
         if not col.nullable:
             parts.append("NOT NULL")
         if col.default is not None:
@@ -403,11 +413,11 @@ def _compile_ddl(change: ColumnChange) -> str:
             parts.append("PRIMARY KEY")
         return " ".join(parts)
     elif change.change_type == "rename":
-        return f"ALTER TABLE {table} RENAME COLUMN {change.old_name} TO {change.column_name}"
+        return f"ALTER TABLE {table} RENAME COLUMN {_qt(change.old_name)} TO {_qt(change.column_name)}"
     elif change.change_type == "alter":
         col = change.definition
         assert col is not None
-        parts = [f"ALTER TABLE {table} MODIFY COLUMN {col.name} {col.type_str}"]
+        parts = [f"ALTER TABLE {table} MODIFY COLUMN {_qt(col.name)} {col.type_str}"]
         if not col.nullable:
             parts.append("NOT NULL")
         if col.default is not None:
@@ -421,25 +431,25 @@ def _compile_ddl(change: ColumnChange) -> str:
 def _compile_index_ddl(change: IndexChange) -> str:
     """将 IndexChange 编译为 DDL。"""
     idx = change.definition
-    cols = ", ".join(idx.columns)
+    cols = _qteach(idx.columns)
     if change.change_type == "add":
         unique = "UNIQUE " if idx.unique else ""
-        return f"CREATE {unique}INDEX {idx.name} ON {change.table} ({cols})"
+        return f"CREATE {unique}INDEX {_qt(idx.name)} ON {_qt(change.table)} ({cols})"
     else:
-        return f"DROP INDEX {idx.name} ON {change.table}"
+        return f"DROP INDEX {_qt(idx.name)} ON {_qt(change.table)}"
 
 
 def _compile_fk_ddl(change: ForeignKeyChange) -> str:
     """将 ForeignKeyChange 编译为 DDL。"""
     fk = change.definition
-    cols = ", ".join(fk.columns)
-    ref_cols = ", ".join(fk.ref_columns)
+    cols = _qteach(fk.columns)
+    ref_cols = _qteach(fk.ref_columns)
     if change.change_type == "add":
         ondelete = f" ON DELETE {fk.ondelete}" if fk.ondelete else ""
-        return f"ALTER TABLE {change.table} ADD FOREIGN KEY ({cols}) REFERENCES {fk.ref_table} ({ref_cols}){ondelete}"
+        return f"ALTER TABLE {_qt(change.table)} ADD FOREIGN KEY ({cols}) REFERENCES {_qt(fk.ref_table)} ({ref_cols}){ondelete}"
     else:
         name = fk.constraint_name or f"fk_{change.table}_{'_'.join(fk.columns)}"
-        return f"ALTER TABLE {change.table} DROP FOREIGN KEY {name}"
+        return f"ALTER TABLE {_qt(change.table)} DROP FOREIGN KEY {_qt(name)}"
 
 
 def _affected_tables(diff: SchemaDiff) -> set[str]:
