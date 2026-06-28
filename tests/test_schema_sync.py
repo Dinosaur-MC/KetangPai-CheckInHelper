@@ -503,6 +503,66 @@ class TestCompileDDL:
         with pytest.raises(NotImplementedError):
             _compile_ddl(change)
 
+    def test_add_varchar_pk_no_autoincrement(self):
+        """VARCHAR 主键不应生成 AUTO_INCREMENT（MySQL 不支持）。"""
+        from app.core.schema_sync import _compile_ddl, ColumnChange, ColumnDef
+        col = ColumnDef(name="id", type_str="VARCHAR(255)", nullable=False,
+                       primary_key=True)
+        change = ColumnChange(table="course", change_type="add",
+                            column_name="id", definition=col)
+        sql = _compile_ddl(change)
+        assert "AUTO_INCREMENT" not in sql
+        assert "PRIMARY KEY" in sql
+
+    def test_alter_varchar_pk_no_autoincrement(self):
+        """ALTER VARCHAR 主键不应生成 AUTO_INCREMENT。"""
+        from app.core.schema_sync import _compile_ddl, ColumnChange, ColumnDef
+        col = ColumnDef(name="id", type_str="VARCHAR(255)", nullable=False,
+                       primary_key=True, autoincrement=True)
+        change = ColumnChange(table="course", change_type="alter",
+                            column_name="id", definition=col)
+        sql = _compile_ddl(change)
+        assert "AUTO_INCREMENT" not in sql
+        assert "PRIMARY KEY" in sql
+
+    def test_autoincrement_only_for_integer(self):
+        """AUTO_INCREMENT 应只对整数类型生效。"""
+        from app.core.schema_sync import _compile_ddl, ColumnChange, ColumnDef
+        # INTEGER PK with autoincrement → 应有 AUTO_INCREMENT
+        col = ColumnDef(name="id", type_str="INTEGER", nullable=False,
+                       primary_key=True, autoincrement=True)
+        change = ColumnChange(table="user", change_type="add",
+                            column_name="id", definition=col)
+        sql = _compile_ddl(change)
+        assert "AUTO_INCREMENT" in sql
+        assert "PRIMARY KEY" in sql
+
+
+class TestIsIntegerType:
+    def test_integer_types(self):
+        from app.core.schema_sync import _is_integer_type
+        assert _is_integer_type("INTEGER") is True
+        assert _is_integer_type("INT") is True
+        assert _is_integer_type("BIGINT") is True
+        assert _is_integer_type("SMALLINT") is True
+        assert _is_integer_type("TINYINT") is True
+        assert _is_integer_type("MEDIUMINT") is True
+
+    def test_non_integer_types(self):
+        from app.core.schema_sync import _is_integer_type
+        assert _is_integer_type("VARCHAR(255)") is False
+        assert _is_integer_type("VARCHAR") is False
+        assert _is_integer_type("TEXT") is False
+        assert _is_integer_type("DATETIME") is False
+        assert _is_integer_type("BOOLEAN") is False
+        assert _is_integer_type("FLOAT") is False
+
+    def test_with_length(self):
+        """带长度参数的整数类型也应识别。"""
+        from app.core.schema_sync import _is_integer_type
+        assert _is_integer_type("INTEGER(11)") is True
+        assert _is_integer_type("BIGINT(20)") is True
+
 
 class TestFormatDefault:
     """测试 _format_default 函数的所有分支。"""

@@ -335,7 +335,10 @@ def inspect_target(metadata) -> dict[str, TableDef]:
                 type_str=_type_to_string(col.type),
                 nullable=col.nullable,
                 default=default_val,
-                autoincrement=col.autoincrement is True or (col.autoincrement == "auto" and col.primary_key),
+                autoincrement=col.autoincrement is True or (
+                    col.autoincrement == "auto" and col.primary_key
+                    and _type_to_string(col.type) in ("INTEGER", "BIGINT", "SMALLINT", "TINYINT", "INT")
+                ),
                 primary_key=col.primary_key,
             )
 
@@ -454,6 +457,12 @@ def _qteach(items: list[str]) -> str:
     return ", ".join(_qt(i) for i in items)
 
 
+def _is_integer_type(type_str: str) -> bool:
+    """检查类型是否为整数类型（可支持 AUTO_INCREMENT）。"""
+    base = type_str.split("(")[0].upper()
+    return base in ("INTEGER", "INT", "BIGINT", "SMALLINT", "TINYINT", "MEDIUMINT")
+
+
 def _compile_ddl(change: ColumnChange) -> str:
     """将 ColumnChange 编译为 MySQL DDL 语句。"""
     table = _qt(change.table)
@@ -473,7 +482,13 @@ def _compile_ddl(change: ColumnChange) -> str:
         if col.default is not None:
             parts.append(_format_default(col.default))
         if col.autoincrement:
-            parts.append("AUTO_INCREMENT")
+            if col.primary_key and _is_integer_type(col.type_str):
+                parts.append("AUTO_INCREMENT")
+            else:
+                logger.warning(
+                    "列 %s.%s 类型 %s 不支持 AUTO_INCREMENT，已跳过",
+                    change.table, col.name, col.type_str,
+                )
         if col.primary_key:
             parts.append("PRIMARY KEY")
         if col.comment:
@@ -491,7 +506,13 @@ def _compile_ddl(change: ColumnChange) -> str:
         if col.default is not None:
             parts.append(_format_default(col.default))
         if col.autoincrement:
-            parts.append("AUTO_INCREMENT")
+            if _is_integer_type(col.type_str):
+                parts.append("AUTO_INCREMENT")
+            else:
+                logger.warning(
+                    "列 %s.%s 类型 %s 不支持 AUTO_INCREMENT，已跳过",
+                    change.table, col.name, col.type_str,
+                )
         if col.primary_key:
             parts.append("PRIMARY KEY")
         if col.comment:
