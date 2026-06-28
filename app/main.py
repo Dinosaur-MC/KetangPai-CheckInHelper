@@ -16,6 +16,7 @@ from app.utils import DEFAULT_PAGE, DEFAULT_PAGE_SIZE, MAX_PAGE_SIZE, paginate
 
 from app.models import PaginatedResponse, ErrorResponse, Account, User, Role
 
+import asyncio
 import logging
 
 logger = logging.getLogger(__name__)
@@ -23,7 +24,7 @@ logger = logging.getLogger(__name__)
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    """启动时初始化数据库、清空缓存、启动自动签到观察器。"""
+    """启动时初始化数据库、清空缓存、启动自动签到观察器、启动日志清理。"""
     from app.core.db import init_db, get_redis_client
     from app.core.watcher import auto_checkin_watcher
 
@@ -46,7 +47,32 @@ async def lifespan(app: FastAPI):
     # 启动自动签到观察器
     await auto_checkin_watcher.start()
 
+    # 启动签到日志后台清理
+    async def _log_cleanup_loop():
+        while True:
+            try:
+                from app.core.log_cleanup import run_cleanup
+                from app.core.db import get_session
+                with get_session() as session:
+                    run_cleanup(
+                        session,
+                        retention_days=settings.log_retention_days,
+                        max_per_account=settings.log_max_per_account,
+                    )
+            except Exception as e:
+                logger.warning("签到日志后台清理异常: %s", e)
+            await asyncio.sleep(86400)
+
+    cleanup_task = asyncio.create_task(_log_cleanup_loop(), name="log-cleanup")
+
     yield
+
+    # 关闭清理协程
+    cleanup_task.cancel()
+    try:
+        await cleanup_task
+    except asyncio.CancelledError:
+        pass
 
     # 关闭观察器
     await auto_checkin_watcher.stop()
