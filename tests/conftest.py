@@ -110,22 +110,20 @@ def app():
 
 @pytest.fixture
 def client(app, monkeypatch: pytest.MonkeyPatch) -> Generator:
-    """FastAPI TestClient with SQLite in-memory DB and mocked Redis.
+    """FastAPI TestClient with SQLite temp file DB and mocked Redis.
 
     DB session and Redis dependencies are overridden so tests never reach
     real MySQL / Redis.
     """
     from fastapi.testclient import TestClient
 
-    # ── Patch DB engine to use SQLite in-memory ──
+    # ── Patch DB engine to use SQLite temp file ──
     from sqlmodel import create_engine, SQLModel
     from app.core import db as db_module
     from app.core.settings import settings
 
     import tempfile, pathlib
 
-    # Use a temp file instead of :memory: so TestClient's background thread
-    # and the main test thread share the same SQLite database.
     _tmp_db = tempfile.NamedTemporaryFile(suffix=".sqlite", delete=False)
     _tmp_db.close()
     _db_path = pathlib.Path(_tmp_db.name)
