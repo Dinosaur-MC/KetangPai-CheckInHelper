@@ -13,6 +13,7 @@ from typing import Literal
 
 import tenacity
 from sqlalchemy import Engine, inspect as sa_inspect, text as sa_text
+from sqlalchemy.exc import SQLAlchemyError
 from sqlmodel import SQLModel, Session, select
 
 logger = logging.getLogger(__name__)
@@ -126,11 +127,38 @@ def _detect_rename(
     added_names: set[str],
     current_types: dict[str, str],
     target_types: dict[str, str],
-    max_distance: int = 3,
+    max_distance: int = 2,
+    fk_column_names: set[str] | None = None,
 ) -> list[tuple[str, str]]:
-    """检测可能的列改名对。"""
+    """检测可能的列改名对。
+
+    安全策略：
+    - 类型族不匹配 → 不猜测
+    - 编辑距离 > max_distance → 不猜测
+    - 外键列 → 不猜测（重命名 FK 列风险极高）
+    - 所有检测到的重命名输出 INFO 日志
+
+    Args:
+        deleted_names: current 中有的、target 中没有的列名集合
+        added_names: target 中有的、current 中没有的列名集合
+        current_types: current 中的 {col_name: type_str}
+        target_types: target 中的 {col_name: type_str}
+        max_distance: 最大编辑距离（默认 2，原为 3）
+        fk_column_names: 外键列名集合，这些列不参与重命名猜测
+
+    Returns:
+        [(old_name, new_name), ...] 列表
+    """
+    if fk_column_names is None:
+        fk_column_names = set()
+
     results: list[tuple[str, str, int]] = []
     for old_name in sorted(deleted_names):
+        # 跳过外键列 — 不猜测 FK 列的重命名
+        if old_name in fk_column_names:
+            logger.debug("列 %s 是外键列，跳过重命名猜测", old_name)
+            continue
+
         old_type = current_types.get(old_name, "")
         old_family = _type_family(old_type)
         best_match: str | None = None
@@ -149,10 +177,11 @@ def _detect_rename(
     results.sort(key=lambda x: x[2])
     used_new: set[str] = set()
     final: list[tuple[str, str]] = []
-    for old_name, new_name, _ in results:
+    for old_name, new_name, dist in results:
         if new_name not in used_new:
             final.append((old_name, new_name))
             used_new.add(new_name)
+            logger.info("检测到列改名: %s → %s (编辑距离 %d)", old_name, new_name, dist)
     return final
 
 
@@ -179,7 +208,13 @@ def compute_diff(target: dict[str, TableDef], current: dict[str, TableDef]) -> S
 
         current_types = {n: cur.columns[n].type_str for n in deleted}
         target_types = {n: tdef.columns[n].type_str for n in added}
-        renames = _detect_rename(deleted, added, current_types, target_types)
+
+        # 收集当前表中的外键列名 — 这些列不参与重命名猜测
+        fk_column_names: set[str] = set()
+        for fk in cur.foreign_keys:
+            fk_column_names.update(fk.columns)
+        renames = _detect_rename(deleted, added, current_types, target_types,
+                                 fk_column_names=fk_column_names)
         renamed_old = {r[0] for r in renames}
         renamed_new = {r[1] for r in renames}
 
@@ -406,6 +441,13 @@ def _compile_ddl(change: ColumnChange) -> str:
     if change.change_type == "add":
         col = change.definition
         assert col is not None
+        if not col.nullable and col.default is None:
+            logger.warning(
+                "向表 %s 添加 NOT NULL 列 %s 无 DEFAULT 值。"
+                " 若表中有数据，MySQL 将拒绝此操作。推荐先添加 NULLABLE 列，"
+                " 填充数据后再设 NOT NULL，或指定 DEFAULT 值。",
+                change.table, col.name,
+            )
         parts = [f"ALTER TABLE {table} ADD COLUMN {_qt(col.name)} {col.type_str}"]
         if not col.nullable:
             parts.append("NOT NULL")
@@ -415,6 +457,9 @@ def _compile_ddl(change: ColumnChange) -> str:
             parts.append("AUTO_INCREMENT")
         if col.primary_key:
             parts.append("PRIMARY KEY")
+        if col.comment:
+            escaped = col.comment.replace("'", "\\'")
+            parts.append(f"COMMENT '{escaped}'")
         return " ".join(parts)
     elif change.change_type == "rename":
         return f"ALTER TABLE {table} RENAME COLUMN {_qt(change.old_name)} TO {_qt(change.column_name)}"
@@ -426,6 +471,13 @@ def _compile_ddl(change: ColumnChange) -> str:
             parts.append("NOT NULL")
         if col.default is not None:
             parts.append(_format_default(col.default))
+        if col.autoincrement:
+            parts.append("AUTO_INCREMENT")
+        if col.primary_key:
+            parts.append("PRIMARY KEY")
+        if col.comment:
+            escaped = col.comment.replace("'", "\\'")
+            parts.append(f"COMMENT '{escaped}'")
         return " ".join(parts)
     elif change.change_type == "drop":
         raise NotImplementedError("列删除不自动执行，请手动处理")
@@ -531,9 +583,11 @@ class SchemaSync:
     启动时完成：检测 schema 差异 → 自动备份 → DDL 执行 → 审计追踪。
     """
 
-    def __init__(self, engine: Engine, backup_dir: str = "./backups"):
+    def __init__(self, engine: Engine, backup_dir: str = "./backups",
+                 retention_days: int = 30):
         self._engine = engine
         self._backup_dir = Path(backup_dir)
+        self._retention_days = retention_days
         self._backup_dir.mkdir(parents=True, exist_ok=True)
 
     def execute(self) -> SchemaDiff | None:
@@ -566,6 +620,7 @@ class SchemaSync:
         backup_paths = self.backup_tables(diff)
         change_count = self.apply_changes(diff)
         self.record_migration(diff, backup_paths)
+        self._cleanup_old_backups()
         logger.info("Schema 同步完成，执行了 %d 个变更", change_count)
         return diff
 
@@ -573,6 +628,33 @@ class SchemaSync:
     def _has_changes(diff: SchemaDiff) -> bool:
         return bool(diff.tables_to_create or diff.column_changes
                     or diff.index_changes or diff.fk_changes)
+
+    def _safe_execute_ddl(self, sql: str, description: str = "") -> bool:
+        """安全执行 DDL，捕获"已存在"类错误以实现幂等性。
+
+        Args:
+            sql: DDL 语句
+            description: 日志描述（表名.操作等）
+
+        Returns:
+            True — 执行成功或安全跳过（因目标已存在）
+        """
+        try:
+            with self._engine.begin() as conn:
+                conn.execute(sa_text(sql))
+            return True
+        except SQLAlchemyError as e:
+            error_msg = str(e).upper()
+            # MySQL 错误代码：1050=表已存在, 1060=列重复, 1061=索引重复, 1091=不存在
+            # SQLite 错误消息：duplicate column name, already exists
+            if any(code in error_msg for code in ("1050", "1060", "1061", "1091")):
+                logger.warning("DDL 已执行过，安全跳过 [%s]: %s", description, e)
+                return True
+            if "DUPLICATE COLUMN NAME" in error_msg or "ALREADY EXISTS" in error_msg:
+                logger.warning("DDL 已执行过，安全跳过 [%s]: %s", description, e)
+                return True
+            logger.error("DDL 执行失败 [%s]: %s", description, e)
+            raise
 
     def backup_tables(self, diff: SchemaDiff) -> dict[str, str]:
         """用纯 SQLAlchemy 备份受影响表的数据为 SQL 文件。跨平台，零外部依赖。"""
@@ -602,6 +684,7 @@ class SchemaSync:
                 path = backup_dir / f"{table}.sql"
                 lines: list[str] = []
                 lines.append(f"-- Backup of table `{table}` — {datetime.now().isoformat()}")
+                lines.append("SET NAMES utf8mb4;")
                 lines.append(f"TRUNCATE TABLE `{table}`;\n")
 
                 cols = [c["name"] for c in inspector.get_columns(table)]
@@ -636,13 +719,19 @@ class SchemaSync:
         """执行 DDL 变更。返回执行的操作数。"""
         count = 0
 
-        # Phase 1: CREATE TABLE（新表）
+        # Phase 1: CREATE TABLE（新表，幂等：if not exists 语义）
         for tdef in diff.tables_to_create:
             logger.info("创建表: %s", tdef.name)
             tdef_sa = SQLModel.metadata.tables.get(tdef.name)
             if tdef_sa is not None:
-                tdef_sa.create(self._engine)
-                count += 1
+                try:
+                    tdef_sa.create(self._engine)
+                    count += 1
+                except SQLAlchemyError as e:
+                    if "1050" in str(e).upper():
+                        logger.warning("表 %s 已存在，跳过创建", tdef.name)
+                    else:
+                        raise
 
         # Phase 2: 按表分组列变更（安全顺序：add → rename → alter）
         table_column_changes: dict[str, list[ColumnChange]] = {}
@@ -654,9 +743,7 @@ class SchemaSync:
             changes_sorted = sorted(changes, key=lambda c: order.get(c.change_type, 9))
             for change in changes_sorted:
                 sql = _compile_ddl(change)
-                logger.debug("执行 DDL: %s", sql)
-                with self._engine.begin() as conn:
-                    conn.execute(sa_text(sql))
+                self._safe_execute_ddl(sql, f"{change.change_type} {table}.{change.column_name}")
                 count += 1
 
         # Phase 3: 索引变更（先 drop 后 add）
@@ -666,8 +753,7 @@ class SchemaSync:
         for table, changes in table_index_changes.items():
             for change in sorted(changes, key=lambda c: 0 if c.change_type == "drop" else 1):
                 sql = _compile_index_ddl(change)
-                with self._engine.begin() as conn:
-                    conn.execute(sa_text(sql))
+                self._safe_execute_ddl(sql, f"{change.change_type} index {table}.{change.definition.name}")
                 count += 1
 
         # Phase 4: 外键变更（先 drop 后 add）
@@ -677,11 +763,33 @@ class SchemaSync:
         for table, changes in table_fk_changes.items():
             for change in sorted(changes, key=lambda c: 0 if c.change_type == "drop" else 1):
                 sql = _compile_fk_ddl(change)
-                with self._engine.begin() as conn:
-                    conn.execute(sa_text(sql))
+                self._safe_execute_ddl(sql, f"{change.change_type} fk {table}")
                 count += 1
 
         return count
+
+    def _cleanup_old_backups(self) -> None:
+        """清理超过保留天数的备份目录。"""
+        if self._retention_days <= 0:
+            return
+        cutoff = datetime.now().timestamp() - self._retention_days * 86400
+        cleaned = 0
+        for entry in self._backup_dir.iterdir():
+            if not entry.is_dir():
+                continue
+            if entry.name == "_audit":
+                continue
+            try:
+                dir_time = datetime.strptime(entry.name, "%Y%m%d_%H%M%S").timestamp()
+            except ValueError:
+                continue
+            if dir_time < cutoff:
+                import shutil
+                shutil.rmtree(entry)
+                cleaned += 1
+                logger.info("清理过期备份: %s", entry)
+        if cleaned:
+            logger.info("清理了 %d 个过期备份目录", cleaned)
 
     def record_migration(self, diff: SchemaDiff, backup_paths: dict[str, str]) -> None:
         """记录迁移审计日志和 schema 哈希。"""

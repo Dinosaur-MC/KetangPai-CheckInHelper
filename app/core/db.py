@@ -229,6 +229,7 @@ def init_db():
         sync = SchemaSync(
             _engine,
             backup_dir=settings.db_backup_dir,
+            retention_days=settings.db_backup_retention_days,
         )
         sync.execute()
 

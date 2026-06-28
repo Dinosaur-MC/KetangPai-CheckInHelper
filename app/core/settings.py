@@ -34,6 +34,7 @@ class Settings(BaseSettings):
     db_pool_recycle: int = 3600
     db_auto_migrate: bool = True
     db_backup_dir: str = "./backups"
+    db_backup_retention_days: int = 30
 
     # ── Redis ──
     redis_url: str = "redis://localhost:6379/0"
