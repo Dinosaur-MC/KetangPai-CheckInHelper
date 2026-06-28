@@ -2,13 +2,24 @@
    登录页专用样式
    ============================================================ */
 
+/* 固定背景 */
+.login-bg {
+    position: fixed;
+    inset: 0;
+    z-index: 0;
+    background: url("/static/img(64).webp") no-repeat bottom center;
+    background-size: cover;
+    pointer-events: none;
+    isolation: isolate;
+}
+
 .login-page {
+    position: relative;
+    z-index: 1;
     min-height: 100dvh;
     display: flex;
     align-items: center;
     justify-content: center;
-    background: #e8eaed url("/static/img(64).webp") no-repeat center;
-    background-size: cover;
     padding: 16px;
 }
 .login-card {
@@ -56,7 +67,7 @@
    暗色主题适配
    ============================================================ */
 @media (prefers-color-scheme: dark) {
-    .login-page {
+    .login-bg {
         background-color: #1a1b2e;
     }
     .login-card {

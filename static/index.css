@@ -1,7 +1,22 @@
 /* ============================================================
+       固定背景（铺满屏幕，不随内容滚动）
+   ============================================================ */
+.app-bg {
+    position: fixed;
+    inset: 0;
+    z-index: 0;
+    background: url("/static/img(32).webp") no-repeat bottom center;
+    background-size: cover;
+    pointer-events: none;
+    isolation: isolate;
+}
+
+/* ============================================================
        主布局
    ============================================================ */
 .app-layout {
+    position: relative;
+    z-index: 1;
     display: flex;
     min-height: 100dvh;
 }
@@ -164,8 +179,6 @@
     min-height: 0;
     overflow-y: auto;
     padding-top: 56px;
-    background: #e8eaed url("/static/img(32).webp") no-repeat center;
-    background-size: cover;
 }
 .main-header {
     position: fixed;
