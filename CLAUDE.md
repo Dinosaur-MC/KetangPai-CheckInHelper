@@ -57,6 +57,7 @@ main.py                     # Entry point — loads .env, starts uvicorn
 │   │   ├── security.py     # Argon2 password hashing, JWT create/decode, Fernet encryption
 │   │   ├── sessions.py     # SessionPool singleton — manages KetangPai login sessions
 │   │   ├── watcher.py      # AutoCheckinWatcher — 后台自动签到观察器（轮询 + 执行）
+│   │   ├── log_cleanup.py  # LogCleanup — 签到日志过期清理和超限清理
 │   │   ├── schema_sync.py  # SchemaSync — 全自动 schema 同步引擎（diff/backup/DDL/审计）
 │   │   └── db.py           # SQLModel engine, Redis connection pool (breaker pattern), init_db (→ SchemaSync)
 │   ├── routers/            # ★ Domain route modules (split from monolithic main.py)
@@ -77,6 +78,7 @@ main.py                     # Entry point — loads .env, starts uvicorn
 │   ├── test_utils.py       # get_client_ip、RateLimiter、_in_time_windows 等
 │   ├── test_db.py          # _RedisWrapper 断路器、check_redis_health
 │   ├── test_schema_sync.py # SchemaSync — 数据类、diff 引擎、DDL 编译、备份/审计
+│   ├── test_log_cleanup.py # 签到日志过期/超限清理函数测试
 │   └── routers/
 │       ├── __init__.py
 │       ├── test_auth.py              # 注册/登录/登出/令牌刷新
@@ -116,6 +118,8 @@ main.py                     # Entry point — loads .env, starts uvicorn
 - **Login business-level check**: `login()` inspects `result.status != 1` and raises with the API error message (e.g., "password expired"), rather than only checking HTTP status.
 - **Account verification**: `POST /api/accounts/{id}/verify` re-logs in to KetangPai, updates status/status_message, and refreshes stored user details. Updating password also resets status automatically.
 - **SchemaSync (`app/core/schema_sync.py`)**: 全自动数据库结构同步引擎，替代旧 `_migrate()`。启动时自动完成：从 SQLModel 模型提取目标 schema → 通过 SQLAlchemy 反射获取当前状态 → `compute_diff()` 计算差异（含列改名启发式检测，Levenshtein + type-family 守卫 + FK 列排除 + 默认距离 2；BOOLEAN↔TINYINT(1) 类型统一规范化防虚假 diff）→ 纯 Python 流式备份受影响表（`yield_per` 分批，防 OOM）→ DDL 执行（列/索引/外键，反引号保护保留字，AUTO_INCREMENT/PK/COMMENT 完整输出；`ALTER COLUMN ... SET/DROP DEFAULT` 对齐模型与数据库的默认值）→ 审计日志。快速路径：模型 SHA-256 哈希未变则跳过。**安全特性**：幂等执行（DDL 重复安全）、迁移锁（`_acquire_migration_lock` 原子 INSERT，防多实例并发）、`NOT NULL` 无默认值警告、备份自动清理（`DB_BACKUP_RETENTION_DAYS`）、备份 SQL 含 `SET NAMES utf8mb4`。受控于 `DB_AUTO_MIGRATE` / `DB_BACKUP_DIR` / `DB_BACKUP_RETENTION_DAYS` 设置。
+- **LogCleanup (pp/core/log_cleanup.py)**: 签到日志自动清理模块。两个独立策略——**过期清理**（默认 90 天）和**超限清理**（每账号默认 500 条）。后台每日自动执行（_log_cleanup_loop 在 lifespan 中注册，启动后立即执行一次，之后每 24h 运行），同时管理员可手动触发 POST /api/logs/cleanup。使用 MySQL 8+ 窗口函数 ROW_NUMBER() OVER (PARTITION BY account_id ORDER BY created_at DESC) 实现高效超限删除。受控于 LOG_RETENTION_DAYS / LOG_MAX_PER_ACCOUNT 设置。session.commit() 确保删除持久化。
+
 - **Redis circuit breaker**: `_RedisWrapper` proxy auto-fuses on any operation failure, avoiding repeated timeouts. Health check pings Redis every 5 minutes.
 - **Client IP detection**: `get_client_ip()` in `utils.py` reads `X-Forwarded-For` / `X-Real-IP` headers for reverse proxy setups before falling back to `request.client.host`.
 - **Client IP forwarding to KetangPai**: The `/api/checkin` endpoint extracts the client's real IP via `get_client_ip(request)` and passes it through `SessionPool.execute_checkin()` → `KetangPaiAPI.check_in()`, which adds an `X-Forward-For` header to the outbound request to Ketangpai. Defaults to empty (no header sent) when IP is unavailable.
@@ -127,7 +131,7 @@ main.py                     # Entry point — loads .env, starts uvicorn
 - **Auto CheckIn API (`app/routers/checkin.py`)**: Four endpoints — `GET/PUT /api/auto-checkin/config` (per-user config with strict Pydantic validation via `TimeWindow`/`AutoCheckinConfigBody`), `GET /api/auto-checkin/status` (watcher status + per-user `user_active` flag), `POST /api/auto-checkin/trigger` (manual scan trigger).
 - **Pydantic strict validation on config**: `TimeWindow` model validates start/end hours (0-23, start < end), `AutoCheckinConfigBody` validates `checkin_types` (only "1"/"2"), `time_windows` (max 16 items, dedup). All manual JSON parsing/handling eliminated in favor of Pydantic validators.
 - **Status uses `user_active` instead of `is_running`**: The global watcher is always running. Frontend shows meaningful status per user based on `user_active` (enabled + has time windows), not `is_running`.
-- **Testing (353+ tests)**: Tests organized by module under `tests/`. Pure logic tested standalone; route tests use FastAPI TestClient with SQLite temp file (cross-thread safe) + mocked Redis (`None`). SchemaSync tests (`test_schema_sync.py`, 119 tests) cover data classes, schema extraction, diff engine, DDL compilation, backup, integration flow, migration lock, backup cleanup, idempotency, COMMENT support, charset declaration, default alignment (`ALTER COLUMN ... SET/DROP DEFAULT`), BOOLEAN/TINYINT normalization, **historical phase migration paths** (6 phases), **Cartesian product permutation tests** (5 seeds + 24 full permutations), and **future predicted change tests** (5 scenarios). Benchmark tests (`test_benchmark_checkin.py`) measure from endpoint to mock API, use 10 warmup + 10 measure + drop 1 outlier, assert median < 50ms. Results auto-saved to `tests/routers/.benchmark_results.json`.
+- **Testing (360+ tests)**: Tests organized by module under `tests/`. Pure logic tested standalone; route tests use FastAPI TestClient with SQLite temp file (cross-thread safe) + mocked Redis (`None`). SchemaSync tests (`test_schema_sync.py`, 119 tests) cover data classes, schema extraction, diff engine, DDL compilation, backup, integration flow, migration lock, backup cleanup, idempotency, COMMENT support, charset declaration, default alignment (`ALTER COLUMN ... SET/DROP DEFAULT`), BOOLEAN/TINYINT normalization, **historical phase migration paths** (6 phases), **Cartesian product permutation tests** (5 seeds + 24 full permutations), and **future predicted change tests** (5 scenarios). Benchmark tests (`test_benchmark_checkin.py`) measure from endpoint to mock API, use 10 warmup + 10 measure + drop 1 outlier, assert median < 50ms. Results auto-saved to `tests/routers/.benchmark_results.json`.
 - **`_in_time_windows` midnight-crossing support**: Time windows like `{start:22, end:6}` now correctly match hours 22–23 and 0–5, not just same-day ranges. Zero-width windows (`start == end`) never match.
 
 ## Data Model
@@ -157,3 +161,4 @@ SystemSetting
 - Generate `CREDENTIAL_KEY` with the Fernet command above (REQUIRED — no plaintext fallback)
 - `DATABASE_URL` must be set (no default — startup will fail if missing)
 - All config is managed via `app/core/settings.py` (pydantic-settings), not via `os.getenv`
+- 签到日志保留天数 ``LOG_RETENTION_DAYS``（默认 90）和每账号最大条数 ``LOG_MAX_PER_ACCOUNT``（默认 500）可在 ``.env`` 中覆盖
