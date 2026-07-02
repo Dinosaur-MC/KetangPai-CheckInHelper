@@ -63,34 +63,67 @@ self.addEventListener("activate", (event) => {
   );
 });
 
-// 请求阶段：缓存优先，网络回退
+// ── 文件分类 ──
+// 应用自身代码（频繁更新）→ stale-while-revalidate
+const _APP_ASSETS = new Set([
+  "/static/common.css",
+  "/static/index.css",
+  "/static/login.css",
+  "/static/index.js",
+  "/static/login.js",
+  "/favicon.ico",
+]);
+
+function _isApi(url) { return url.includes("/api/"); }
+function _isAppAsset(url) { return _APP_ASSETS.has(new URL(url).pathname); }
+
+function _serverUnavailable() {
+  return new Response("离线中，请检查网络连接", {
+    status: 503, statusText: "Service Unavailable",
+  });
+}
+
+// stale-while-revalidate：有缓存立即返回并在后台拉取最新版；无缓存则等待网络
+async function _staleWhileRevalidate(request) {
+  const cache = await caches.open(CACHE_NAME);
+  const cached = await cache.match(request);
+  // 不论有无缓存，后台都发起网络请求更新缓存
+  const updateCache = fetch(request).then((response) => {
+    if (response.ok) cache.put(request, response.clone());
+  }).catch(() => {});
+  if (cached) return cached;  // 有缓存 → 立即返回
+  await updateCache;          // 无缓存 → 等网络
+  const now = await cache.match(request);
+  if (now) return now;
+  // 离线且无缓存 → 返回 503
+  try { return await fetch(request); } catch { return _serverUnavailable(); }
+}
+
+// cache-first：缓存命中直接返回，未命中则请求网络
+async function _cacheFirst(request) {
+  const cached = await caches.match(request);
+  if (cached) return cached;
+  try {
+    const response = await fetch(request);
+    if (response.ok) {
+      const cache = await caches.open(CACHE_NAME);
+      await cache.put(request, response.clone());
+    }
+    return response;
+  } catch { return _serverUnavailable(); }
+}
+
+// 请求阶段：按文件类型选择策略
 self.addEventListener("fetch", (event) => {
-  // 不缓存 API 请求（动态内容）
-  if (event.request.url.includes("/api/")) {
+  // API 请求不缓存
+  if (_isApi(event.request.url)) return;
+
+  // 应用自身代码 → stale-while-revalidate（每次访问都在后台检查更新）
+  if (_isAppAsset(event.request.url)) {
+    event.respondWith(_staleWhileRevalidate(event.request));
     return;
   }
 
-  event.respondWith(
-    (async () => {
-      const cached = await caches.match(event.request);
-      if (cached) {
-        return cached;
-      }
-      try {
-        const response = await fetch(event.request);
-        // 可选：将新请求的响应加入缓存（网络优先资源的渐进增强）
-        if (response.ok) {
-          const cache = await caches.open(CACHE_NAME);
-          await cache.put(event.request, response.clone());
-        }
-        return response;
-      } catch {
-        // 网络离线且缓存未命中 — 返回离线占位
-        return new Response("离线中，请检查网络连接", {
-          status: 503,
-          statusText: "Service Unavailable",
-        });
-      }
-    })()
-  );
+  // 其他资源（大库/字体/图标/图片）→ cache-first
+  event.respondWith(_cacheFirst(event.request));
 });
