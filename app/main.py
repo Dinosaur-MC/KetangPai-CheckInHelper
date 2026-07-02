@@ -2,7 +2,7 @@ from contextlib import asynccontextmanager
 from pathlib import Path
 from fastapi import FastAPI, Request, Response, Depends, Query
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import JSONResponse, FileResponse, RedirectResponse
+from fastapi.responses import JSONResponse, FileResponse, Response
 from fastapi.staticfiles import StaticFiles
 from starlette.exceptions import HTTPException
 from starlette.middleware.gzip import GZipMiddleware
@@ -184,11 +184,23 @@ async def web_manifest():
 
 
 @app.get("/sw.js")
-async def service_worker():
+async def service_worker(request: Request):
     path = Path(__file__).parent.parent / "sw.js"
+    stat = path.stat()
+    etag = f'"{stat.st_mtime_ns:x}-{stat.st_size:x}"'
+
+    # 条件请求：文件未变则返回 304，避免浏览器每次都完整下载
+    if_none_match = request.headers.get("if-none-match")
+    if if_none_match and if_none_match == etag:
+        return Response(status_code=304, headers={"ETag": etag})
+
     return FileResponse(
         path,
-        headers={"Content-Type": "application/javascript", "Cache-Control": "public, max-age=0"},
+        headers={
+            "Content-Type": "application/javascript",
+            "Cache-Control": "no-cache",
+            "ETag": etag,
+        },
     )
 
 
