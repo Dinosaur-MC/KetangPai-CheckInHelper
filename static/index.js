@@ -330,6 +330,7 @@ createApp({
 
         // 手动刷新当前页面数据（PWA 全屏时无浏览器下拉刷新）
         function refreshPage() {
+            invalidateAccounts();
             loadPageData(route.value).catch((e) => {
                 console.warn("刷新失败:", e);
                 showToast("刷新失败，请稍后重试");
