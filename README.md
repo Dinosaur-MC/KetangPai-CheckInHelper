@@ -314,6 +314,7 @@ uv run pytest -v -s tests/routers/test_benchmark_checkin.py  # 基准测试详�
 | `JWT_SECRET`       | **JWT 签名密钥（必填）**       | 未设置时随机生成（重启后失效） |
 | `JWT_ALGORITHM`    | JWT 算法                       | `HS256`                        |
 | `JWT_EXPIRE_HOURS` | Access Token 有效期            | `24`（小时）                   |
+| `JWT_REFRESH_EXPIRE_DAYS` | Refresh Token 有效期        | `30`（天）                    |
 | `CREDENTIAL_KEY`   | **课堂派密码加密密钥（必填）** | 无（未设置时启动失败）         |
 | `ALLOWED_ORIGINS`  | CORS 白名单（逗号分隔）        | 空（不允许跨域）               |
 | `PORT`             | 服务端口                       | `8765`                         |
@@ -355,6 +356,8 @@ uv run pytest -v -s tests/routers/test_benchmark_checkin.py  # 基准测试详�
 - **安全区域适配**：支持 iOS 刘海屏和移动端 Edge 底部工具栏
 - **FAB 快捷操作**：首页浮动按钮直达签到页
 - **Toast 通知**：操作结果实时反馈
+- **PWA 支持**：可安装到主屏幕（standalone 全屏模式），Service Worker 三层缓存（HTML+JS/CSS network-first，大库 cache-first，API passthrough）
+- **手动刷新按钮**：顶部横幅右侧刷新按钮（PWA 全屏模式下替代下拉刷新），带 2 秒限流和旋转动画
 
 ## API 端点
 
@@ -459,9 +462,10 @@ uv run pytest -v -s tests/routers/test_benchmark_checkin.py  # 基准测试详�
 
 **前端降级策略：**
 
-- 本地解码 JWT `exp` 字段预判过期，直接清除不发起无效请求
-- 拦截 401 后自动用 `refresh_token` 换新令牌并重试原请求
-- 页面刷新保持登录状态
+- `refresh_token` cookie 限定 `path="/api/refresh"`，仅刷新端点携带，其他 API 请求不携带
+- 拦截 401 后使用 **Semaphore(1)** 共享 Promise，确保并发 401 仅发起一次 `POST /api/refresh`
+- 刷新成功后所有等待者使用新 `access_token` 重试原请求
+- 根路由无条件下发 SPA，认证完全由前端处理 → 刷新失败时跳转 `/login`
 
 ### 签到引擎
 
@@ -597,6 +601,8 @@ CheckInHelper/
 ├── Dockerfile              # 🐳 Docker 多阶段构建
 ├── docker-compose.yml      # 🐳 一键启动 (MySQL + Redis + App)
 ├── favicon.ico             # 🖼️ 网站图标
+├── manifest.json           # 📱 PWA Web App Manifest
+├── sw.js                   # ⚡ PWA Service Worker（三层缓存策略）
 ├── CLAUDE.md               # 🤖 Claude Code 项目指令
 │
 ├── app/                    # 🧩 后端核心
@@ -626,6 +632,7 @@ CheckInHelper/
 │   └── index.html          # 前端 SPA 模板
 │
 ├── static/                 # 🎨 前端资源（本地化，无 CDN）
+│   ├── icons/              # 📱 PWA 图标 (180/192/512) + 截图 (mobile/desktop)
 │   ├── common.css          # 公共样式（全局重置、表单字段、密码切换）
 │   ├── login.css           # 登录页专用样式
 │   ├── login.js            # 登录/注册 Vue 应用逻辑
