@@ -21,8 +21,6 @@ function showToast(msg) {
 }
 
 // 检查是否已登录（cookie 有效），如果是则直接跳转
-// 注意：如果 access_token 过期但 refresh_token 仍有效，根路由会静默续签后再返回 index.html，
-// 不会到达此页面。到达此处说明双 token 均无效，无需尝试 refresh。
 (async function checkAuth() {
     try {
         const res = await fetch(`${API_BASE}/api/users/me`, {
