@@ -4,7 +4,7 @@ from datetime import datetime, timezone
 from datetime import timedelta
 from starlette.exceptions import HTTPException
 from fastapi import APIRouter, Request, Depends, Body
-from fastapi.responses import JSONResponse
+from fastapi.responses import JSONResponse, Response
 from sqlmodel import select
 
 from app.core.settings import settings as app_settings
@@ -18,7 +18,7 @@ from app.core.security import (
     validate_password_strength,
     blacklist_token,
 )
-from app.core.db import Session, Redis, get_session_with, get_redis
+from app.core.db import Session, Redis, get_session_with, get_redis, get_redis_client
 from app.utils import RateLimiter
 
 from app.models import BaseResponse, SystemSetting, User, InviteCode
@@ -34,7 +34,7 @@ router = APIRouter()
 
 
 def _set_auth_cookies(response: JSONResponse, access_token: str, refresh_token: str):
-    """设置 httponly auth cookie（过期时间与 JWT_EXPIRE_HOURS / JWT_REFRESH_EXPIRE_DAYS 一致）。"""
+    """设置 httponly auth cookie。access_token 作用于全站，refresh_token 仅用于 /api/refresh。"""
     access_max_age = app_settings.jwt_expire_hours * 3600
     refresh_max_age = app_settings.jwt_refresh_expire_days * 86400
     response.set_cookie(
@@ -44,15 +44,16 @@ def _set_auth_cookies(response: JSONResponse, access_token: str, refresh_token: 
     )
     response.set_cookie(
         key="refresh_token", value=refresh_token,
-        httponly=True, samesite="lax", path="/",
+        httponly=True, samesite="lax", path="/api/refresh",
         max_age=refresh_max_age,
     )
 
 
 def _clear_auth_cookies(response: JSONResponse):
-    """清除 auth cookie。"""
+    """清除 auth cookie（新旧 path 都清理，兼容旧版 path=/ 的 cookie）。"""
     response.set_cookie(key="access_token", value="", httponly=True, samesite="lax", path="/", max_age=0)
     response.set_cookie(key="refresh_token", value="", httponly=True, samesite="lax", path="/", max_age=0)
+    response.set_cookie(key="refresh_token", value="", httponly=True, samesite="lax", path="/api/refresh", max_age=0)
 
 
 @router.post("/api/register")
@@ -237,6 +238,7 @@ async def refresh_token(
     """刷新令牌 — 使用 refresh_token 换取新的 access_token + refresh_token。
 
     采用 rotation 策略：旧的 refresh_token 被标记为已使用，无法再次刷新。
+    也支持在 root 路由中通过 try_silent_refresh 静默调用。
     """
     # 优先从 Authorization header，其次从 httponly cookie
     token = None
@@ -293,3 +295,48 @@ async def refresh_token(
     )
     _set_auth_cookies(resp, new_access, new_refresh)
     return resp
+
+
+def try_silent_refresh(request: Request, response: Response) -> bool:
+    """静默续签：从 refresh_token cookie 刷新令牌对，设置到 response 上。
+
+    供 root 路由在 access_token 缺失时调用，避免跳转到登录页。
+    返回 True 表示续签成功，False 表示无法续签（需要用户重新登录）。
+    """
+    refresh_token_str = request.cookies.get("refresh_token")
+    if not refresh_token_str:
+        return False
+
+    payload = decode_refresh_token(refresh_token_str)
+    if payload is None:
+        return False
+
+    jti = payload.get("jti")
+    user_id = payload.get("sub")
+    if not jti or not user_id:
+        return False
+
+    try:
+        r = get_redis_client()
+        if r and r.exists(f"refresh_used:{jti}"):
+            return False
+
+        exp = payload.get("exp", 0)
+        ttl = max(int(exp - time.time()), 86400)
+        if r:
+            r.setex(f"refresh_used:{jti}", ttl, "1")
+
+        from app.core.db import get_session
+
+        with get_session() as session:
+            user = session.get(User, int(user_id))
+            if user is None or not user.is_active:
+                return False
+
+        new_access = create_access_token(user_id)
+        new_refresh = create_refresh_token(user_id)
+        _set_auth_cookies(response, new_access, new_refresh)
+        return True
+    except Exception as exc:
+        logger.warning("静默刷新失败: %s", exc)
+        return False
