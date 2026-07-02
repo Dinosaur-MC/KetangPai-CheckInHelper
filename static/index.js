@@ -6,6 +6,41 @@ const API_BASE = ""; // 同域
 /** 共享的 refresh Promise — 并发 401 共享同一轮刷新，仅发起一次 POST /api/refresh */
 let _refreshPromise = null;
 
+/** 最近一次 refresh 成功的时间戳（毫秒），用于保底窗口判断 */
+let _refreshDoneAt = 0;
+
+/** 保底窗口（ms）：refresh 成功后在此时间内收到的 401 直接重试，不消耗新的 refresh_token */
+const _REFRESH_GRACE_MS = 3000;
+
+/**
+ * 刷新 access_token（共享 Promise + 等待者计数 + 保底窗口）。
+ *
+ * - 首个调用者创建 Promise，后续并发调用直接 await 同一 Promise
+ * - 成功后记录时间戳 _refreshDoneAt，供保底窗口使用
+ * - 保底窗口期内收到 401 的请求可直接重试，避免重复消费 refresh_token
+ * - 超时后自动重置，下次 401 触发全新 refresh
+ */
+async function _refreshToken() {
+    if (!_refreshPromise) {
+        _refreshDoneAt = 0;
+        _refreshPromise = (async () => {
+            const rr = await fetch(`${API_BASE}/api/refresh`, {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+            });
+            if (!rr.ok) throw new Error("refresh failed");
+        })();
+    }
+    try {
+        await _refreshPromise;
+        _refreshDoneAt = Date.now();
+    } catch {
+        _refreshPromise = null;
+        _refreshDoneAt = 0;
+        throw new Error("refresh failed");
+    }
+}
+
 async function api(method, path, body) {
     const headers = { "Content-Type": "application/json" };
     const opts = { method, headers };
@@ -13,35 +48,36 @@ async function api(method, path, body) {
     const res = await fetch(`${API_BASE}${path}`, opts);
     if (res.ok) return await res.json();
 
-    // 401 时尝试刷新令牌（共享 _refreshPromise，仅发起一次 POST /api/refresh）
     if (res.status === 401 && path !== "/api/refresh" && path !== "/api/login") {
-        // 第一个遇到 401 的调用创建 refresh promise；后续并发调用直接共享
-        if (!_refreshPromise) {
-            _refreshPromise = (async () => {
-                const rr = await fetch(`${API_BASE}/api/refresh`, {
-                    method: "POST",
-                    headers: { "Content-Type": "application/json" },
-                });
-                if (!rr.ok) throw new Error("refresh failed");
-            })();
+        // 保底窗口内：上轮 refresh 刚成功，直接重试（不发起新 refresh）
+        if (!_refreshPromise && _refreshDoneAt && Date.now() - _refreshDoneAt < _REFRESH_GRACE_MS) {
+            const retry = await fetch(`${API_BASE}${path}`, { method, headers, body: opts.body });
+            if (!retry.ok) {
+                const errData = await retry.json().catch(() => ({}));
+                if (retry.status === 401) {
+                    // 新 token 也过期了（极端情况），清空保底
+                    _refreshDoneAt = 0;
+                }
+                throw new Error(errData.message || `请求失败 (${retry.status})`);
+            }
+            return await retry.json();
         }
+
+        // 共享 Promise：并发 401 仅发起一次 refresh
         try {
-            await _refreshPromise;
+            await _refreshToken();
         } catch {
-            // refresh 失败 → 所有等待者都跳转到登录页
-            _refreshPromise = null;
             window.location.replace("/login");
             throw new Error("redirecting");
         }
-        // 不清理 _refreshPromise！保留已 resolve 的 Promise，
-        // 后续晚到的 401（旧 access_token 的响应延迟到达）能共享同一轮刷新结果
         // 重试原始请求（此时 access_token cookie 已更新）
         const retry = await fetch(`${API_BASE}${path}`, { method, headers, body: opts.body });
         if (!retry.ok) {
             const errData = await retry.json().catch(() => ({}));
-            // 重试后仍 401 → 新 access_token 也已过期（如离上次刷新已数小时）
+            // 重试后仍 401 → 新 access_token 也已过期（如离线太久）
             if (retry.status === 401) {
-                _refreshPromise = null;  // 允许下次触发全新 refresh
+                _refreshPromise = null;
+                _refreshDoneAt = 0;
             }
             throw new Error(errData.message || `请求失败 (${retry.status})`);
         }
