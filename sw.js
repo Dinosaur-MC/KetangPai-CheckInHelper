@@ -81,7 +81,7 @@ self.addEventListener("fetch", (event) => {
         // 可选：将新请求的响应加入缓存（网络优先资源的渐进增强）
         if (response.ok) {
           const cache = await caches.open(CACHE_NAME);
-          cache.put(event.request, response.clone());
+          await cache.put(event.request, response.clone());
         }
         return response;
       } catch {
