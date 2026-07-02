@@ -2,32 +2,48 @@ const { createApp, reactive, ref, computed, watch } = Vue;
 
 const API_BASE = ""; // 同域
 
-// ---- HTTP 工具 ----
-/** 共享的 refresh Promise — 并发 401 共享同一轮刷新，仅发起一次 POST /api/refresh */
-let _refreshPromise = null;
-
-/**
- * 刷新 access_token（共享 Promise）。
- *
- * - 首个调用者创建 Promise，后续并发 401 直接 await 同一 Promise
- * - 成功后保留 Promise（已 resolve），晚到的 401 await 它立即返回并重试
- * - 失败后清空，允许下次重新触发
- */
-async function _refreshToken() {
-    if (!_refreshPromise) {
-        _refreshPromise = (async () => {
-            const rr = await fetch(`${API_BASE}/api/refresh`, {
-                method: "POST",
-                headers: { "Content-Type": "application/json" },
-            });
-            if (!rr.ok) throw new Error("refresh failed");
-        })();
+class Semaphore {
+    constructor(limit) {
+        this.limit = limit;
+        this.queue = [];
+        this.active = 0;
     }
+
+    async acquire() {
+        if (this.active < this.limit) {
+            this.active++;
+            return;
+        }
+        return new Promise((resolve) => this.queue.push(resolve));
+    }
+
+    release() {
+        if (this.queue.length > 0) {
+            const next = this.queue.shift();
+            next();
+        } else {
+            this.active--;
+        }
+    }
+}
+
+let _tokenRefreshed = false;
+const _refreshSemaphore = new Semaphore(1);
+
+async function _refreshToken() {
+    _tokenRefreshed = false;
+    await _refreshSemaphore.acquire();
     try {
-        await _refreshPromise;
-    } catch {
-        _refreshPromise = null;
-        throw new Error("refresh failed");
+        if (_tokenRefreshed) return;
+        console.log("refreshing token...");
+        const rr = await fetch(`${API_BASE}/api/refresh`, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+        });
+        if (!rr.ok) throw new Error("refresh failed");
+        _tokenRefreshed = true;
+    } finally {
+        _refreshSemaphore.release();
     }
 }
 
@@ -39,7 +55,6 @@ async function api(method, path, body) {
     if (res.ok) return await res.json();
 
     if (res.status === 401 && path !== "/api/refresh" && path !== "/api/login") {
-        // 共享 Promise：并发 401 仅发起一次 POST /api/refresh
         try {
             await _refreshToken();
         } catch {
@@ -47,13 +62,10 @@ async function api(method, path, body) {
             throw new Error("redirecting");
         }
         // 重试原始请求 — 此时浏览器已存储新 access_token cookie
+        console.log(`retrying ${path}...`);
         const retry = await fetch(`${API_BASE}${path}`, { method, headers, body: opts.body });
         if (!retry.ok) {
             const errData = await retry.json().catch(() => ({}));
-            // 重试仍 401 → 新 token 也过期（如离线太久或跨多标签页竞争），清空下次重试
-            if (retry.status === 401) {
-                _refreshPromise = null;
-            }
             throw new Error(errData.message || `请求失败 (${retry.status})`);
         }
         return await retry.json();
