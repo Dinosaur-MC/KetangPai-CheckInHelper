@@ -380,32 +380,17 @@ class TestRefresh:
 
 
 class TestProtectedEndpoints:
-    def test_root_redirects_when_not_authenticated(self, client: TestClient):
-        """GET / should redirect to /login when no access_token cookie."""
-        resp = client.get("/", follow_redirects=False)
-        assert resp.status_code in (302, 303, 307)
-
     def test_login_page_accessible(self, client: TestClient):
         """GET /login should return HTML."""
         resp = client.get("/login")
         assert resp.status_code == 200
         assert "text/html" in resp.headers.get("content-type", "")
 
-    def test_root_returns_html_when_authenticated(self, client: TestClient):
-        """GET / with valid access_token should return index.html."""
-        client.post(
-            "/api/register",
-            json={"email": "authed@test.com", "password": "Password1"},
-        )
-        logged_in = client.post(
-            "/api/login",
-            json={"email": "authed@test.com", "password": "Password1"},
-        )
-        access_token = logged_in.json()["data"]["access_token"]
-
+    def test_root_page_accessible(self, client: TestClient):
+        """GET / should return HTML."""
         resp = client.get(
             "/",
-            cookies={"access_token": access_token},
             follow_redirects=False,
         )
         assert resp.status_code == 200
+        assert "text/html" in resp.headers.get("content-type", "")
