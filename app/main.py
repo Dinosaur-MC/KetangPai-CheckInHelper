@@ -170,6 +170,24 @@ async def favicon():
     return FileResponse(path, headers={"Cache-Control": "public, max-age=604800"})
 
 
+@app.get("/manifest.json")
+async def web_manifest():
+    path = Path(__file__).parent.parent / "manifest.json"
+    return FileResponse(
+        path,
+        headers={"Content-Type": "application/manifest+json", "Cache-Control": "public, max-age=3600"},
+    )
+
+
+@app.get("/sw.js")
+async def service_worker():
+    path = Path(__file__).parent.parent / "sw.js"
+    return FileResponse(
+        path,
+        headers={"Content-Type": "application/javascript", "Cache-Control": "public, max-age=0"},
+    )
+
+
 @app.get("/api/admin/accounts")
 async def admin_list_accounts(
     current_user: User = Depends(get_current_user),
