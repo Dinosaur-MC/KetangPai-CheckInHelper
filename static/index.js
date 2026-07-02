@@ -59,7 +59,7 @@ async function api(method, path, body) {
             await _refreshToken();
         } catch {
             window.location.replace("/login");
-            throw new Error("redirecting");
+            throw new Error("登录已失效，请重新登录。");
         }
         // 重试原始请求 — 此时浏览器已存储新 access_token cookie
         console.log(`retrying ${path}...`);
