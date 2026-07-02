@@ -111,7 +111,7 @@ main.py                     # Entry point — loads .env, starts uvicorn
 - **SessionPool (module-level singleton)**: Manages KetangPai API sessions with 3-layer concurrency control — `asyncio.Lock` (clients dict), `asyncio.Lock` (batch serialization), `asyncio.Semaphore(5)` (per-batch concurrency). Sessions expire after 30 min idle; tokens cached in Redis for 5 days.
 - **Canary check-in (QR + GPS)**: Both QR and GPS check-in use canary mode — first account tested first. If it fails with code 30319/30322 (expired/ended), remaining accounts skip immediately and the failure is cached in Redis.
 - **Redis check-in dedup**: QR: `checkin_done:{ticketid}:{account_id}` with TTL from ticket expiry. GPS: `checkin_done:gps:{attendance_id}:{account_id}` with TTL 24h. Prevents duplicate API calls.
-- **JWT with httponly cookies**: Access tokens (24h) and refresh tokens (30d) are stored in httponly, SameSite=Lax cookies. The backend (`deps.py`) reads tokens from either `Authorization` header or `access_token` cookie. Frontend no longer manages tokens in localStorage.
+- **JWT with httponly cookies**: Access tokens (default 24h) and refresh tokens (default 30d) are stored in httponly, SameSite=Lax cookies. Backend (`deps.py`) reads tokens from either `Authorization` header or `access_token` cookie. Expirations configurable via `JWT_EXPIRE_HOURS` / `JWT_REFRESH_EXPIRE_DAYS` — cookie `max_age` stays in sync with JWT `exp`. Frontend no longer manages tokens in localStorage.
 - **Refresh Token Rotation**: Each refresh invalidates the old refresh token to prevent replay. Frontend automatically retries on 401 via cookie-based refresh.
 - **Rate limiting**: Redis sliding window via `RateLimiter` dependency class — login/register 5 req/min, check-in 10 req/min.
 - **Credential encryption**: Fernet (AES-128-CBC + HMAC) via `CREDENTIAL_KEY` env var. **Required at startup** — app will crash if unset.
@@ -161,4 +161,5 @@ SystemSetting
 - Generate `CREDENTIAL_KEY` with the Fernet command above (REQUIRED — no plaintext fallback)
 - `DATABASE_URL` must be set (no default — startup will fail if missing)
 - All config is managed via `app/core/settings.py` (pydantic-settings), not via `os.getenv`
+- JWT 过期时间 ``JWT_EXPIRE_HOURS``（默认 24）和 ``JWT_REFRESH_EXPIRE_DAYS``（默认 30）可在 ``.env`` 中覆盖
 - 签到日志保留天数 ``LOG_RETENTION_DAYS``（默认 90）和每账号最大条数 ``LOG_MAX_PER_ACCOUNT``（默认 500）可在 ``.env`` 中覆盖
