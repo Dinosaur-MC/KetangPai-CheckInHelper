@@ -3,7 +3,7 @@ const { createApp, reactive, ref, computed, watch } = Vue;
 const API_BASE = ""; // 同域
 
 // ---- HTTP 工具 ----
-/** 正在进行的 refresh 请求（Promise），并发 401 共享同一轮刷新 */
+/** 共享的 refresh Promise — 并发 401 共享同一轮刷新，仅发起一次 POST /api/refresh */
 let _refreshPromise = null;
 
 async function api(method, path, body) {
@@ -33,11 +33,16 @@ async function api(method, path, body) {
             window.location.replace("/login");
             throw new Error("redirecting");
         }
-        _refreshPromise = null;
+        // 不清理 _refreshPromise！保留已 resolve 的 Promise，
+        // 后续晚到的 401（旧 access_token 的响应延迟到达）能共享同一轮刷新结果
         // 重试原始请求（此时 access_token cookie 已更新）
         const retry = await fetch(`${API_BASE}${path}`, { method, headers, body: opts.body });
         if (!retry.ok) {
             const errData = await retry.json().catch(() => ({}));
+            // 重试后仍 401 → 新 access_token 也已过期（如离上次刷新已数小时）
+            if (retry.status === 401) {
+                _refreshPromise = null;  // 允许下次触发全新 refresh
+            }
             throw new Error(errData.message || `请求失败 (${retry.status})`);
         }
         return await retry.json();
