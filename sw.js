@@ -5,9 +5,9 @@ const CACHE_NAME = "checkin-helper-v1";
 
 // 预缓存清单：所有静态资源（不含 API 端点）
 const CACHE_ASSETS = [
-  // HTML 页面
-  "/",
-  "/login",
+  // 注意：不预缓存 HTML 页面（/ 和 /login），
+  // 因为 / 在未登录时返回 302 重定向，会导致 cache.addAll() 失败。
+  // 这两个页面由 fetch 处理器的 cache-first 策略在首次访问时自然缓存。
   // 应用 CSS
   "/static/common.css",
   "/static/index.css",

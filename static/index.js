@@ -1398,9 +1398,11 @@ createApp({
     },
 }).mount("#app");
 
-// ---- Service Worker 注册 ----
+// ---- Service Worker 注册（两个页面都注册，确保用户从任意入口进入时 SW 都可用） ----
 if ("serviceWorker" in navigator) {
   window.addEventListener("load", () => {
-    navigator.serviceWorker.register("/sw.js").catch(() => {});
+    navigator.serviceWorker.register("/sw.js").catch((err) => {
+      console.warn("[SW] registration failed:", err);
+    });
   });
 }
