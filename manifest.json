@@ -1,4 +1,5 @@
 {
+  "id": "/",
   "name": "课堂派签到助手",
   "short_name": "签到助手",
   "description": "课堂派批量签到管理工具",
@@ -16,7 +17,23 @@
       "src": "/static/icons/icon-512.png",
       "sizes": "512x512",
       "type": "image/png",
-      "purpose": "any maskable"
+      "purpose": "maskable"
+    }
+  ],
+  "screenshots": [
+    {
+      "src": "/static/icons/screenshot-mobile.png",
+      "sizes": "720x1280",
+      "type": "image/png",
+      "form_factor": "narrow",
+      "label": "签到助手移动端界面"
+    },
+    {
+      "src": "/static/icons/screenshot-desktop.png",
+      "sizes": "1280x720",
+      "type": "image/png",
+      "form_factor": "wide",
+      "label": "签到助手桌面端界面"
     }
   ]
 }
