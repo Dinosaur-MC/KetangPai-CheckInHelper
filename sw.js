@@ -64,6 +64,9 @@ self.addEventListener("activate", (event) => {
 });
 
 // ── 文件分类 ──
+// HTML 页面 → network-first（在线时始终获取最新版）
+const _NAV_URLS = new Set(["/", "/login"]);
+
 // 应用自身代码（频繁更新）→ stale-while-revalidate
 const _APP_ASSETS = new Set([
   "/static/common.css",
@@ -75,6 +78,7 @@ const _APP_ASSETS = new Set([
 ]);
 
 function _isApi(url) { return url.includes("/api/"); }
+function _isNav(url) { return _NAV_URLS.has(new URL(url).pathname); }
 function _isAppAsset(url) { return _APP_ASSETS.has(new URL(url).pathname); }
 
 function _serverUnavailable() {
@@ -99,6 +103,21 @@ async function _staleWhileRevalidate(request) {
   try { return await fetch(request); } catch { return _serverUnavailable(); }
 }
 
+// network-first：优先从网络获取，离线回退缓存（用于 HTML 页面）
+async function _networkFirst(request) {
+  try {
+    const response = await fetch(request);
+    if (response.ok) {
+      const cache = await caches.open(CACHE_NAME);
+      cache.put(request, response.clone());
+    }
+    return response;
+  } catch {
+    const cached = await caches.match(request);
+    return cached || _serverUnavailable();
+  }
+}
+
 // cache-first：缓存命中直接返回，未命中则请求网络
 async function _cacheFirst(request) {
   const cached = await caches.match(request);
@@ -115,11 +134,19 @@ async function _cacheFirst(request) {
 
 // 请求阶段：按文件类型选择策略
 self.addEventListener("fetch", (event) => {
+  const url = event.request.url;
+
   // API 请求不缓存
-  if (_isApi(event.request.url)) return;
+  if (_isApi(url)) return;
+
+  // HTML 页面 → network-first（在线时始终从服务端获取最新版）
+  if (_isNav(url)) {
+    event.respondWith(_networkFirst(event.request));
+    return;
+  }
 
   // 应用自身代码 → stale-while-revalidate（每次访问都在后台检查更新）
-  if (_isAppAsset(event.request.url)) {
+  if (_isAppAsset(url)) {
     event.respondWith(_staleWhileRevalidate(event.request));
     return;
   }
