@@ -87,6 +87,9 @@
                         <button class="menu-btn" @click="sidebarOpen=!sidebarOpen">☰</button>
                         <h2>{{ pageTitle }}</h2>
                         <span class="breadcrumb">{{ pageSubtitle }}</span>
+                        <div class="header-actions">
+                            <mdui-button-icon icon="refresh" @click="refreshPage" title="刷新页面"></mdui-button-icon>
+                        </div>
                     </div>
                     <div class="main-body">
 

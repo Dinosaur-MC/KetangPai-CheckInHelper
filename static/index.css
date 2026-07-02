@@ -219,6 +219,12 @@
 .main-header .menu-btn:hover {
     background: #f3f4f6;
 }
+.header-actions {
+    margin-left: auto;
+    display: flex;
+    align-items: center;
+    gap: 4px;
+}
 .main-body {
     flex: 1;
     padding: 24px 12px;
