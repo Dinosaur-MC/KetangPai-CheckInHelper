@@ -329,11 +329,21 @@ createApp({
         }
 
         // 手动刷新当前页面数据（PWA 全屏时无浏览器下拉刷新）
+        const _refreshing = ref(false);
+        let _refreshTimer = null;
         function refreshPage() {
+            if (_refreshing.value) return;  // 限流：正在刷新中
+            _refreshing.value = true;
             invalidateAccounts();
-            loadPageData(route.value).catch((e) => {
+            loadPageData(route.value).then(() => {
+                showToast("刷新完成");
+            }).catch((e) => {
                 console.warn("刷新失败:", e);
                 showToast("刷新失败，请稍后重试");
+            }).finally(() => {
+                // 2 秒冷却，防止频繁点击
+                if (_refreshTimer) clearTimeout(_refreshTimer);
+                _refreshTimer = setTimeout(() => { _refreshing.value = false; }, 2000);
             });
         }
 
@@ -1380,6 +1390,7 @@ createApp({
             showToast,
             navigate,
             logout,
+            _refreshing,
             refreshPage,
             loadAccounts,
             openAccountModal,
