@@ -71,20 +71,8 @@ main.py                     # Entry point — loads .env, starts uvicorn
 │   │   └── settings.py     # system settings (invite-required toggle)
 │   ├── index.html          # Vue 3 SPA template（已登录）
 │   └── login.html          # 独立登录/注册页面
-├── tests/                  # ✅ 单元测试 + 集成测试 + 基准测试
-│   ├── conftest.py         # 共享 fixtures + benchmark 结果收集器
-│   ├── test_security.py    # 密码哈希、JWT、Fernet 加密、令牌黑名单
-│   ├── test_models.py      # Pydantic/SQLModel 模型、_extract_gps、is_position_error
-│   ├── test_utils.py       # get_client_ip、RateLimiter、_in_time_windows 等
-│   ├── test_db.py          # _RedisWrapper 断路器、check_redis_health
-│   ├── test_schema_sync.py # SchemaSync — 数据类、diff 引擎、DDL 编译、备份/审计
-│   ├── test_log_cleanup.py # 签到日志过期/超限清理函数测试
-│   └── routers/
-│       ├── __init__.py
-│       ├── test_auth.py              # 注册/登录/登出/令牌刷新
-│       ├── test_benchmark_checkin.py # 签到链路延迟基准测试 (median<50ms)
-│       └── ...                        # 更多路由集成测试
 ├── static/                 # Client-side assets (local, no CDN)
+│   ├── icons/              # PWA 图标 (180/192/512) + 截图 (mobile/desktop)
 │   ├── common.css          # 公共样式（全局重置、表单字段、密码切换）
 │   ├── login.js            # 登录/注册 Vue 应用
 │   ├── login.css           # 登录页专用样式
@@ -97,6 +85,8 @@ main.py                     # Entry point — loads .env, starts uvicorn
 │   ├── wechat_qrcode_files.js  # WeChat QR model
 │   ├── zxing.min.js        # ZXing WASM fallback QR decoder
 │   └── test.html           # QR decoder test page
+├── sw.js                   # Service Worker — PWA 离线/缓存策略
+├── manifest.json           # PWA Web App Manifest
 ├── scripts/                # Utility scripts
 │   └── backfill_accounts.py  # Backfill user details for legacy accounts
 ├── docker-compose.yml      # MySQL 8 + Redis 7 + App
@@ -112,7 +102,8 @@ main.py                     # Entry point — loads .env, starts uvicorn
 - **Canary check-in (QR + GPS)**: Both QR and GPS check-in use canary mode — first account tested first. If it fails with code 30319/30322 (expired/ended), remaining accounts skip immediately and the failure is cached in Redis.
 - **Redis check-in dedup**: QR: `checkin_done:{ticketid}:{account_id}` with TTL from ticket expiry. GPS: `checkin_done:gps:{attendance_id}:{account_id}` with TTL 24h. Prevents duplicate API calls.
 - **JWT with httponly cookies**: Access tokens (default 24h) and refresh tokens (default 30d) are stored in httponly, SameSite=Lax cookies. Backend (`deps.py`) reads tokens from either `Authorization` header or `access_token` cookie. Expirations configurable via `JWT_EXPIRE_HOURS` / `JWT_REFRESH_EXPIRE_DAYS` — cookie `max_age` stays in sync with JWT `exp`. Frontend no longer manages tokens in localStorage.
-- **Refresh Token Rotation**: Each refresh invalidates the old refresh token to prevent replay. Frontend automatically retries on 401 via cookie-based refresh.
+- **Refresh token cookie restricted to `/api/refresh`**: `refresh_token` cookie uses `path="/api/refresh"` so it's only sent to the refresh endpoint, not with every API request. `access_token` cookie uses `path="/"` for universal access.
+- **Refresh Token Rotation**: Each refresh invalidates the old refresh token to prevent replay (`refresh_used:{jti}` in Redis). Frontend uses a Semaphore-based shared promise to ensure only one `POST /api/refresh` is made even with concurrent 401s.
 - **Rate limiting**: Redis sliding window via `RateLimiter` dependency class — login/register 5 req/min, check-in 10 req/min.
 - **Credential encryption**: Fernet (AES-128-CBC + HMAC) via `CREDENTIAL_KEY` env var. **Required at startup** — app will crash if unset.
 - **Login business-level check**: `login()` inspects `result.status != 1` and raises with the API error message (e.g., "password expired"), rather than only checking HTTP status.
@@ -123,10 +114,17 @@ main.py                     # Entry point — loads .env, starts uvicorn
 - **Redis circuit breaker**: `_RedisWrapper` proxy auto-fuses on any operation failure, avoiding repeated timeouts. Health check pings Redis every 5 minutes.
 - **Client IP detection**: `get_client_ip()` in `utils.py` reads `X-Forwarded-For` / `X-Real-IP` headers for reverse proxy setups before falling back to `request.client.host`.
 - **Client IP forwarding to KetangPai**: The `/api/checkin` endpoint extracts the client's real IP via `get_client_ip(request)` and passes it through `SessionPool.execute_checkin()` → `KetangPaiAPI.check_in()`, which adds an `X-Forward-For` header to the outbound request to Ketangpai. Defaults to empty (no header sent) when IP is unavailable.
-- **Frontend**: Two-page architecture — standalone `login.html` (no auth required) and `index.html` (main SPA, requires auth). Backend redirects `/` to `/login` if `access_token` cookie is missing. CSS split into `common.css` (shared), `login.css` (login page), `index.css` (main app). Separate `login.js` for auth logic.
-- **Backend auth redirect**: The `/` route checks for `access_token` cookie. If absent, returns `RedirectResponse("/login")`. The `/login` page has no such protection.
-- **Backend-forced auth check**: A new `GET /api/users/me` endpoint returns the current user's info, used by the frontend to recover from stale localStorage.
+- **Frontend**: Two-page architecture — standalone `login.html` (login/register) and `index.html` (main SPA). CSS split into `common.css` (shared), `login.css` (login page), `index.css` (main app). Separate `login.js` for auth logic.
+- **Root route serves SPA unconditionally**: `GET /` always returns `index.html`. Auth is handled entirely by the frontend — Vue app checks `/api/users/me`, if 401 it tries `POST /api/refresh` via the shared Semaphore. Only if refresh also fails does it redirect to `/login`.
+- **Frontend 401 retry with Semaphore**: `index.js` defines a `Semaphore(1)` class and `_refreshToken()` function. On any `api()` 401, the first caller acquires the semaphore and calls `POST /api/refresh`. Subsequent concurrent callers see `_tokenRefreshed=true` and skip. After refresh, all retry with the new `access_token` cookie.
 - **Async safety**: All KetangPai API methods are natively async (`httpx.AsyncClient`). No `asyncio.to_thread` wrappers needed — direct `await` on all API calls.
+- **PWA (Progressive Web App)**: Fully installable — `manifest.json` at root with `display: standalone`, theme-color `#2563eb`, 192+512 maskable icons, and mobile/desktop screenshots. `sw.js` Service Worker at root implements three-tier caching:
+  - **HTML + app JS/CSS** (`index.js`, `index.css`, `login.js`, `login.css`, `common.css`, `favicon.ico`): **network-first** — online always fetches latest from server; offline falls back to cache. Ensures code updates are visible immediately.
+  - **Large libraries** (`opencv.js`, `wechat_qrcode`, `zxing.min.js`, `vue`, `mdui`, fonts, images): **cache-first** — installed once via `cache.addAll()` during SW install, never re-fetched.
+  - **API calls** (`/api/*`): pass-through, never cached.
+- **SW versioning via ETag**: `sw.js` served from FastAPI route with `ETag` (file mtime+size) and `Cache-Control: no-cache`. Browser sends `If-None-Match` for conditional 304 responses; SW updates detected automatically when the file changes.
+- **Manual refresh button**: Top-right banner in the SPA has a refresh button (for PWA standalone mode where pull-to-refresh is unavailable). Uses DOM-based throttle (2s cooldown) with spinning animation.
+- **PWA icons**: Generated from `favicon.ico` via ImageMagick — 180×180 (iOS), 192×192 (Android), 512×512 (install prompt + maskable). Screenshots (720×1280 mobile + 1280×720 desktop) for rich install UI.
 - **Auto CheckIn Watcher (`app/core/watcher.py`)**: Global `AutoCheckinWatcher` singleton polls every 60s for all users with auto-checkin enabled. Checks user's configured time windows (local hours), queries unfinished GPS/数字 attendances, and auto-executes check-in via `SessionPool`. All calls are async (no `asyncio.to_thread`). Falls back across multiple accounts if one fails. Manual trigger via `POST /api/auto-checkin/trigger`.
 - **Auto CheckIn API (`app/routers/checkin.py`)**: Four endpoints — `GET/PUT /api/auto-checkin/config` (per-user config with strict Pydantic validation via `TimeWindow`/`AutoCheckinConfigBody`), `GET /api/auto-checkin/status` (watcher status + per-user `user_active` flag), `POST /api/auto-checkin/trigger` (manual scan trigger).
 - **Pydantic strict validation on config**: `TimeWindow` model validates start/end hours (0-23, start < end), `AutoCheckinConfigBody` validates `checkin_types` (only "1"/"2"), `time_windows` (max 16 items, dedup). All manual JSON parsing/handling eliminated in favor of Pydantic validators.
