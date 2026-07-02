@@ -146,22 +146,9 @@ async def unhandled_exception_handler(request: Request, exc: Exception):
 
 
 @app.get("/")
-async def root(request: Request):
-    # access_token 存在则直接返回 SPA
-    if request.cookies.get("access_token"):
-        path = Path(__file__).parent / "index.html"
-        return FileResponse(path)
-
-    # access_token 缺失但 refresh_token 存在 → 尝试静默续签
-    if request.cookies.get("refresh_token"):
-        from app.routers.auth import try_silent_refresh
-
-        resp = FileResponse(Path(__file__).parent / "index.html")
-        if try_silent_refresh(request, resp):
-            return resp
-
-    # 双 token 均无效 → 跳转登录页
-    return RedirectResponse(url="/login")
+async def root():
+    path = Path(__file__).parent / "index.html"
+    return FileResponse(path)
 
 
 @app.get("/login")

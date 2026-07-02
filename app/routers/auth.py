@@ -18,7 +18,7 @@ from app.core.security import (
     validate_password_strength,
     blacklist_token,
 )
-from app.core.db import Session, Redis, get_session_with, get_redis, get_redis_client
+from app.core.db import Session, Redis, get_session_with, get_redis
 from app.utils import RateLimiter
 
 from app.models import BaseResponse, SystemSetting, User, InviteCode
@@ -297,46 +297,3 @@ async def refresh_token(
     return resp
 
 
-def try_silent_refresh(request: Request, response: Response) -> bool:
-    """静默续签：从 refresh_token cookie 刷新令牌对，设置到 response 上。
-
-    供 root 路由在 access_token 缺失时调用，避免跳转到登录页。
-    返回 True 表示续签成功，False 表示无法续签（需要用户重新登录）。
-    """
-    refresh_token_str = request.cookies.get("refresh_token")
-    if not refresh_token_str:
-        return False
-
-    payload = decode_refresh_token(refresh_token_str)
-    if payload is None:
-        return False
-
-    jti = payload.get("jti")
-    user_id = payload.get("sub")
-    if not jti or not user_id:
-        return False
-
-    try:
-        r = get_redis_client()
-        if r and r.exists(f"refresh_used:{jti}"):
-            return False
-
-        exp = payload.get("exp", 0)
-        ttl = max(int(exp - time.time()), 86400)
-        if r:
-            r.setex(f"refresh_used:{jti}", ttl, "1")
-
-        from app.core.db import get_session
-
-        with get_session() as session:
-            user = session.get(User, int(user_id))
-            if user is None or not user.is_active:
-                return False
-
-        new_access = create_access_token(user_id)
-        new_refresh = create_refresh_token(user_id)
-        _set_auth_cookies(response, new_access, new_refresh)
-        return True
-    except Exception as exc:
-        logger.warning("静默刷新失败: %s", exc)
-        return False
