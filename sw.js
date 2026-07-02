@@ -64,11 +64,9 @@ self.addEventListener("activate", (event) => {
 });
 
 // ── 文件分类 ──
-// HTML 页面 → network-first（在线时始终获取最新版）
-const _NAV_URLS = new Set(["/", "/login"]);
-
-// 应用自身代码（频繁更新）→ stale-while-revalidate
-const _APP_ASSETS = new Set([
+// 需要保持最新代码的文件（HTML + JS + CSS）→ network-first
+const _CODE_ASSETS = new Set([
+  "/", "/login",
   "/static/common.css",
   "/static/index.css",
   "/static/login.css",
@@ -78,8 +76,7 @@ const _APP_ASSETS = new Set([
 ]);
 
 function _isApi(url) { return url.includes("/api/"); }
-function _isNav(url) { return _NAV_URLS.has(new URL(url).pathname); }
-function _isAppAsset(url) { return _APP_ASSETS.has(new URL(url).pathname); }
+function _isCode(url) { return _CODE_ASSETS.has(new URL(url).pathname); }
 
 function _serverUnavailable() {
   return new Response("离线中，请检查网络连接", {
@@ -87,21 +84,6 @@ function _serverUnavailable() {
   });
 }
 
-// stale-while-revalidate：有缓存立即返回并在后台拉取最新版；无缓存则等待网络
-async function _staleWhileRevalidate(request) {
-  const cache = await caches.open(CACHE_NAME);
-  const cached = await cache.match(request);
-  // 不论有无缓存，后台都发起网络请求更新缓存
-  const updateCache = fetch(request).then((response) => {
-    if (response.ok) cache.put(request, response.clone());
-  }).catch(() => {});
-  if (cached) return cached;  // 有缓存 → 立即返回
-  await updateCache;          // 无缓存 → 等网络
-  const now = await cache.match(request);
-  if (now) return now;
-  // 离线且无缓存 → 返回 503
-  try { return await fetch(request); } catch { return _serverUnavailable(); }
-}
 
 // network-first：优先从网络获取，离线回退缓存（用于 HTML 页面）
 async function _networkFirst(request) {
@@ -139,15 +121,9 @@ self.addEventListener("fetch", (event) => {
   // API 请求不缓存
   if (_isApi(url)) return;
 
-  // HTML 页面 → network-first（在线时始终从服务端获取最新版）
-  if (_isNav(url)) {
+  // 代码文件（HTML + JS + CSS）→ network-first，在线时始终获取最新
+  if (_isCode(url)) {
     event.respondWith(_networkFirst(event.request));
-    return;
-  }
-
-  // 应用自身代码 → stale-while-revalidate（每次访问都在后台检查更新）
-  if (_isAppAsset(url)) {
-    event.respondWith(_staleWhileRevalidate(event.request));
     return;
   }
 
