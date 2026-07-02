@@ -227,9 +227,10 @@ def configure_jwt(
     secret: str,
     algorithm: str = "HS256",
     expire_hours: int = 24,
+    refresh_expire_days: int = 30,
 ) -> None:
     """Override JWT defaults (call once at startup)."""
-    global _JWT_SECRET, _JWT_ALGORITHM, _JWT_EXPIRE_HOURS
+    global _JWT_SECRET, _JWT_ALGORITHM, _JWT_EXPIRE_HOURS, _REFRESH_EXPIRE_DAYS
     if not secret or len(secret) < 16:
         raise ValueError("JWT_SECRET 必须至少 16 个字符")
     if algorithm not in _ALLOWED_ALGORITHMS:
@@ -239,6 +240,7 @@ def configure_jwt(
     _JWT_SECRET = secret
     _JWT_ALGORITHM = algorithm
     _JWT_EXPIRE_HOURS = expire_hours
+    _REFRESH_EXPIRE_DAYS = refresh_expire_days
 
 
 # JWT 配置 — 从 pydantic_settings 加载
@@ -250,4 +252,5 @@ configure_jwt(
     _jwt_secret,
     settings.jwt_algorithm,
     settings.jwt_expire_hours,
+    settings.jwt_refresh_expire_days,
 )

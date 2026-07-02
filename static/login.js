@@ -21,6 +21,7 @@ function showToast(msg) {
 }
 
 // 检查是否已登录（cookie 有效），如果是则直接跳转
+// 如果 access_token 过期但 refresh_token 仍有效，尝试自动刷新
 (async function checkAuth() {
     try {
         const res = await fetch(`${API_BASE}/api/users/me`, {
@@ -31,10 +32,32 @@ function showToast(msg) {
             if (data.data) {
                 localStorage.setItem("user", JSON.stringify(data.data));
                 window.location.replace("/");
+                return;
+            }
+        }
+        // access_token 过期 — 尝试用 refresh_token 刷新
+        if (res.status === 401) {
+            const rr = await fetch(`${API_BASE}/api/refresh`, {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+            });
+            if (rr.ok) {
+                // 刷新成功，重试 /api/users/me
+                const retry = await fetch(`${API_BASE}/api/users/me`, {
+                    headers: { "Content-Type": "application/json" },
+                });
+                if (retry.ok) {
+                    const data = await retry.json();
+                    if (data.data) {
+                        localStorage.setItem("user", JSON.stringify(data.data));
+                        window.location.replace("/");
+                        return;
+                    }
+                }
             }
         }
     } catch {
-        // 未登录，继续显示登录页
+        // 未登录或 refresh 失败，继续显示登录页
     }
 })();
 

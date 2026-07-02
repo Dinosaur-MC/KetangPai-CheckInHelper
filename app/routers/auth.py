@@ -7,6 +7,7 @@ from fastapi import APIRouter, Request, Depends, Body
 from fastapi.responses import JSONResponse
 from sqlmodel import select
 
+from app.core.settings import settings as app_settings
 from app.core.security import (
     create_access_token,
     create_refresh_token,
@@ -33,16 +34,18 @@ router = APIRouter()
 
 
 def _set_auth_cookies(response: JSONResponse, access_token: str, refresh_token: str):
-    """设置 httponly auth cookie（access_token 24h, refresh_token 30d）。"""
+    """设置 httponly auth cookie（过期时间与 JWT_EXPIRE_HOURS / JWT_REFRESH_EXPIRE_DAYS 一致）。"""
+    access_max_age = app_settings.jwt_expire_hours * 3600
+    refresh_max_age = app_settings.jwt_refresh_expire_days * 86400
     response.set_cookie(
         key="access_token", value=access_token,
         httponly=True, samesite="lax", path="/",
-        max_age=86400,  # 24h
+        max_age=access_max_age,
     )
     response.set_cookie(
         key="refresh_token", value=refresh_token,
         httponly=True, samesite="lax", path="/",
-        max_age=86400 * 30,  # 30d
+        max_age=refresh_max_age,
     )
 
 
