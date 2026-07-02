@@ -3,36 +3,47 @@ const { createApp, reactive, ref, computed, watch } = Vue;
 const API_BASE = ""; // 同域
 
 // ---- HTTP 工具 ----
-let _refreshing = false;
+/** 正在进行的 refresh 请求（Promise），并发 401 共享同一轮刷新 */
+let _refreshPromise = null;
 
 async function api(method, path, body) {
     const headers = { "Content-Type": "application/json" };
     const opts = { method, headers };
     if (body !== undefined) opts.body = JSON.stringify(body);
     const res = await fetch(`${API_BASE}${path}`, opts);
-    const data = await res.json();
-    if (res.ok) return data;
+    if (res.ok) return await res.json();
 
-    // 401 时尝试刷新令牌（cookie 自动发送，跳过 auth 接口自身）
-    if (res.status === 401 && path !== "/api/refresh" && path !== "/api/login" && !_refreshing) {
-        _refreshing = true;
-        try {
-            const rr = await fetch(`${API_BASE}/api/refresh`, {
-                method: "POST",
-                headers: { "Content-Type": "application/json" },
-            });
-            if (!rr.ok) throw new Error("refresh failed");
-            _refreshing = false;
-            // 重试原始请求（新 access_token cookie 已设置）
-            const retry = await fetch(`${API_BASE}${path}`, { method, headers, body: opts.body });
-            if (!retry.ok) throw new Error(data.message || `请求失败 (${retry.status})`);
-            return await retry.json();
-        } catch (e) {
-            _refreshing = false;
-            window.location.replace("/login");
+    // 401 时尝试刷新令牌（共享 _refreshPromise，仅发起一次 POST /api/refresh）
+    if (res.status === 401 && path !== "/api/refresh" && path !== "/api/login") {
+        // 第一个遇到 401 的调用创建 refresh promise；后续并发调用直接共享
+        if (!_refreshPromise) {
+            _refreshPromise = (async () => {
+                const rr = await fetch(`${API_BASE}/api/refresh`, {
+                    method: "POST",
+                    headers: { "Content-Type": "application/json" },
+                });
+                if (!rr.ok) throw new Error("refresh failed");
+            })();
         }
+        try {
+            await _refreshPromise;
+        } catch {
+            // refresh 失败 → 所有等待者都跳转到登录页
+            _refreshPromise = null;
+            window.location.replace("/login");
+            throw new Error("redirecting");
+        }
+        _refreshPromise = null;
+        // 重试原始请求（此时 access_token cookie 已更新）
+        const retry = await fetch(`${API_BASE}${path}`, { method, headers, body: opts.body });
+        if (!retry.ok) {
+            const errData = await retry.json().catch(() => ({}));
+            throw new Error(errData.message || `请求失败 (${retry.status})`);
+        }
+        return await retry.json();
     }
-    _refreshing = false;
+
+    const data = await res.json().catch(() => ({}));
     throw new Error(data.message || `请求失败 (${res.status})`);
 }
 
