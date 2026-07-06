@@ -12,12 +12,12 @@ async function api(method, path, body) {
     throw new Error(data.message || `请求失败 (${res.status})`);
 }
 
-function showToast(msg) {
-    const el = document.createElement("mdui-snackbar");
-    el.message = msg;
-    document.body.appendChild(el);
-    el.open = true;
-    el.addEventListener("closed", () => el.remove());
+function showToast(msg, delay) {
+    try {
+        mdui.snackbar({ message: msg, autoCloseDelay: delay || 2000 });
+    } catch {
+        /* fallback */
+    }
 }
 
 // 检查是否已登录（cookie 有效），如果是则直接跳转
@@ -104,9 +104,9 @@ createApp({
 
 // ---- Service Worker 注册（两个页面都注册，确保用户从任意入口进入时 SW 都可用） ----
 if ("serviceWorker" in navigator) {
-  window.addEventListener("load", () => {
-    navigator.serviceWorker.register("/sw.js").catch((err) => {
-      console.warn("[SW] registration failed:", err);
+    window.addEventListener("load", () => {
+        navigator.serviceWorker.register("/sw.js").catch((err) => {
+            console.warn("[SW] registration failed:", err);
+        });
     });
-  });
 }
