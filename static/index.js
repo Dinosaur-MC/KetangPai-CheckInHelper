@@ -1233,6 +1233,7 @@ createApp({
                     await api("PUT", `/api/invite-codes/${editingInvite.value.id}`, {
                         is_active: editingInvite.value.is_active,
                         max_uses: inviteForm.max_uses,
+                        expires_in_hours: inviteForm.expires_in,
                         note: inviteForm.note,
                     });
                     showToast("邀请码已更新");

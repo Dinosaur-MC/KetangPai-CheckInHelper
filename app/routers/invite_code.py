@@ -61,11 +61,9 @@ async def create_invite_code(
         code=code.strip().upper() if code.strip() else generate_invite_code(),
         max_uses=max_uses,
         expires_at=(
-            (
-                datetime.now(timezone.utc).replace(second=0, microsecond=0)
-                + timedelta(hours=expires_in_hours)
-            )
-            if expires_in_hours
+            datetime.now(timezone.utc).replace(second=0, microsecond=0)
+            + timedelta(hours=expires_in_hours)
+            if expires_in_hours and expires_in_hours > 0
             else None
         ),
         note=note,
@@ -82,6 +80,7 @@ async def update_invite_code(
     code_id: int,
     is_active: bool = Body(default=True),
     max_uses: int | None = Body(default=None),
+    expires_in_hours: int | None = Body(default=None),
     note: str = Body(default=""),
     current_user: User = Depends(get_current_user),
     session: Session = Depends(get_session_with),
@@ -94,6 +93,14 @@ async def update_invite_code(
     ic.is_active = is_active
     ic.max_uses = max_uses
     ic.note = note
+    if expires_in_hours is not None:
+        if expires_in_hours > 0:
+            ic.expires_at = (
+                datetime.now(timezone.utc).replace(second=0, microsecond=0)
+                + timedelta(hours=expires_in_hours)
+            )
+        else:
+            ic.expires_at = None  # 0 → 设为永久
     session.add(ic)
     return BaseResponse(message="邀请码已更新", data=ic.model_dump())
 
