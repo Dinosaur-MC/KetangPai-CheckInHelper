@@ -104,7 +104,9 @@ main.py                     # Entry point — loads .env, starts uvicorn
 - **Refresh Token Rotation**: Each refresh invalidates the old token (`refresh_used:{jti}` in Redis). Frontend uses Semaphore to ensure only one concurrent `POST /api/refresh` on parallel 401s.
 - **Rate limiting**: Redis sliding window — login/register 5 req/min, check-in 10 req/min.
 - **Credential encryption**: Fernet (AES-128-CBC + HMAC) via `CREDENTIAL_KEY`. **Required at startup**.
-- **SchemaSync (`app/core/schema_sync.py`)**: 启动时自动从 SQLModel 模型同步数据库结构（diff → 备份 → DDL）。快速路径：模型哈希未变则跳过。幂等执行，迁移锁防多实例并发。
+- **SchemaSync (`app/core/schema_sync.py`)**: 启动时自动从 SQLModel 模型同步数据库结构（diff → 备份 → DDL）。支持 `UniqueConstraint`、索引、外键的增量 diff。快速路径：模型哈希未变则跳过。幂等执行，迁移锁防多实例并发。
+- **Course sync (`POST /api/accounts/{account_id}/sync-courses`)**: 逐账号增量同步课堂派课程列表到本地。自动创建 Course 记录和 CourseBinding（默认不启用）。幂等设计，内置 IntegrityError 处理防并发竞态。
+- **IntegrityError 防御**: `create_account` 中捕获 `SAIntegrityError` 处理并发重复创建账号的竞态（回滚 → 重查 → 关联）。`sync_account_courses` 中类似保护并发课程创建。
 - **LogCleanup (`app/core/log_cleanup.py`)**: 签到日志自动清理——过期清理（默认 90 天）和超限清理（每账号默认 500 条）。后台每日自动执行，也可手动触发 `POST /api/logs/cleanup`。
 - **Redis circuit breaker**: `_RedisWrapper` auto-fuses on failure, avoiding repeated timeouts. Health check pings Redis every 5 minutes.
 - **Client IP forwarding to KetangPai**: Check-in requests forward client real IP via `X-Forward-For` header to avoid all showing the same server IP.
@@ -125,13 +127,14 @@ SystemSetting
 
 - `User`: App users with admin/user roles
 - `Account`: KetangPai credentials (password encrypted via Fernet), plus `username`, `school`, `stno`, `avatar`, `mobile`, `ktp_account`, `status_message`
-- `UserAccount`: Many-to-many link table (users ↔ accounts)
+- `UserAccount`: Many-to-many link table (users ↔ accounts). 含 `UniqueConstraint("user_id", "account_id")` 防止重复关联。
 - `Course`: KetangPai courses (keyed by string ID from the API)
 - `CourseBinding`: Links accounts to courses with `is_active` toggle
 - `CheckInLog`: Per-account-per-course check-in records, with `message` field for result description
 - `AutoCheckinConfig`: Per-user auto check-in configuration — `enabled`, `checkin_types`, `time_windows` (JSON array of `{start,end}` hour ranges)
 - `InviteCode`: Registration invite codes with usage limits and expiry
 - `SystemSetting`: Key-value system settings
+- **课程同步**: `POST /api/accounts/{account_id}/sync-courses` 通过 SessionPool 拉取课堂派课程列表，增量创建 Course + CourseBinding。
 
 ## Environment
 

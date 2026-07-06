@@ -211,7 +211,7 @@
 |            | **PyJWT**                                    | JWT 签发与验证（httponly cookie 承载）                |
 |            | **Cryptography (Fernet)**                    | 凭据加密                                              |
 |            | **Rate Limiter**                             | Redis 滑动窗口限流                                    |
-| **测试**   | **pytest** + **httpx** (TestClient)           | 360+ 个单元 + 集成 + 基准测试 |
+| **测试**   | **pytest** + **httpx** (TestClient)           | 366+ 个单元 + 集成 + 基准测试 |
 | **包管理** | **uv**                                       | Python 依赖管理                                       |
 | **部署**   | **Docker** + **docker compose**              | 容器化一站式部署                                      |
 
@@ -268,7 +268,7 @@ uv run python main.py
 
 ### 运行测试
 
-项目包含 **360 个测试**（119 个 SchemaSync 测试 + 单元测试 + 集成测试 + 延迟基准测试），覆盖安全模块、数据模型、工具函数、数据库层、SchemaSync（含历史阶段迁移路径、笛卡尔积排列测试、未来变更预测、默认值对齐、BOOLEAN/TINYINT 类型规范化）、账号模块、课程模块、自动签到模块、签到日志清理模块和认证路由：
+项目包含 **366 个测试**（119 个 SchemaSync 测试 + 单元测试 + 集成测试 + 延迟基准测试），覆盖安全模块、数据模型、工具函数、数据库层、SchemaSync（含历史阶段迁移路径、笛卡尔积排列测试、未来变更预测、默认值对齐、BOOLEAN/TINYINT 类型规范化）、账号模块（含 CRUD、并发竞态、级联删除、课程同步）、课程模块（含外键约束校验）、自动签到模块、签到日志清理模块和认证路由：
 
 ```bash
 # 运行全部测试
@@ -387,6 +387,7 @@ uv run pytest -v -s tests/routers/test_benchmark_checkin.py  # 基准测试详�
 | POST   | `/api/accounts`             | 添加课堂派账号（已存在则自动关联）               |
 | PUT    | `/api/accounts/{id}`        | 更新账号信息（更新密码会自动重置状态并刷新详情） |
 | POST   | `/api/accounts/{id}/verify` | 重新验证账号凭据有效性，刷新用户详情             |
+| POST   | `/api/accounts/{id}/sync-courses` | 同步课堂派课程列表到本地（增量，幂等）      |
 | DELETE | `/api/accounts/{id}`        | 删除账号                                         |
 
 ### 课程管理
@@ -651,7 +652,7 @@ CheckInHelper/
 │   ├── zxing.min.js        # ZXing WASM 备用 QR 解码
 │   └── test.html           # QR 解码测试页
 │
-├── tests/                  # ✅ 测试（360+ 个，覆盖核心模块 + 路由 + 基准测试）
+├── tests/                  # ✅ 测试（366 个，覆盖核心模块 + 路由 + 基准测试）
 │   ├── conftest.py         # 共享 Fixtures + benchmark 收集器
 │   ├── test_security.py    # 密码哈希 · JWT · Fernet 加密 · 令牌黑名单
 │   ├── test_models.py      # Pydantic/SQLModel 模型 · _extract_gps · is_position_error
