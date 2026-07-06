@@ -187,8 +187,8 @@ def _extract_gps(resp: dict | list) -> tuple[str | None, str | None]:
 class SemesterCourseListRequest(BaseModel):
     isstudy: str = "1"
     search: str = ""
-    semester: str = "2026-2027"
-    term: str = "1"
+    semester: str = ""
+    term: str = ""
     reqtimestamp: int = Field(default_factory=lambda: int(time.time() * 1000))
 
 
