@@ -13,6 +13,7 @@ from typing import Literal
 
 import tenacity
 from sqlalchemy import Boolean, Engine, inspect as sa_inspect, text as sa_text
+from sqlalchemy.schema import UniqueConstraint as SAUniqueConstraint
 from sqlalchemy.exc import SQLAlchemyError
 from sqlmodel import SQLModel, Session, select
 
@@ -369,6 +370,18 @@ def inspect_target(metadata) -> dict[str, TableDef]:
                 columns=list(idx.columns.keys()),
                 unique=idx.unique,
             ))
+        # 提取 __table_args__ 中的 UniqueConstraint（与唯一索引等效）
+        seen_idx_keys = {frozenset(idx.columns) for idx in indexes}
+        for constraint in table.constraints:
+            if isinstance(constraint, SAUniqueConstraint):
+                cols = list(constraint.columns.keys())
+                if frozenset(cols) not in seen_idx_keys:
+                    indexes.append(IndexDef(
+                        name=constraint.name or f"uq_{table_name}_{'_'.join(cols)}",
+                        columns=cols,
+                        unique=True,
+                    ))
+                    seen_idx_keys.add(frozenset(cols))
 
         fks: list[ForeignKeyDef] = []
         for fk in table.foreign_key_constraints:
@@ -625,6 +638,13 @@ def _compute_schema_hash(metadata) -> str:
         idx_strs: list[str] = []
         for idx in sorted(table.indexes, key=lambda x: (x.name or "", sorted(x.columns.keys()))):
             idx_strs.append(f"{idx.name}:{sorted(idx.columns.keys())}:{idx.unique}")
+        # 包含 UniqueConstraint（__table_args__）到哈希中
+        uq_strs: list[str] = []
+        for constraint in sorted(table.constraints, key=lambda x: (x.name or "", sorted(x.columns.keys()))):
+            if isinstance(constraint, SAUniqueConstraint):
+                uq_strs.append(
+                    f"uq:{constraint.name}:{sorted(constraint.columns.keys())}"
+                )
         fk_strs: list[str] = []
         for fk in sorted(table.foreign_key_constraints, key=lambda x: (
             x.name or "",
@@ -634,7 +654,7 @@ def _compute_schema_hash(metadata) -> str:
             fk_strs.append(
                 f"{fk.name}:{sorted(fk.columns.keys())}->{list(fk.elements)[0].column.table.name}:{sorted(str(e.column.name) for e in fk.elements)}:{fk.ondelete}"
             )
-        ordered_parts.append(f"{table_name}({';'.join(col_strs)})({';'.join(idx_strs)})({';'.join(fk_strs)})")
+        ordered_parts.append(f"{table_name}({';'.join(col_strs)})({';'.join(idx_strs)})({';'.join(fk_strs)})({';'.join(uq_strs)})")
     return hashlib.sha256("|".join(ordered_parts).encode()).hexdigest()
 
 

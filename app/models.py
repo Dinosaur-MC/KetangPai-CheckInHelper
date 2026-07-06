@@ -3,6 +3,7 @@ from datetime import datetime, timezone
 from typing import Optional
 from enum import StrEnum
 from sqlmodel import SQLModel, Field
+from sqlalchemy import UniqueConstraint
 
 from pydantic import BaseModel
 
@@ -70,6 +71,11 @@ class UserAccount(SQLModel, table=True):
     id: Optional[int] = Field(default=None, primary_key=True)
     user_id: int = Field(default=None, foreign_key="user.id", index=True)
     account_id: int = Field(default=None, foreign_key="account.id", index=True)
+
+    __table_args__ = (
+        # 防止同一用户重复关联同一账号
+        UniqueConstraint("user_id", "account_id", name="uq_user_account"),
+    )
 
 
 class Course(SQLModel, table=True):
