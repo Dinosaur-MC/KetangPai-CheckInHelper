@@ -185,6 +185,9 @@
                                             <td class="actions">
                                                 <mdui-button-icon icon="verified" @click="verifyAccount(acct)"
                                                     title="验证凭据" style="color:#2563eb;"></mdui-button-icon>
+                                                <mdui-button-icon icon="sync" @click="syncCourses(acct)"
+                                                    :disabled="syncingId === acct.id" title="同步课程"
+                                                    style="color:#2e7d32;"></mdui-button-icon>
                                                 <mdui-button-icon icon="edit" @click="openAccountModal(acct)"
                                                     title="编辑"></mdui-button-icon>
                                                 <mdui-button-icon icon="delete" @click="deleteAccount(acct)" title="删除"

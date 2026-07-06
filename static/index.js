@@ -101,6 +101,7 @@ createApp({
         const showChangeOldPwd = ref(false);
         const showChangeNewPwd = ref(false);
         const showChangeConfirmPwd = ref(false);
+        const syncingId = ref(null);
 
         // 表单
         const accountForm = reactive({ email: "", password: "" });
@@ -412,6 +413,20 @@ createApp({
                 showToast(e.message);
                 invalidateAccounts();
                 loadAccounts();
+            }
+        }
+
+        async function syncCourses(acct) {
+            syncingId.value = acct.id;
+            try {
+                const res = await api("POST", `/api/accounts/${acct.id}/sync-courses`);
+                showToast(res.message);
+                loadBindings();
+                loadAccounts();
+            } catch (e) {
+                showToast(e.message);
+            } finally {
+                syncingId.value = null;
             }
         }
 
@@ -1396,6 +1411,8 @@ createApp({
             openAccountModal,
             saveAccount,
             verifyAccount,
+            syncCourses,
+            syncingId,
             deleteAccount,
             loadBindings,
             openBindingModal,

@@ -106,6 +106,14 @@ async def create_course_binding(
     if user_account is None:
         raise HTTPException(status_code=404, detail="账号不存在或无权限访问")
 
+    # 验证课程是否存在（外键约束要求 course 表中必须有对应记录）
+    course = session.get(Course, course_id)
+    if course is None:
+        raise HTTPException(
+            status_code=400,
+            detail=f"课程 {course_id} 不存在，请先通过「账号管理」同步课程后再绑定",
+        )
+
     # 检查是否已存在相同的绑定
     existing_binding = session.exec(
         select(CourseBinding).where(

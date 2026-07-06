@@ -86,9 +86,17 @@ class TestCourseBinding:
     COURSE_ID = "course-bind-001"
 
     @pytest.fixture(autouse=True)
-    def _setup(self, client: TestClient, user_token):
+    def _setup(self, client: TestClient, user_token, db_engine):
         self.account_id = _create_account(client, user_token)
         self.token = user_token
+        # 创建 Course 记录（外键约束要求）
+        from app.models import Course
+        from sqlmodel import Session as SMSession
+
+        with SMSession(db_engine) as db:
+            db.add(Course(id=self.COURSE_ID, code="C001", course_name="测试课程",
+                          semester="2025", term="1"))
+            db.commit()
 
     def test_create_binding(self, client: TestClient):
         resp = client.post(

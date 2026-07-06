@@ -137,7 +137,9 @@ async def create_account(
         except Exception as e:
             logger.warning("Failed to get user info for %s: %s", email, e)
 
-        # 4. 验证通过再入库
+        # 4. 验证通过再入库（防并发竞态）
+        from sqlalchemy.exc import IntegrityError as SAIntegrityError
+
         account = Account(
             email=email,
             password=encrypt_credential(password),
@@ -152,14 +154,32 @@ async def create_account(
             status=1,
         )
         session.add(account)
-        session.flush()
-        if redis:
-            redis.set(f"account:{account.id}:token", token)
+        try:
+            session.flush()
+        except SAIntegrityError:
+            # 并发冲突：另一请求已插入该账号 → 回滚当前事务状态，重查并关联
+            session.rollback()
+            account = session.exec(
+                select(Account).where(Account.email == email)
+            ).first()
+            if account is None:
+                raise HTTPException(status_code=500, detail="账号创建失败，请重试")
+            # 检查当前用户是否已关联此账号
+            existing_link = session.exec(
+                select(UserAccount).where(
+                    UserAccount.user_id == current_user.id,
+                    UserAccount.account_id == account.id,
+                )
+            ).first()
+            if existing_link:
+                raise HTTPException(status_code=400, detail="该账号已关联到当前用户")
+        else:
+            if redis:
+                redis.set(f"account:{account.id}:token", token)
+            # 5. 加入会话池
+            from app.core.sessions import session_pool
 
-        # 4. 加入会话池
-        from app.core.sessions import session_pool
-
-        await session_pool.create([account], False)
+            await session_pool.create([account], False)
 
     # 建立用户-账号关联
     user_account = UserAccount(
@@ -179,8 +199,13 @@ async def create_account(
                 # 检查课程是否已存在，不存在则创建
                 course = session.get(Course, course_data["id"])
                 if course is None:
+                    # 跳过无效课程数据（id 为空或明显不是有效 ID）
+                    course_id = (course_data.get("id") or "").strip()
+                    if not course_id:
+                        logger.warning("Skipping course with empty id: %s", course_data)
+                        continue
                     course = Course(
-                        id=course_data["id"],
+                        id=course_id,
                         code=course_data.get("code", ""),
                         course_name=course_data.get("course_name", ""),
                         semester=course_data.get("semester", ""),
@@ -347,6 +372,116 @@ async def verify_account(
         session.add(account)
         session.flush()
         return BaseResponse(code=400, message=f"验证失败：{msg}")
+
+
+@router.post("/{account_id}/sync-courses")
+async def sync_account_courses(
+    account_id: int,
+    current_user: User = Depends(get_current_user),
+    session: Session = Depends(get_session_with),
+):
+    """同步课堂派课程列表到本地（增量）。
+
+    通过 SessionPool 获取账号的课程列表，自动创建不存在的 Course 记录，
+    并为当前账号创建增量的 CourseBinding（默认不启用）。
+    不会修改已有绑定或课程数据。
+    """
+    # 验证权限
+    user_account = session.exec(
+        select(UserAccount).where(
+            UserAccount.user_id == current_user.id,
+            UserAccount.account_id == account_id,
+        )
+    ).first()
+    if user_account is None and current_user.role != Role.admin:
+        raise HTTPException(status_code=404, detail="账号不存在或无权限访问")
+
+    account = session.get(Account, account_id)
+    if account is None:
+        raise HTTPException(status_code=404, detail="账号不存在")
+
+    from app.core.sessions import session_pool
+
+    new_courses = 0
+    new_bindings = 0
+
+    try:
+        courses = await session_pool.get_course_list(account.id)
+    except Exception as e:
+        logger.warning("sync-courses: get_course_list failed for account %s: %s", account.id, e)
+        return BaseResponse(
+            code=400,
+            message=f"课程同步失败：{e}",
+            data={"new_courses": 0, "new_bindings": 0},
+        )
+
+    if not courses:
+        return BaseResponse(
+            message="课程已是最新",
+            data={"new_courses": 0, "new_bindings": 0},
+        )
+
+    from sqlalchemy.exc import IntegrityError as SAIntegrityError
+
+    for course_data in courses:
+        # 跳过无效课程数据
+        course_id = (course_data.get("id") or "").strip()
+        if not course_id:
+            continue
+
+        # 检查课程是否已存在，不存在则创建
+        course = session.get(Course, course_id)
+        if course is None:
+            try:
+                course = Course(
+                    id=course_id,
+                    code=course_data.get("code", ""),
+                    course_name=course_data.get("course_name", ""),
+                    semester=course_data.get("semester", ""),
+                    term=course_data.get("term", ""),
+                )
+                session.add(course)
+                session.flush()
+            except SAIntegrityError:
+                # 并发冲突：另一请求已插入该课程 → 重新查询
+                session.rollback()
+                course = session.get(Course, course_id)
+                if course is None:
+                    logger.warning("sync-courses: failed to create course %s after retry", course_id)
+                    continue
+            else:
+                new_courses += 1
+
+        # 检查是否已有绑定
+        existing_binding = session.exec(
+            select(CourseBinding).where(
+                CourseBinding.course_id == course.id,
+                CourseBinding.account_id == account.id,
+            )
+        ).first()
+        if existing_binding is None:
+            session.add(
+                CourseBinding(
+                    course_id=course.id,
+                    account_id=account.id,
+                    is_active=False,
+                )
+            )
+            new_bindings += 1
+
+    session.flush()
+
+    parts = []
+    if new_courses:
+        parts.append(f"新增 {new_courses} 门课程")
+    if new_bindings:
+        parts.append(f"新增 {new_bindings} 条绑定")
+    message = "，".join(parts) if parts else "课程已是最新"
+
+    return BaseResponse(
+        message=f"同步完成，{message}",
+        data={"new_courses": new_courses, "new_bindings": new_bindings},
+    )
 
 
 def _cascade_delete_account(
