@@ -133,6 +133,16 @@ class TestCourseBinding:
         )
         assert resp.status_code == 404
 
+    def test_create_binding_course_not_found(self, client: TestClient):
+        """绑定不存在的课程应返回 400。"""
+        resp = client.post(
+            "/api/courses/bindings",
+            json={"course_id": "nonexistent-course", "account_id": self.account_id},
+            headers=_h(self.token),
+        )
+        assert resp.status_code == 400
+        assert "不存在" in _msg(resp)
+
     def test_list_bindings(self, client: TestClient):
         client.post(
             "/api/courses/bindings",

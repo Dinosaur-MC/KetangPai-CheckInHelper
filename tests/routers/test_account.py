@@ -13,6 +13,12 @@ from fastapi.testclient import TestClient
 _EMAIL = "acct-test@example.com"
 _PASSWORD = "AcctPass1"
 
+# 模拟课堂派课程数据
+_MOCK_COURSES = [
+    {"id": "sync-course-001", "code": "C001", "course_name": "高等数学", "semester": "2026-2027", "term": "1"},
+    {"id": "sync-course-002", "code": "C002", "course_name": "线性代数", "semester": "2026-2027", "term": "1"},
+]
+
 
 # ── Mock KetangPaiAPI 网络调用 ──
 
@@ -297,3 +303,94 @@ class TestDeleteAccount:
         client.cookies.clear()
         resp = client.delete(f"/api/accounts/{self.account_id}")
         assert resp.status_code == 401
+
+
+# ===========================================================================
+# Sync courses
+# ===========================================================================
+
+
+def _mock_session_pool_courses(monkeypatch, return_value):
+    """辅助：mock session_pool.get_course_list 返回指定数据。"""
+    from app.core import sessions as sessions_module
+
+    monkeypatch.setattr(
+        sessions_module.SessionPool,
+        "get_course_list",
+        AsyncMock(return_value=return_value),
+    )
+
+
+class TestSyncCourses:
+    """POST /api/accounts/{account_id}/sync-courses 端点测试。"""
+
+    @pytest.fixture(autouse=True)
+    def _setup(self, client: TestClient, user_token):
+        resp = client.post(
+            "/api/accounts",
+            json={"email": "sync-test@test.com", "password": "AcctPass1"},
+            headers=_auth_headers(user_token),
+        )
+        assert resp.status_code == 200
+        self.account_id = resp.json()["data"]["id"]
+        self.token = user_token
+
+    def _url(self):
+        return f"/api/accounts/{self.account_id}/sync-courses"
+
+    def test_sync_success(self, client: TestClient, monkeypatch):
+        """首次同步应创建 Course + CourseBinding。"""
+        _mock_session_pool_courses(monkeypatch, _MOCK_COURSES)
+        resp = client.post(self._url(), headers=_auth_headers(self.token))
+        assert resp.status_code == 200
+        data = resp.json()
+        assert data["data"]["new_courses"] == 2, data
+        assert data["data"]["new_bindings"] == 2, data
+        assert "新增 2 门课程" in data["message"]
+
+    def test_sync_idempotent(self, client: TestClient, monkeypatch):
+        """重复同步不应创建重复数据。"""
+        _mock_session_pool_courses(monkeypatch, _MOCK_COURSES)
+        client.post(self._url(), headers=_auth_headers(self.token))
+        resp = client.post(self._url(), headers=_auth_headers(self.token))
+        assert resp.status_code == 200
+        data = resp.json()
+        assert data["data"]["new_courses"] == 0
+        assert data["data"]["new_bindings"] == 0
+        assert "课程已是最新" in data["message"]
+
+    def test_sync_not_found(self, client: TestClient):
+        """不存在的账号返回 404。"""
+        resp = client.post(
+            "/api/accounts/99999/sync-courses",
+            headers=_auth_headers(self.token),
+        )
+        assert resp.status_code == 404
+
+    def test_sync_wrong_user(self, client: TestClient):
+        """其他用户的账号返回 404。"""
+        resp = client.post(
+            "/api/register",
+            json={"email": "other-sync@test.com", "password": "AcctPass1"},
+        )
+        other_token = resp.json()["data"]["access_token"]
+        resp = client.post(
+            self._url(),
+            headers=_auth_headers(other_token),
+        )
+        assert resp.status_code == 404
+
+    def test_sync_requires_auth(self, client: TestClient):
+        """未认证返回 401。"""
+        client.cookies.clear()
+        resp = client.post(self._url())
+        assert resp.status_code == 401
+
+    def test_sync_empty_courses(self, client: TestClient, monkeypatch):
+        """课程列表为空时返回「课程已是最新」。"""
+        _mock_session_pool_courses(monkeypatch, [])
+        resp = client.post(self._url(), headers=_auth_headers(self.token))
+        assert resp.status_code == 200
+        assert resp.json()["message"] == "课程已是最新"
+        assert resp.json()["data"]["new_courses"] == 0
+        assert resp.json()["data"]["new_bindings"] == 0
