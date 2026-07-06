@@ -1,5 +1,4 @@
 import time
-import random
 import logging
 import httpx
 from typing import Optional, List
@@ -269,10 +268,22 @@ class KetangPaiAPI:
         resp.raise_for_status()
         return GetUserInfoResponse(**resp.json())
 
-    async def get_course_list(self) -> list[CourseItem]:
-        """获取学期课程列表。"""
+    async def get_course_list(
+        self,
+        semester: str = "",
+        term: str = "",
+        search: str = "",
+    ) -> list[CourseItem]:
+        """获取学期课程列表。
+
+        :param semester: 学期，如 "2026-2027"（默认空=全部学期）
+        :param term: 学期阶段，"1" 上学期 / "2" 下学期（默认空=全部）
+        :param search: 课程名称搜索关键词
+        """
         req = SemesterCourseListRequest(
-            reqtimestamp=int(time.time() * 1000) + random.randint(-100, 100),
+            semester=semester,
+            term=term,
+            search=search,
         )
         resp = await self._client.post(
             f"{API_BASE}/CourseApi/semesterCourseList",

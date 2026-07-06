@@ -238,11 +238,17 @@ class SessionPool:
         return result[account_ids] if single else result
 
     async def get_course_list(
-        self, account_ids: int | list[int]
+        self, account_ids: int | list[int],
+        semester: str = "",
+        term: str = "",
+        search: str = "",
     ) -> list[dict] | None | dict[int, list[dict] | None]:
         """获取账号的学期课程列表。
 
         :param account_ids: 单个 ID 或 ID 列表。
+        :param semester: 学期筛选，如 "2026-2027"（默认空=全部）
+        :param term: 学期阶段筛选（默认空=全部）
+        :param search: 课程名称搜索关键词
         :return: 单个 → list[dict] 或 None；列表 → {id: list[dict] | None, ...}。
         """
         single = isinstance(account_ids, int)
@@ -255,7 +261,9 @@ class SessionPool:
                 result[aid] = None
                 continue
             try:
-                items = await client.get_course_list()
+                items = await client.get_course_list(
+                    semester=semester, term=term, search=search,
+                )
                 result[aid] = [item.model_dump() for item in items]
             except Exception as e:
                 logger.warning("get_course_list failed for account %s: %s", aid, e)
