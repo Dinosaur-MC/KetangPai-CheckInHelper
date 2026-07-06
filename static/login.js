@@ -33,6 +33,7 @@ async function checkAuth() {
                 window.location.replace("/");
             }
         }
+        localStorage.removeItem("user");
     } catch {
         // 未登录，继续显示登录页
     }
