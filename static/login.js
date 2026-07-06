@@ -21,7 +21,7 @@ function showToast(msg, delay) {
 }
 
 // 检查是否已登录（cookie 有效），如果是则直接跳转
-(async function checkAuth() {
+async function checkAuth() {
     try {
         const res = await fetch(`${API_BASE}/api/users/me`, {
             headers: { "Content-Type": "application/json" },
@@ -36,7 +36,10 @@ function showToast(msg, delay) {
     } catch {
         // 未登录，继续显示登录页
     }
-})();
+}
+if (localStorage.getItem("user") !== null) {
+    checkAuth();
+}
 
 createApp({
     setup() {
