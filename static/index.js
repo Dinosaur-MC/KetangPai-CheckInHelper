@@ -142,6 +142,7 @@ createApp({
         const courseLocations = ref([]); // 位置记录列表
         const locationModal = reactive({ open: false, course_id: "", account_id: "", account_email: "", latitude: "", longitude: "", address: "" });
         const locationSaving = ref(false);
+        const locating = ref(false);
         const locationFullscreen = ref(window.innerWidth <= 700);
         const logs = ref([]);
         const inviteCodes = ref([]);
@@ -634,7 +635,7 @@ createApp({
             const hasSavedCoords = locationModal.latitude && locationModal.longitude;
             const posPromise = hasSavedCoords
                 ? Promise.resolve(null)
-                : getDevicePosition();
+                : (locating.value = true, getDevicePosition().finally(() => locating.value = false))
 
             try {
                 initMapInstance(container);
@@ -1876,6 +1877,7 @@ createApp({
             courseLocations,
             locationModal,
             locationSaving,
+            locating,
             locationFullscreen,
             loadCourseLocations,
             getLocationForBinding,

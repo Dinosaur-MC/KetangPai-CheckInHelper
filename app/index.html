@@ -866,7 +866,8 @@
             <div class="location-map-wrapper">
                 <div id="location-map-container"></div>
                 <mdui-fab icon="my_location" class="locate-btn"
-                    @click="relocateMap" title="定位到当前位置"></mdui-fab>
+                    @click="relocateMap" title="定位到当前位置"
+                    :loading="locating" :disabled="locating"></mdui-fab>
             </div>
             <div class="location-coords">
                 <span>纬度 <strong>{{ locationModal.latitude || '—' }}</strong></span>
