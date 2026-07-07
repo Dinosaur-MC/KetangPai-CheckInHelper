@@ -1,6 +1,6 @@
 import asyncio
 import time
-from sqlmodel import Session
+from sqlmodel import Session, select
 from app.core.api import QRCheckInRequest, CheckInRequest, KetangPaiAPI, CheckInResult, is_position_error, _extract_gps
 from app.core.db import get_session, get_redis_client
 from app.models import Account, CheckInLog
@@ -851,45 +851,28 @@ class SessionPool:
                 except Exception as e:
                     logger.warning("Failed to pre-fetch building GPS: %s", e)
 
-        # 尝试获取围栏半径（不论经纬度是否已提供）
-        location_resp = None
-        if first_client is not None:
-            try:
-                location_resp = await first_client.get_attence_location(data.id)
-                fence_radius = _extract_radius(location_resp)
-            except Exception as e:
-                logger.warning("Failed to pre-fetch fence radius: %s", e)
-
-        # 判断考勤是否存在：尝试获取围栏半径（不论经纬度是否已提供）
-        #
-        # 注意：getLocation 返回空不绝对等于考勤不存在——
-        # 学生账号可能无权限查看班级信息（"你没有权限访问该班级的信息"），
-        # 此时 getAttenceBuildingGps 可能已成功返回坐标。
-        # 只有两者都失败时，才判定考勤真的不存在。
-        has_coords = bool(center_lat and center_lng)
-        if location_resp is not None and not location_resp:
-            if not has_coords:
-                logger.info(
-                    "Attendance %s location is empty AND building GPS unavailable"
-                    " — skipping all accounts (attendance may not exist)",
-                    data.id,
-                )
+            # ── CourseLocation table as coordinate fallback ──
+            if not center_lat or not center_lng:
                 try:
-                    r_early = get_redis_client()
-                    if r_early:
-                        r_early.set(f"gps_ended:{data.id}", "1", 3600)
-                except Exception:
-                    pass
-                return {aid: CheckInResult(
-                    email=self._resolve_client_email(snapshot, aid) or f"account:{aid}",
-                    success=False,
-                    message="已跳过（该GPS考勤不存在或已删除）",
-                ) for aid in account_ids}
-            logger.info(
-                "Attendance %s getLocation returned empty (likely permission denied), "
-                "but building GPS coords are available — continuing with default radius=%sm",
-                data.id, fence_radius,
-            )
+                    from app.models import CourseLocation as CLModel
+                    from app.core.db import get_session as get_db_session
+
+                    with get_db_session() as db_session:
+                        cloc = db_session.exec(
+                            select(CLModel).where(
+                                CLModel.course_id == data.courseid,
+                                CLModel.account_id.in_(account_ids),
+                            )
+                        ).first()
+                        if cloc and cloc.latitude and cloc.longitude:
+                            center_lat = cloc.latitude
+                            center_lng = cloc.longitude
+                            logger.info(
+                                "Using CourseLocation for attendance %s: %s, %s",
+                                data.id, center_lat, center_lng,
+                            )
+                except Exception as e:
+                    logger.warning("Failed to query CourseLocation: %s", e)
 
         async with self.exec_lock:
             results: dict[int, CheckInResult | None] = {}
