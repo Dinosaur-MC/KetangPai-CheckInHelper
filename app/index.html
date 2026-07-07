@@ -222,6 +222,7 @@
                                             <th>课程名称</th>
                                             <th>课堂派账号</th>
                                             <th>学期</th>
+                                            <th style="width:70px;">位置</th>
                                             <th>启用</th>
                                             <th class="actions">操作</th>
                                         </tr>
@@ -235,6 +236,21 @@
                                             <td>{{ getCourseName(b.course_id) }}</td>
                                             <td>{{ getAccountEmail(b.account_id) }}</td>
                                             <td>{{ getCourseSemester(b.course_id) }}</td>
+                                            <td style="font-size:12px;">
+                                                <template v-if="getLocationForBinding(b.course_id, b.account_id)">
+                                                    <a href="javascript:;" @click="openLocationModal(b)"
+                                                       style="text-decoration:none;" title="点击修改">
+                                                        📍{{ getLocationForBinding(b.course_id, b.account_id).latitude.slice(0,6) }},
+                                                        {{ getLocationForBinding(b.course_id, b.account_id).longitude.slice(0,6) }}
+                                                    </a>
+                                                    <a href="javascript:;" @click="deleteCourseLocation(b.course_id, b.account_id)"
+                                                       style="margin-left:3px;color:#c62828;font-size:11px;text-decoration:none;">✕</a>
+                                                </template>
+                                                <a v-else href="javascript:;" @click="openLocationModal(b)"
+                                                   style="text-decoration:none;color:var(--mdui-color-on-surface-variant);font-size:11px;">
+                                                    ⚪ 未设置
+                                                </a>
+                                            </td>
                                             <td><mdui-switch :checked="b.is_active"
                                                     @change="toggleBinding(b, $event)"></mdui-switch></td>
                                             <td class="actions">
@@ -838,6 +854,33 @@
             </div>
             <mdui-button slot="action" variant="text" @click="modals.binding=false">取消</mdui-button>
             <mdui-button slot="action" variant="filled" @click="saveBinding">绑定</mdui-button>
+        </mdui-dialog>
+
+        <!-- 位置选择弹窗 -->
+        <mdui-dialog :open="locationModal.open"
+            @closed="locationMap && locationMap.destroy && locationMap.destroy(); locationMap=null; locationMarker=null; locationModal.open=false;"
+            close-on-esc close-on-overlay-click
+            :fullscreen="locationFullscreen"
+            headline="设置签到位置"
+            class="location-dialog">
+            <div class="location-map-wrapper">
+                <div id="location-map-container"></div>
+                <mdui-fab icon="my_location" class="locate-btn"
+                    @click="relocateMap" title="定位到当前位置"></mdui-fab>
+            </div>
+            <div class="location-coords">
+                <span>纬度 <strong>{{ locationModal.latitude || '—' }}</strong></span>
+                <span>经度 <strong>{{ locationModal.longitude || '—' }}</strong></span>
+            </div>
+            <div v-if="locationModal.address" class="location-address">
+                📍 {{ locationModal.address }}
+            </div>
+            <div slot="action">
+                <mdui-button variant="text" @click="locationModal.open=false">取消</mdui-button>
+                <mdui-button variant="filled" @click="saveCourseLocation" :loading="locationSaving">
+                    确认保存
+                </mdui-button>
+            </div>
         </mdui-dialog>
 
         <!-- ============================================================

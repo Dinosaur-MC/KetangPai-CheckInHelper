@@ -139,6 +139,10 @@ createApp({
         const accounts = ref([]);
         const bindings = ref([]);
         const courses = ref([]); // Course 表缓存
+        const courseLocations = ref([]); // 位置记录列表
+        const locationModal = reactive({ open: false, course_id: "", account_id: "", account_email: "", latitude: "", longitude: "", address: "" });
+        const locationSaving = ref(false);
+        const locationFullscreen = ref(window.innerWidth <= 700);
         const logs = ref([]);
         const inviteCodes = ref([]);
         const inviteRequired = ref(false);
@@ -533,6 +537,321 @@ createApp({
             } catch (e) {
                 target.checked = !newState; // 回滚 DOM 状态
                 showToast(e.message);
+            }
+        }
+
+        // ---- 位置管理 ----
+
+        async function loadCourseLocations() {
+            try {
+                const res = await api("GET", "/api/course-locations");
+                courseLocations.value = (res.data || []);
+            } catch (e) {
+                console.warn("Failed to load course locations:", e);
+            }
+        }
+
+        function getLocationForBinding(courseId, accountId) {
+            return courseLocations.value.find(
+                l => l.course_id === courseId && l.account_id === accountId
+            );
+        }
+
+        let amapKey = "b2e088992fa76030df6e9c36b8d9281a";
+        let locationMap = null;
+        let locationMarker = null;
+
+        async function openLocationModal(b) {
+            locationFullscreen.value = window.innerWidth <= 700;
+            const existing = getLocationForBinding(b.course_id, b.account_id);
+            locationModal.course_id = b.course_id;
+            locationModal.account_id = b.account_id;
+            locationModal.account_email = b.account_email || getAccountEmail(b.account_id) || "";
+            locationModal.latitude = existing ? existing.latitude : "";
+            locationModal.longitude = existing ? existing.longitude : "";
+            locationModal.address = existing ? existing.address : "";
+            locationModal.open = true;
+
+            await Vue.nextTick();
+            await new Promise(r => setTimeout(r, 150));
+            initLocationMap();
+        }
+
+        function loadAmapScript() {
+            return new Promise((resolve, reject) => {
+                if (typeof AMap !== "undefined") { resolve(); return; }
+                // 避免重复加载
+                if (document.querySelector("script[data-amap]")) {
+                    const check = () => typeof AMap !== "undefined" ? resolve() : setTimeout(check, 200);
+                    check();
+                    return;
+                }
+                const script = document.createElement("script");
+                script.dataset.amap = "1";
+                script.src = `https://webapi.amap.com/maps?v=2.0&key=${amapKey}`;
+                script.onload = resolve;
+                script.onerror = () => reject(new Error("AMap脚本加载失败"));
+                document.head.appendChild(script);
+            });
+        }
+
+        let deviceLat = "";
+        let deviceLng = "";
+
+        async function getDevicePosition() {
+            if (!navigator.geolocation) return null;
+            try {
+                const pos = await new Promise((resolve, reject) => {
+                    navigator.geolocation.getCurrentPosition(resolve, reject, {
+                        enableHighAccuracy: true,
+                        timeout: 8000,
+                        maximumAge: 30000,
+                    });
+                });
+                deviceLat = pos.coords.latitude.toFixed(6);
+                deviceLng = pos.coords.longitude.toFixed(6);
+                return { lat: deviceLat, lng: deviceLng };
+            } catch (e) {
+                console.warn("Device geolocation failed:", e.message);
+                return null;
+            }
+        }
+
+        async function initLocationMap() {
+            const container = document.getElementById("location-map-container");
+            if (!container) return;
+
+            if (locationMap) {
+                locationMap.destroy();
+                locationMap = null;
+                locationMarker = null;
+            }
+
+            // 先加载地图 SDK（预缓存过，通常 <100ms）
+            await loadAmapScript();
+
+            // 后台获取 GPS，不阻塞地图初始化
+            const posPromise = getDevicePosition();
+
+            try {
+                initMapInstance(container);
+
+                // GPS 返回后移动到当前位置
+                const pos = await posPromise;
+                if (pos && locationMap && locationMarker) {
+                    locationMap.setCenter([parseFloat(pos.lng), parseFloat(pos.lat)]);
+                    locationMap.setZoom(16);
+                    locationMarker.setPosition([parseFloat(pos.lng), parseFloat(pos.lat)]);
+                    locationModal.latitude = pos.lat;
+                    locationModal.longitude = pos.lng;
+                }
+            } catch (e) {
+                console.warn("AMap init failed:", e);
+                showToast("地图加载失败，请手动输入坐标");
+                showManualCoordsInput();
+            }
+        }
+
+        function initMapInstance(container) {
+            try {
+                const lat = parseFloat(locationModal.latitude) || 23.129;
+                const lng = parseFloat(locationModal.longitude) || 113.264;
+
+                locationMap = new AMap.Map(container, {
+                    zoom: 16,
+                    center: [lng, lat],
+                });
+
+                locationMarker = new AMap.Marker({
+                    position: [lng, lat],
+                    map: locationMap,
+                });
+
+                // 使用 HTML 模板中的 <mdui-fab> 悬浮定位按钮，方法在 relocateMap
+
+                // 高德定位仅用于反向地理编码
+                locationMap.plugin("AMap.Geolocation", () => {
+                    const geolocation = new AMap.Geolocation({});
+                    geolocation.getCurrentPosition((status, result) => {
+                        if (status === "complete") {
+                            deviceLat = result.position.getLat().toFixed(6);
+                            deviceLng = result.position.getLng().toFixed(6);
+                            reverseGeocode(result.position);
+                        }
+                    });
+                });
+
+                locationMap.on("click", (e) => {
+                    const lnglat = e.lnglat;
+                    locationMarker.setPosition(lnglat);
+                    locationModal.latitude = lnglat.getLat().toFixed(6);
+                    locationModal.longitude = lnglat.getLng().toFixed(6);
+                    reverseGeocode(lnglat);
+                });
+
+                locationMap.on("error", () => {
+                    showToast("地图瓦片加载失败，请检查 API Key");
+                });
+            } catch (e) {
+                console.warn("AMap init failed:", e);
+                showToast("地图加载失败，请手动输入坐标");
+            }
+        }
+
+        function initMapInstance(container) {
+            try {
+                const hasSavedCoords = locationModal.latitude && locationModal.longitude;
+                const lat = parseFloat(locationModal.latitude) || 23.129;
+                const lng = parseFloat(locationModal.longitude) || 113.264;
+
+                locationMap = new AMap.Map(container, {
+                    zoom: 15,
+                    center: [lng, lat],
+                });
+
+                if (hasSavedCoords) {
+                    locationMarker = new AMap.Marker({
+                        position: [lng, lat],
+                        map: locationMap,
+                    });
+                }
+
+                // 自动定位到当前位置
+                locationMap.plugin("AMap.Geolocation", () => {
+                    const geolocation = new AMap.Geolocation({
+                        enableHighAccuracy: true,
+                        timeout: 10000,
+                    });
+                    geolocation.getCurrentPosition((status, result) => {
+                        if (status === "complete" && !hasSavedCoords) {
+                            const pos = [result.position.getLng(), result.position.getLat()];
+                            locationMap.setCenter(pos);
+                            locationMap.setZoom(16);
+                            if (locationMarker) {
+                                locationMarker.setPosition(pos);
+                            } else {
+                                locationMarker = new AMap.Marker({
+                                    position: pos,
+                                    map: locationMap,
+                                });
+                            }
+                            locationModal.latitude = result.position.getLat().toFixed(6);
+                            locationModal.longitude = result.position.getLng().toFixed(6);
+                            reverseGeocode(result.position);
+                        }
+                    });
+                });
+
+                locationMap.on("click", (e) => {
+                    const lnglat = e.lnglat;
+                    if (locationMarker) {
+                        locationMarker.setPosition(lnglat);
+                    } else {
+                        locationMarker = new AMap.Marker({
+                            position: lnglat,
+                            map: locationMap,
+                        });
+                    }
+                    locationModal.latitude = lnglat.getLat().toFixed(6);
+                    locationModal.longitude = lnglat.getLng().toFixed(6);
+                    reverseGeocode(lnglat);
+                });
+
+                locationMap.on("error", () => {
+                    showToast("地图瓦片加载失败，请检查 API Key");
+                });
+            } catch (e) {
+                console.warn("AMap init failed:", e);
+                showToast("地图加载失败，请手动输入坐标");
+            }
+        }
+
+        async function relocateMap() {
+            const pos = await getDevicePosition();
+            if (pos && locationMap && locationMarker) {
+                locationMap.setCenter([parseFloat(pos.lng), parseFloat(pos.lat)]);
+                locationMap.setZoom(16);
+                locationMarker.setPosition([parseFloat(pos.lng), parseFloat(pos.lat)]);
+                locationModal.latitude = pos.lat;
+                locationModal.longitude = pos.lng;
+                showToast("已定位到当前位置");
+            } else {
+                showToast("无法获取当前位置");
+            }
+        }
+
+        function reverseGeocode(lnglat) {
+            if (typeof AMap.Geocoder !== "undefined") {
+                const geocoder = new AMap.Geocoder({});
+                geocoder.getAddress(lnglat, (status, result) => {
+                    if (status === "complete" && result.info === "OK") {
+                        locationModal.address = result.regeocode.formattedAddress || "";
+                    }
+                });
+            }
+        }
+
+        function showManualCoordsInput() {
+            const wrap = document.getElementById("location-map-container");
+            if (!wrap || !wrap.parentNode) return;
+            const parent = wrap.parentNode;
+            let fallback = parent.querySelector(".location-fallback");
+            if (!fallback) {
+                fallback = document.createElement("div");
+                fallback.className = "location-fallback";
+                fallback.style.cssText = "margin-top:12px;padding:12px;background:#f9f9f9;border-radius:8px;";
+                fallback.innerHTML = `
+                    <div style="font-size:13px;margin-bottom:8px;color:var(--mdui-color-on-surface-variant);">
+                        无法加载地图，请直接输入坐标：
+                    </div>
+                    <div style="display:flex;gap:8px;">
+                        <input id="fallback-lat" placeholder="纬度 如 23.129163"
+                            style="flex:1;padding:8px;border:1px solid #ddd;border-radius:4px;font-size:14px;">
+                        <input id="fallback-lng" placeholder="经度 如 113.264435"
+                            style="flex:1;padding:8px;border:1px solid #ddd;border-radius:4px;font-size:14px;">
+                    </div>
+                `;
+                wrap.appendChild(fallback);
+                fallback.querySelector("#fallback-lat").value = locationModal.latitude || "";
+                fallback.querySelector("#fallback-lng").value = locationModal.longitude || "";
+                fallback.addEventListener("input", () => {
+                    locationModal.latitude = fallback.querySelector("#fallback-lat").value;
+                    locationModal.longitude = fallback.querySelector("#fallback-lng").value;
+                });
+            }
+        }
+
+        async function saveCourseLocation() {
+            if (!locationModal.latitude || !locationModal.longitude) {
+                showToast("请在地图上选择位置");
+                return;
+            }
+            locationSaving.value = true;
+            try {
+                await api("PUT", "/api/course-locations", {
+                    course_id: locationModal.course_id,
+                    account_id: locationModal.account_id,
+                    latitude: locationModal.latitude,
+                    longitude: locationModal.longitude,
+                    address: locationModal.address,
+                });
+                showToast("位置已保存");
+                locationModal.open = false;
+                await loadCourseLocations();
+            } catch (e) {
+                showToast(e.message || "保存失败");
+            } finally {
+                locationSaving.value = false;
+            }
+        }
+
+        async function deleteCourseLocation(courseId, accountId) {
+            try {
+                await api("DELETE", "/api/course-locations?course_id=" + encodeURIComponent(courseId) + "&account_id=" + accountId);
+                showToast("位置已清除");
+                await loadCourseLocations();
+            } catch (e) {
+                showToast(e.message || "删除失败");
             }
         }
 
@@ -1433,7 +1752,7 @@ createApp({
                     await loadAccounts();
                     break;
                 case "courses":
-                    await Promise.all([loadAccounts(), loadBindings()]);
+                    await Promise.all([loadAccounts(), loadBindings(), loadCourseLocations()]);
                     break;
                 case "checkin":
                     await Promise.all([loadAccounts(), loadAutoConfig(), loadAutoStatus(), loadPendingGps()]);
@@ -1480,6 +1799,9 @@ createApp({
             console.warn("加载页面数据失败:", e);
             showToast("加载数据失败，请刷新重试");
         });
+
+        // 预加载高德地图 SDK（后台静默加载，开弹窗时无需等待）
+        loadAmapScript().catch(() => {});
 
         return {
             state,
@@ -1565,6 +1887,16 @@ createApp({
             saveBinding,
             deleteBinding,
             toggleBinding,
+            courseLocations,
+            locationModal,
+            locationSaving,
+            locationFullscreen,
+            loadCourseLocations,
+            getLocationForBinding,
+            openLocationModal,
+            saveCourseLocation,
+            deleteCourseLocation,
+            relocateMap,
             executeCheckin,
             executeGpsCheckin,
             parseCheckinUrl,

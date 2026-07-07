@@ -1,7 +1,7 @@
 // sw.js — PWA Service Worker
 // 预缓存全部静态资源，cache-first 策略
 
-const CACHE_NAME = "checkin-helper-v1";
+const CACHE_NAME = "checkin-helper-v2";
 
 // 预缓存清单：所有静态资源（不含 API 端点）
 const CACHE_ASSETS = [
@@ -117,6 +117,9 @@ async function _cacheFirst(request) {
 // 请求阶段：按文件类型选择策略
 self.addEventListener("fetch", (event) => {
   const url = event.request.url;
+
+  // 不拦截第三方请求（高德地图、CDN 等跨域资源）
+  if (!url.startsWith(self.location.origin)) return;
 
   // API 请求不缓存
   if (_isApi(url)) return;
