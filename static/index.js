@@ -111,6 +111,14 @@ createApp({
         const checkinForm = reactive({ courseid: "", ticketid: "", expire: "", sign: "" });
         const checkinUrl = ref("");
         const gpsCheckinForm = reactive({ courseid: "", id: "" });
+        const pendingGpsList = ref([]);           // 待签GPS考勤列表
+        const pendingGpsLoading = ref(false);     // 加载中
+        const selectedCourseId = ref("");         // 当前选中的课程ID
+        const selectedAttId = ref("");            // 当前选中的考勤ID
+        const getGpsLoading = ref(false);         // 获取设备GPS中
+        const showManualGpsEntry = ref(false);    // 是否显示手动坐标输入
+        const manualLat = ref("");                // 手动输入纬度
+        const manualLng = ref("");                // 手动输入经度
         // 自动签到
         const autoEnabled = ref(false);
         const autoTypeDigit = ref(true);
@@ -235,6 +243,26 @@ createApp({
 
         const checkinSuccessCount = computed(() => checkinResults.value.filter((r) => r.success).length);
         const gpsCheckinSuccessCount = computed(() => gpsCheckinResults.value.filter((r) => r.success).length);
+
+        const gpsCourseOptions = computed(() => {
+            const seen = new Map();
+            for (const item of pendingGpsList.value) {
+                if (!seen.has(item.course_id)) {
+                    seen.set(item.course_id, {
+                        course_id: item.course_id,
+                        course_name: item.course_name,
+                    });
+                }
+            }
+            return Array.from(seen.values());
+        });
+
+        const gpsAttOptions = computed(() => {
+            if (!selectedCourseId.value) return [];
+            return pendingGpsList.value.filter(
+                (item) => item.course_id === selectedCourseId.value
+            );
+        });
 
         // ---- Toast (MDUI 2 snackbar) ----
         function showToast(msg, delay) {
@@ -505,6 +533,95 @@ createApp({
             } catch (e) {
                 target.checked = !newState; // 回滚 DOM 状态
                 showToast(e.message);
+            }
+        }
+
+        // ---- GPS 定位签到 ----
+
+        async function loadPendingGps() {
+            pendingGpsLoading.value = true;
+            try {
+                const res = await api("GET", "/api/checkin/pending-gps");
+                const items = (res.data || []);
+                pendingGpsList.value = items;
+                if (items.length > 0) {
+                    const firstCourse = items[0].course_id;
+                    selectedCourseId.value = firstCourse;
+                    const courseItems = items.filter(i => i.course_id === firstCourse);
+                    if (courseItems.length > 0) {
+                        selectedAttId.value = courseItems[0].att_id;
+                        gpsCheckinForm.courseid = courseItems[0].course_id;
+                        gpsCheckinForm.id = courseItems[0].att_id;
+                    }
+                }
+            } catch (e) {
+                console.warn("Failed to load pending GPS attendances:", e);
+            } finally {
+                pendingGpsLoading.value = false;
+            }
+        }
+
+        async function executeGpsCheckin() {
+            if (!gpsCheckinForm.courseid || !gpsCheckinForm.id) {
+                showToast("课程 ID 和考勤 ID 为必填项");
+                return;
+            }
+
+            // 尝试获取设备 GPS
+            let lat = manualLat.value;
+            let lng = manualLng.value;
+
+            if (!lat || !lng) {
+                if (!navigator.geolocation) {
+                    showToast("浏览器不支持 GPS 定位，请手动输入坐标");
+                    showManualGpsEntry.value = true;
+                    return;
+                }
+                try {
+                    getGpsLoading.value = true;
+                    const pos = await new Promise((resolve, reject) => {
+                        navigator.geolocation.getCurrentPosition(resolve, reject, {
+                            enableHighAccuracy: true,
+                            timeout: 10000,
+                            maximumAge: 60000,
+                        });
+                    });
+                    lat = pos.coords.latitude.toString();
+                    lng = pos.coords.longitude.toString();
+                    showToast(`已获取位置 (${lat.slice(0, 8)}, ${lng.slice(0, 8)})`);
+                } catch (err) {
+                    console.warn("Geolocation failed:", err);
+                    if (err.code === 1) {
+                        showToast("定位权限被拒绝，请手动输入坐标");
+                    } else if (err.code === 2) {
+                        showToast("无法获取位置，请手动输入坐标");
+                    } else {
+                        showToast("定位超时或失败，请手动输入坐标或重试");
+                    }
+                    showManualGpsEntry.value = true;
+                    getGpsLoading.value = false;
+                    return;
+                }
+            }
+
+            getGpsLoading.value = false;
+            gpsCheckinLoading.value = true;
+            gpsCheckinResults.value = [];
+            try {
+                const body = {
+                    id: gpsCheckinForm.id,
+                    courseid: gpsCheckinForm.courseid,
+                    latitude: lat,
+                    longitude: lng,
+                };
+                const res = await api("POST", "/api/checkin/gps", body);
+                const data = res.data || {};
+                gpsCheckinResults.value = data.results || [];
+                showToast(res.message || `签到完成 (${gpsCheckinSuccessCount.value}/${gpsCheckinResults.value.length})`);
+            } catch (e) {
+                showToast(e.message || "签到失败");
+            } finally {
+                gpsCheckinLoading.value = false;
             }
         }
 
@@ -930,28 +1047,6 @@ createApp({
             }
         }
 
-        async function executeGpsCheckin() {
-            if (!gpsCheckinForm.courseid || !gpsCheckinForm.id) {
-                showToast("课程 ID 和考勤 ID 为必填项");
-                return;
-            }
-            gpsCheckinLoading.value = true;
-            gpsCheckinResults.value = [];
-            try {
-                const res = await api("POST", "/api/checkin/gps", {
-                    id: gpsCheckinForm.id,
-                    courseid: gpsCheckinForm.courseid,
-                });
-                const body = res.data || {};
-                gpsCheckinResults.value = body.results || [];
-                showToast(res.message || `签到失败 (${gpsCheckinSuccessCount.value}/${gpsCheckinResults.value.length})`);
-            } catch (e) {
-                showToast(e.message || "签到失败");
-            } finally {
-                gpsCheckinLoading.value = false;
-            }
-        }
-
         // ---- 自动签到 ----
         async function loadAutoConfig() {
           try {
@@ -1304,7 +1399,7 @@ createApp({
                     await Promise.all([loadAccounts(), loadBindings()]);
                     break;
                 case "checkin":
-                    await Promise.all([loadAccounts(), loadAutoConfig(), loadAutoStatus()]);
+                    await Promise.all([loadAccounts(), loadAutoConfig(), loadAutoStatus(), loadPendingGps()]);
                     break;
                 case "logs":
                     logPage.value = 1;
@@ -1378,6 +1473,17 @@ createApp({
             checkinResults,
             gpsCheckinLoading,
             gpsCheckinResults,
+            pendingGpsList,
+            pendingGpsLoading,
+            selectedCourseId,
+            selectedAttId,
+            getGpsLoading,
+            showManualGpsEntry,
+            manualLat,
+            manualLng,
+            gpsCourseOptions,
+            gpsAttOptions,
+            loadPendingGps,
             pageTitle,
             pageSubtitle,
             stats,

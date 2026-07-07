@@ -5,7 +5,7 @@ from sqlmodel import select
 from app.core.api import QRCheckInRequest, CheckInRequest, CheckInResult
 from app.deps import get_current_user
 from app.core.db import Session, get_session_with
-from app.models import BaseResponse, User, Account, UserAccount, CourseBinding, AutoCheckinConfig
+from app.models import BaseResponse, User, Account, UserAccount, Course, CourseBinding, AutoCheckinConfig
 
 from datetime import datetime, timezone
 from pydantic import BaseModel, field_validator, model_validator
@@ -94,6 +94,26 @@ async def gps_check_in(
     course_id = data.courseid
     if not course_id:
         raise HTTPException(status_code=422, detail="缺少 courseid 参数")
+
+    # ── 缓存前端提交的设备 GPS 坐标 ──
+    if data.latitude and data.longitude:
+        try:
+            import json
+            from app.core.db import get_redis_client
+            r = get_redis_client()
+            if r:
+                GPS_COORDS_CACHE_TTL = 60 * 20  # 20 分钟，与 sessions.py 一致
+                r.set(
+                    f"gps_coords:{data.id}",
+                    json.dumps({"lat": data.latitude, "lng": data.longitude}),
+                    GPS_COORDS_CACHE_TTL,
+                )
+                logger.info(
+                    "Cached device GPS coords for attendance %s (TTL=%ss)",
+                    data.id, GPS_COORDS_CACHE_TTL,
+                )
+        except Exception as e:
+            logger.warning("Failed to cache device GPS coords: %s", e)
 
     accounts = session.exec(
         select(Account)
@@ -307,3 +327,76 @@ async def trigger_auto_checkin(
     logger.info("Auto-checkin trigger user=%s", current_user.id)
     await auto_checkin_watcher.trigger()
     return BaseResponse(message="扫描已触发")
+
+
+@router.get("/api/checkin/pending-gps")
+async def get_pending_gps_attendances(
+    current_user: User = Depends(get_current_user),
+    session: Session = Depends(get_session_with),
+):
+    """返回当前用户所有绑定课程中未完成的 GPS 考勤列表。"""
+    from app.core.sessions import session_pool
+
+    logger.info("Pending GPS attendances request user=%s", current_user.id)
+
+    # 1. 查询用户活跃绑定课程（带课程名）
+    bindings = session.exec(
+        select(CourseBinding, Course.course_name)
+        .join(Course, CourseBinding.course_id == Course.id)
+        .join(UserAccount, CourseBinding.account_id == UserAccount.account_id)
+        .where(
+            CourseBinding.is_active == True,
+            UserAccount.user_id == current_user.id,
+        )
+    ).all()
+
+    # 去重 course_id
+    seen_courses: dict[str, str] = {}
+    for binding, course_name in bindings:
+        if binding.course_id not in seen_courses:
+            seen_courses[binding.course_id] = course_name
+
+    if not seen_courses:
+        return BaseResponse(data=[])
+
+    # 2. 遍历各课程，查询未完成考勤
+    accounts = session.exec(
+        select(Account)
+        .join(UserAccount)
+        .where(UserAccount.user_id == current_user.id)
+    ).all()
+
+    results: list[dict] = []
+    for course_id, course_name in seen_courses.items():
+        attence_list: list[dict] = []
+        for account in accounts:
+            try:
+                client = await session_pool.ensure_client(account.id)
+                if client is None:
+                    continue
+                attence_list = await client.get_not_finish_attence_student(course_id)
+                if attence_list:
+                    break
+            except Exception as e:
+                logger.warning(
+                    "Failed to query attence for course %s via account %s: %s",
+                    course_id, account.id, e,
+                )
+                continue
+
+        for att in attence_list:
+            if att.get("type") != "2":
+                continue
+            results.append({
+                "course_id": course_id,
+                "course_name": course_name,
+                "att_id": att["id"],
+                "title": att.get("title", ""),
+                "createtime": att.get("createtime", 0),
+                "duration": att.get("duration", ""),
+            })
+
+    # 3. 按 createtime 降序排列
+    results.sort(key=lambda x: x["createtime"], reverse=True)
+    logger.info("Pending GPS attendances result user=%s count=%s", current_user.id, len(results))
+    return BaseResponse(data=results)

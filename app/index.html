@@ -336,29 +336,92 @@
                             <div class="checkin-card" style="margin-top:24px;">
                                 <div class="checkin-header">
                                     <h3>📍 位置签到</h3>
-                                    <p>使用考勤 ID 与课程 ID 对绑定该课程的所有账号执行 GPS/数字码签到，坐标将自动获取</p>
+                                    <p>自动搜索未完成的 GPS 考勤，使用设备定位执行签到</p>
                                 </div>
 
                                 <div class="checkin-fields" style="margin-top:14px;">
-                                    <div class="checkin-row">
+                                    <!-- 加载状态 -->
+                                    <div v-if="pendingGpsLoading" style="color:var(--mdui-color-on-surface-variant);padding:8px 0;">
+                                        正在搜索待签到的 GPS 考勤…
+                                    </div>
+
+                                    <!-- 有数据：下拉选择 -->
+                                    <template v-if="!pendingGpsLoading && pendingGpsList.length > 0">
+                                        <div class="checkin-row">
+                                            <div class="field-wrap">
+                                                <label class="field-label">课程</label>
+                                                <select class="field-input"
+                                                    :value="selectedCourseId"
+                                                    @change="selectedCourseId=$event.target.value;
+                                                             const items=pendingGpsList.filter(i=>i.course_id===selectedCourseId);
+                                                             if(items.length){selectedAttId=items[0].att_id;
+                                                               gpsCheckinForm.courseid=items[0].course_id;
+                                                               gpsCheckinForm.id=items[0].att_id;}">
+                                                    <option v-for="c in gpsCourseOptions" :key="c.course_id" :value="c.course_id">
+                                                        {{ c.course_name }}
+                                                    </option>
+                                                </select>
+                                            </div>
+                                            <div class="field-wrap">
+                                                <label class="field-label">考勤记录</label>
+                                                <select class="field-input"
+                                                    :value="selectedAttId"
+                                                    @change="selectedAttId=$event.target.value;
+                                                             const item=pendingGpsList.find(i=>i.att_id===selectedAttId);
+                                                             if(item){gpsCheckinForm.courseid=item.course_id;
+                                                               gpsCheckinForm.id=item.att_id;}">
+                                                    <option v-for="a in gpsAttOptions" :key="a.att_id" :value="a.att_id">
+                                                        {{ a.title }}<template v-if="a.duration">（{{ a.duration }}）</template>
+                                                    </option>
+                                                </select>
+                                            </div>
+                                        </div>
+                                    </template>
+
+                                    <!-- 无数据：提示 + 手动输入入口 -->
+                                    <template v-if="!pendingGpsLoading && pendingGpsList.length === 0">
+                                        <div style="color:var(--mdui-color-on-surface-variant);padding:8px 0;margin-bottom:12px;">
+                                            暂无待签到的 GPS 考勤
+                                        </div>
+                                        <div class="checkin-row">
+                                            <div class="field-wrap">
+                                                <label class="field-label">CourseID<span class="req">*</span></label>
+                                                <input class="field-input" :value="gpsCheckinForm.courseid"
+                                                    @input="gpsCheckinForm.courseid=$event.target.value"
+                                                    placeholder="课程 ID" autocomplete="nope">
+                                            </div>
+                                            <div class="field-wrap">
+                                                <label class="field-label">考勤 ID<span class="req">*</span></label>
+                                                <input class="field-input" :value="gpsCheckinForm.id"
+                                                    @input="gpsCheckinForm.id=$event.target.value"
+                                                    placeholder="考勤记录 ID" autocomplete="nope">
+                                            </div>
+                                        </div>
+                                    </template>
+
+                                    <!-- 手动坐标输入（定位失败时显示） -->
+                                    <div v-if="showManualGpsEntry" class="checkin-row" style="margin-top:8px;">
                                         <div class="field-wrap">
-                                            <label class="field-label">CourseID<span class="req">*</span></label>
-                                            <input class="field-input" :value="gpsCheckinForm.courseid"
-                                                @input="gpsCheckinForm.courseid=$event.target.value"
-                                                placeholder="课程 ID" autocomplete="nope">
+                                            <label class="field-label">纬度</label>
+                                            <input class="field-input" :value="manualLat"
+                                                @input="manualLat=$event.target.value"
+                                                placeholder="如 23.129163" autocomplete="nope">
                                         </div>
                                         <div class="field-wrap">
-                                            <label class="field-label">考勤 ID<span class="req">*</span></label>
-                                            <input class="field-input" :value="gpsCheckinForm.id"
-                                                @input="gpsCheckinForm.id=$event.target.value"
-                                                placeholder="考勤记录 ID" autocomplete="nope">
+                                            <label class="field-label">经度</label>
+                                            <input class="field-input" :value="manualLng"
+                                                @input="manualLng=$event.target.value"
+                                                placeholder="如 113.264435" autocomplete="nope">
                                         </div>
                                     </div>
                                 </div>
 
-                                <mdui-button variant="filled" @click="executeGpsCheckin" :disabled="gpsCheckinLoading"
+                                <mdui-button variant="filled" @click="executeGpsCheckin"
+                                    :disabled="gpsCheckinLoading || getGpsLoading"
                                     class="checkin-btn">
-                                    {{ gpsCheckinLoading ? '签到中…' : '🚀 执行位置签到' }}
+                                    <template v-if="getGpsLoading">定位中…</template>
+                                    <template v-else-if="gpsCheckinLoading">签到中…</template>
+                                    <template v-else>🚀 获取设备GPS并签到</template>
                                 </mdui-button>
 
                                 <div v-if="gpsCheckinResults.length" style="margin-top:24px;">
