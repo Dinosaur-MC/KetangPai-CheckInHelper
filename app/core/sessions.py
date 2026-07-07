@@ -860,20 +860,36 @@ class SessionPool:
             except Exception as e:
                 logger.warning("Failed to pre-fetch fence radius: %s", e)
 
-        # get_attence_location 返回空 → 考勤不存在，提前跳过
+        # 判断考勤是否存在：尝试获取围栏半径（不论经纬度是否已提供）
+        #
+        # 注意：getLocation 返回空不绝对等于考勤不存在——
+        # 学生账号可能无权限查看班级信息（"你没有权限访问该班级的信息"），
+        # 此时 getAttenceBuildingGps 可能已成功返回坐标。
+        # 只有两者都失败时，才判定考勤真的不存在。
+        has_coords = bool(center_lat and center_lng)
         if location_resp is not None and not location_resp:
-            logger.info("Attendance %s location is empty — skipping all accounts", data.id)
-            try:
-                r_early = get_redis_client()
-                if r_early:
-                    r_early.set(f"gps_ended:{data.id}", "1", 3600)
-            except Exception:
-                pass
-            return {aid: CheckInResult(
-                email=self._resolve_client_email(snapshot, aid) or f"account:{aid}",
-                success=False,
-                message="已跳过（该GPS考勤不存在或已删除）",
-            ) for aid in account_ids}
+            if not has_coords:
+                logger.info(
+                    "Attendance %s location is empty AND building GPS unavailable"
+                    " — skipping all accounts (attendance may not exist)",
+                    data.id,
+                )
+                try:
+                    r_early = get_redis_client()
+                    if r_early:
+                        r_early.set(f"gps_ended:{data.id}", "1", 3600)
+                except Exception:
+                    pass
+                return {aid: CheckInResult(
+                    email=self._resolve_client_email(snapshot, aid) or f"account:{aid}",
+                    success=False,
+                    message="已跳过（该GPS考勤不存在或已删除）",
+                ) for aid in account_ids}
+            logger.info(
+                "Attendance %s getLocation returned empty (likely permission denied), "
+                "but building GPS coords are available — continuing with default radius=%sm",
+                data.id, fence_radius,
+            )
 
         async with self.exec_lock:
             results: dict[int, CheckInResult | None] = {}
