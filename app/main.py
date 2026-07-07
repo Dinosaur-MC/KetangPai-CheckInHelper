@@ -234,6 +234,7 @@ from .routers import (
     checkin_router,
     course_router,
     invite_code_router,
+    location_router,
     log_router,
     settings_router,
     user_router,
@@ -244,6 +245,7 @@ app.include_router(auth_router)
 app.include_router(checkin_router)
 app.include_router(course_router)
 app.include_router(invite_code_router)
+app.include_router(location_router)
 app.include_router(log_router)
 app.include_router(settings_router)
 app.include_router(user_router)
