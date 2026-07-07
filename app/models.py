@@ -93,6 +93,22 @@ class CourseBinding(SQLModel, table=True):
     is_active: bool = True
 
 
+class CourseLocation(SQLModel, table=True):
+    """课程+账号的位置坐标记录。"""
+    id: Optional[int] = Field(default=None, primary_key=True)
+    course_id: str = Field(default=None, foreign_key="course.id", index=True)
+    account_id: int = Field(default=None, foreign_key="account.id", index=True)
+    latitude: str = Field(default="")
+    longitude: str = Field(default="")
+    address: str = Field(default="")
+    created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
+    updated_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
+
+    __table_args__ = (
+        UniqueConstraint("course_id", "account_id", name="uq_course_location"),
+    )
+
+
 class CheckInLog(SQLModel, table=True):
     id: Optional[int] = Field(default=None, primary_key=True)
     user_id: int = Field(default=None, foreign_key="user.id")
