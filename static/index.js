@@ -630,8 +630,11 @@ createApp({
             // 先加载地图 SDK（预缓存过，通常 <100ms）
             await loadAmapScript();
 
-            // 后台获取 GPS，不阻塞地图初始化
-            const posPromise = getDevicePosition();
+            // 有已存坐标时不获取 GPS，保持已存位置
+            const hasSavedCoords = locationModal.latitude && locationModal.longitude;
+            const posPromise = hasSavedCoords
+                ? Promise.resolve(null)
+                : getDevicePosition();
 
             try {
                 initMapInstance(container);
@@ -725,13 +728,22 @@ createApp({
 
         async function relocateMap() {
             const pos = await getDevicePosition();
-            if (pos && locationMap && locationMarker) {
-                locationMap.setCenter([parseFloat(pos.lng), parseFloat(pos.lat)]);
+            if (pos && locationMap) {
+                const lng = parseFloat(pos.lng);
+                const lat = parseFloat(pos.lat);
+                locationMap.setCenter([lng, lat]);
                 locationMap.setZoom(16);
-                locationMarker.setPosition([parseFloat(pos.lng), parseFloat(pos.lat)]);
+                if (locationMarker) {
+                    locationMarker.setPosition([lng, lat]);
+                } else {
+                    locationMarker = new AMap.Marker({
+                        position: [lng, lat],
+                        map: locationMap,
+                    });
+                }
                 locationModal.latitude = pos.lat;
                 locationModal.longitude = pos.lng;
-                reverseGeocode([parseFloat(pos.lng), parseFloat(pos.lat)]);
+                reverseGeocode([lng, lat]);
                 showToast("已定位到当前位置");
             } else {
                 showToast("无法获取当前位置");
@@ -753,7 +765,9 @@ createApp({
                 : Array.isArray(lnglat) ? lnglat[0] : (lnglat.lng ?? lnglat.longitude);
             if (!lat || !lng) return;
 
-            fetch(`https://nominatim.openstreetmap.org/reverse?format=json&lat=${lat}&lon=${lng}&zoom=18&accept-language=zh`)
+            fetch(`https://nominatim.openstreetmap.org/reverse?format=json&lat=${lat}&lon=${lng}&zoom=18&accept-language=zh`, {
+                headers: { "User-Agent": "KetangPai-CheckInHelper/1.0" },
+            })
                 .then(r => r.json())
                 .then(data => {
                     if (data?.display_name) {
