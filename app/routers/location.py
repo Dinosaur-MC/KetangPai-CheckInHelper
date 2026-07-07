@@ -1,11 +1,11 @@
 from datetime import datetime, timezone
 from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlmodel import select
-from pydantic import BaseModel
+from pydantic import BaseModel, field_validator
 
 from app.deps import get_current_user
 from app.core.db import Session, get_session_with
-from app.models import BaseResponse, User, Account, Course, CourseLocation, UserAccount
+from app.models import BaseResponse, User, Account, Course, CourseBinding, CourseLocation, UserAccount
 from app.utils import RateLimiter
 
 import logging
@@ -57,6 +57,28 @@ class CourseLocationBody(BaseModel):
     longitude: str
     address: str = ""
 
+    @field_validator("latitude")
+    @classmethod
+    def validate_lat(cls, v):
+        try:
+            f = float(v)
+            if f < -90 or f > 90:
+                raise ValueError
+        except (ValueError, TypeError):
+            raise ValueError("纬度必须在 -90 到 90 之间")
+        return v
+
+    @field_validator("longitude")
+    @classmethod
+    def validate_lng(cls, v):
+        try:
+            f = float(v)
+            if f < -180 or f > 180:
+                raise ValueError
+        except (ValueError, TypeError):
+            raise ValueError("经度必须在 -180 到 180 之间")
+        return v
+
 
 @router.put("/api/course-locations")
 async def upsert_course_location(
@@ -77,6 +99,17 @@ async def upsert_course_location(
     ).first()
     if not account:
         raise HTTPException(status_code=404, detail="账号不存在或不属于当前用户")
+
+    # 验证课程绑定存在
+    binding = session.exec(
+        select(CourseBinding).where(
+            CourseBinding.course_id == body.course_id,
+            CourseBinding.account_id == body.account_id,
+            CourseBinding.is_active == True,
+        )
+    ).first()
+    if not binding:
+        raise HTTPException(status_code=404, detail="该账号未绑定此课程")
 
     loc = session.exec(
         select(CourseLocation).where(
@@ -122,6 +155,18 @@ async def delete_course_location(
     _rate_limit: None = Depends(RateLimiter(times=60, seconds=60)),
 ):
     """删除一条位置记录。"""
+    # 验证账号属于当前用户
+    account = session.exec(
+        select(Account)
+        .join(UserAccount)
+        .where(
+            Account.id == account_id,
+            UserAccount.user_id == current_user.id,
+        )
+    ).first()
+    if not account:
+        raise HTTPException(status_code=404, detail="账号不存在或不属于当前用户")
+
     loc = session.exec(
         select(CourseLocation).where(
             CourseLocation.course_id == course_id,
