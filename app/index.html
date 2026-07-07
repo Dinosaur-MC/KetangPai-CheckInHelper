@@ -352,11 +352,7 @@
                                                 <label class="field-label">课程</label>
                                                 <select class="field-input"
                                                     :value="selectedCourseId"
-                                                    @change="selectedCourseId=$event.target.value;
-                                                             const items=pendingGpsList.filter(i=>i.course_id===selectedCourseId);
-                                                             if(items.length){selectedAttId=items[0].att_id;
-                                                               gpsCheckinForm.courseid=items[0].course_id;
-                                                               gpsCheckinForm.id=items[0].att_id;}">
+                                                    @change="onCourseChange($event.target.value)">
                                                     <option v-for="c in gpsCourseOptions" :key="c.course_id" :value="c.course_id">
                                                         {{ c.course_name }}
                                                     </option>
@@ -366,10 +362,7 @@
                                                 <label class="field-label">考勤记录</label>
                                                 <select class="field-input"
                                                     :value="selectedAttId"
-                                                    @change="selectedAttId=$event.target.value;
-                                                             const item=pendingGpsList.find(i=>i.att_id===selectedAttId);
-                                                             if(item){gpsCheckinForm.courseid=item.course_id;
-                                                               gpsCheckinForm.id=item.att_id;}">
+                                                    @change="onAttChange($event.target.value)">
                                                     <option v-for="a in gpsAttOptions" :key="a.att_id" :value="a.att_id">
                                                         {{ a.title }}<template v-if="a.duration">（{{ a.duration }}）</template>
                                                     </option>

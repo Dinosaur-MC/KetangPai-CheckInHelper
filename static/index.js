@@ -540,6 +540,7 @@ createApp({
 
         async function loadPendingGps() {
             pendingGpsLoading.value = true;
+            showManualGpsEntry.value = false;
             try {
                 const res = await api("GET", "/api/checkin/pending-gps");
                 const items = (res.data || []);
@@ -553,11 +554,37 @@ createApp({
                         gpsCheckinForm.courseid = courseItems[0].course_id;
                         gpsCheckinForm.id = courseItems[0].att_id;
                     }
+                } else {
+                    // 空列表时清空选择状态
+                    selectedCourseId.value = "";
+                    selectedAttId.value = "";
+                    gpsCheckinForm.courseid = "";
+                    gpsCheckinForm.id = "";
                 }
             } catch (e) {
                 console.warn("Failed to load pending GPS attendances:", e);
+                showToast(e.message || "加载待签到GPS考勤失败");
             } finally {
                 pendingGpsLoading.value = false;
+            }
+        }
+
+        function onCourseChange(courseId) {
+            selectedCourseId.value = courseId;
+            const items = pendingGpsList.value.filter(i => i.course_id === courseId);
+            if (items.length > 0) {
+                selectedAttId.value = items[0].att_id;
+                gpsCheckinForm.courseid = items[0].course_id;
+                gpsCheckinForm.id = items[0].att_id;
+            }
+        }
+
+        function onAttChange(attId) {
+            selectedAttId.value = attId;
+            const item = pendingGpsList.value.find(i => i.att_id === attId);
+            if (item) {
+                gpsCheckinForm.courseid = item.course_id;
+                gpsCheckinForm.id = item.att_id;
             }
         }
 
@@ -568,10 +595,16 @@ createApp({
             }
 
             // 尝试获取设备 GPS
-            let lat = manualLat.value;
-            let lng = manualLng.value;
+            let lat = manualLat.value.trim();
+            let lng = manualLng.value.trim();
 
-            if (!lat || !lng) {
+            if (lat && lng) {
+                // 验证手动坐标格式
+                if (isNaN(parseFloat(lat)) || isNaN(parseFloat(lng))) {
+                    showToast("坐标格式无效，请输入数字");
+                    return;
+                }
+            } else {
                 if (!navigator.geolocation) {
                     showToast("浏览器不支持 GPS 定位，请手动输入坐标");
                     showManualGpsEntry.value = true;
@@ -588,6 +621,10 @@ createApp({
                     });
                     lat = pos.coords.latitude.toString();
                     lng = pos.coords.longitude.toString();
+                    // 清除之前的手动坐标，下次自动用 GPS
+                    manualLat.value = "";
+                    manualLng.value = "";
+                    showManualGpsEntry.value = false;
                     showToast(`已获取位置 (${lat.slice(0, 8)}, ${lng.slice(0, 8)})`);
                 } catch (err) {
                     console.warn("Geolocation failed:", err);
@@ -1484,6 +1521,8 @@ createApp({
             gpsCourseOptions,
             gpsAttOptions,
             loadPendingGps,
+            onCourseChange,
+            onAttChange,
             pageTitle,
             pageSubtitle,
             stats,

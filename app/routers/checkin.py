@@ -98,11 +98,10 @@ async def gps_check_in(
     # ── 缓存前端提交的设备 GPS 坐标 ──
     if data.latitude and data.longitude:
         try:
-            import json
             from app.core.db import get_redis_client
+            from app.core.sessions import GPS_COORDS_CACHE_TTL
             r = get_redis_client()
             if r:
-                GPS_COORDS_CACHE_TTL = 60 * 20  # 20 分钟，与 sessions.py 一致
                 r.set(
                     f"gps_coords:{data.id}",
                     json.dumps({"lat": data.latitude, "lng": data.longitude}),
@@ -333,6 +332,7 @@ async def trigger_auto_checkin(
 async def get_pending_gps_attendances(
     current_user: User = Depends(get_current_user),
     session: Session = Depends(get_session_with),
+    _rate_limit: None = Depends(RateLimiter(times=30, seconds=60)),
 ):
     """返回当前用户所有绑定课程中未完成的 GPS 考勤列表。"""
     from app.core.sessions import session_pool
@@ -390,13 +390,13 @@ async def get_pending_gps_attendances(
             results.append({
                 "course_id": course_id,
                 "course_name": course_name,
-                "att_id": att["id"],
+                "att_id": att.get("id", ""),
                 "title": att.get("title", ""),
                 "createtime": att.get("createtime", 0),
                 "duration": att.get("duration", ""),
             })
 
     # 3. 按 createtime 降序排列
-    results.sort(key=lambda x: x["createtime"], reverse=True)
+    results.sort(key=lambda x: int(x["createtime"]) if x["createtime"] else 0, reverse=True)
     logger.info("Pending GPS attendances result user=%s count=%s", current_user.id, len(results))
     return BaseResponse(data=results)
