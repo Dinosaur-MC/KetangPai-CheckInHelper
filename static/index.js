@@ -644,57 +644,12 @@ createApp({
                     locationMarker.setPosition([parseFloat(pos.lng), parseFloat(pos.lat)]);
                     locationModal.latitude = pos.lat;
                     locationModal.longitude = pos.lng;
+                    reverseGeocode([parseFloat(pos.lng), parseFloat(pos.lat)]);
                 }
             } catch (e) {
                 console.warn("AMap init failed:", e);
                 showToast("地图加载失败，请手动输入坐标");
                 showManualCoordsInput();
-            }
-        }
-
-        function initMapInstance(container) {
-            try {
-                const lat = parseFloat(locationModal.latitude) || 23.129;
-                const lng = parseFloat(locationModal.longitude) || 113.264;
-
-                locationMap = new AMap.Map(container, {
-                    zoom: 16,
-                    center: [lng, lat],
-                });
-
-                locationMarker = new AMap.Marker({
-                    position: [lng, lat],
-                    map: locationMap,
-                });
-
-                // 使用 HTML 模板中的 <mdui-fab> 悬浮定位按钮，方法在 relocateMap
-
-                // 高德定位仅用于反向地理编码
-                locationMap.plugin("AMap.Geolocation", () => {
-                    const geolocation = new AMap.Geolocation({});
-                    geolocation.getCurrentPosition((status, result) => {
-                        if (status === "complete") {
-                            deviceLat = result.position.getLat().toFixed(6);
-                            deviceLng = result.position.getLng().toFixed(6);
-                            reverseGeocode(result.position);
-                        }
-                    });
-                });
-
-                locationMap.on("click", (e) => {
-                    const lnglat = e.lnglat;
-                    locationMarker.setPosition(lnglat);
-                    locationModal.latitude = lnglat.getLat().toFixed(6);
-                    locationModal.longitude = lnglat.getLng().toFixed(6);
-                    reverseGeocode(lnglat);
-                });
-
-                locationMap.on("error", () => {
-                    showToast("地图瓦片加载失败，请检查 API Key");
-                });
-            } catch (e) {
-                console.warn("AMap init failed:", e);
-                showToast("地图加载失败，请手动输入坐标");
             }
         }
 
@@ -716,14 +671,15 @@ createApp({
                     });
                 }
 
-                // 自动定位到当前位置
-                locationMap.plugin("AMap.Geolocation", () => {
-                    const geolocation = new AMap.Geolocation({
-                        enableHighAccuracy: true,
-                        timeout: 10000,
-                    });
-                    geolocation.getCurrentPosition((status, result) => {
-                        if (status === "complete" && !hasSavedCoords) {
+                // 自动定位到当前位置（已有保存坐标时跳过）
+                if (!hasSavedCoords) {
+                    locationMap.plugin("AMap.Geolocation", () => {
+                        const geolocation = new AMap.Geolocation({
+                            enableHighAccuracy: true,
+                            timeout: 10000,
+                        });
+                        geolocation.getCurrentPosition((status, result) => {
+                            if (status === "complete") {
                             const pos = [result.position.getLng(), result.position.getLat()];
                             locationMap.setCenter(pos);
                             locationMap.setZoom(16);
@@ -741,6 +697,7 @@ createApp({
                         }
                     });
                 });
+                }
 
                 locationMap.on("click", (e) => {
                     const lnglat = e.lnglat;
@@ -774,21 +731,36 @@ createApp({
                 locationMarker.setPosition([parseFloat(pos.lng), parseFloat(pos.lat)]);
                 locationModal.latitude = pos.lat;
                 locationModal.longitude = pos.lng;
+                reverseGeocode([parseFloat(pos.lng), parseFloat(pos.lat)]);
                 showToast("已定位到当前位置");
             } else {
                 showToast("无法获取当前位置");
             }
         }
 
+        let _geoDebounce = 0;
+
         function reverseGeocode(lnglat) {
-            if (typeof AMap.Geocoder !== "undefined") {
-                const geocoder = new AMap.Geocoder({});
-                geocoder.getAddress(lnglat, (status, result) => {
-                    if (status === "complete" && result.info === "OK") {
-                        locationModal.address = result.regeocode.formattedAddress || "";
+            // Nominatim 限制 1 req/s，防抖 1.2s
+            const now = Date.now();
+            if (now - _geoDebounce < 1200) return;
+            _geoDebounce = now;
+
+            // 兼容 AMap.LngLat、[lng, lat] 数组、{lng, lat} 对象
+            const lat = typeof lnglat.getLat === "function" ? lnglat.getLat()
+                : Array.isArray(lnglat) ? lnglat[1] : (lnglat.lat ?? lnglat.latitude);
+            const lng = typeof lnglat.getLng === "function" ? lnglat.getLng()
+                : Array.isArray(lnglat) ? lnglat[0] : (lnglat.lng ?? lnglat.longitude);
+            if (!lat || !lng) return;
+
+            fetch(`https://nominatim.openstreetmap.org/reverse?format=json&lat=${lat}&lon=${lng}&zoom=18&accept-language=zh`)
+                .then(r => r.json())
+                .then(data => {
+                    if (data?.display_name) {
+                        locationModal.address = data.display_name;
                     }
-                });
-            }
+                })
+                .catch(e => console.warn("Nominatim reverse geocode failed:", e));
         }
 
         function showManualCoordsInput() {
