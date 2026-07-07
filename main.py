@@ -2,7 +2,10 @@ from app.core.settings import settings
 
 import logging
 
-logging.basicConfig(level=logging.INFO)
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(asctime)s | %(name)s\t[%(levelname)s] %(message)s",
+)
 logger = logging.getLogger(__name__)
 
 if __name__ == "__main__":

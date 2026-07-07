@@ -53,6 +53,7 @@ async def lifespan(app: FastAPI):
             try:
                 from app.core.log_cleanup import run_cleanup
                 from app.core.db import get_session
+
                 with get_session() as session:
                     run_cleanup(
                         session,
@@ -118,13 +119,8 @@ if static_dir.exists():
 
 @app.exception_handler(HTTPException)
 async def http_exception_handler(request: Request, exc: HTTPException):
-    # 404 是浏览器正常探针请求（如 /.well-known/ 等），快速返回不记录堆栈
-    if exc.status_code == 404:
-        return JSONResponse(
-            status_code=404,
-            content=ErrorResponse(code=404, message="Not Found").model_dump(exclude_none=True),
-        )
-    logger.error("HTTP 异常：%s", exc, exc_info=True)
+    if exc.status_code >= 500:
+        logger.error("HTTP 异常：%s", exc, exc_info=True)
     return JSONResponse(
         status_code=exc.status_code,
         content=ErrorResponse(
@@ -179,7 +175,10 @@ async def web_manifest():
     path = Path(__file__).parent.parent / "manifest.json"
     return FileResponse(
         path,
-        headers={"Content-Type": "application/manifest+json", "Cache-Control": "public, max-age=3600"},
+        headers={
+            "Content-Type": "application/manifest+json",
+            "Cache-Control": "public, max-age=3600",
+        },
     )
 
 
