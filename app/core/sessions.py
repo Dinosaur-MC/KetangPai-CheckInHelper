@@ -828,11 +828,18 @@ class SessionPool:
             if first_client is not None:
                 try:
                     gps_resp = await first_client.get_attence_building_gps(data.id)
+                    if not gps_resp:
+                        logger.debug("getAttenceBuildingGps returned empty for %s", data.id)
                     lat, lng = _extract_gps(gps_resp)
                     if lat is not None:
                         center_lat = lat
                     if lng is not None:
                         center_lng = lng
+                    if not center_lat or not center_lng:
+                        logger.debug(
+                            "getAttenceBuildingGps data=%s _extract_gps=(%r, %r)",
+                            gps_resp, lat, lng,
+                        )
                     # 写入 Redis 缓存
                     if center_lat and center_lng:
                         try:
