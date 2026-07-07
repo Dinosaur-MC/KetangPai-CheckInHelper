@@ -227,6 +227,9 @@ POST /AttenceApi/getLocation
 | `lng` / `longitude`          | string | 中心点经度     |
 | `radius` / `range` / `scope` | int    | 围栏半径（米） |
 
+> **⚠️ 限制：** 学生账号调用此接口会返回 `"你没有权限访问该班级的信息"`（status != 1）。
+> 该接口仅教师/管理员账号可用。学生端 GPS 签到不需要调用此接口。
+
 ### 3.7 获取二维码签到结果
 
 ```
