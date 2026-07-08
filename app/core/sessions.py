@@ -1,7 +1,15 @@
 import asyncio
 import time
+import json
 from sqlmodel import Session, select
-from app.core.api import QRCheckInRequest, CheckInRequest, KetangPaiAPI, CheckInResult, is_position_error, _extract_gps
+from app.core.api import (
+    QRCheckInRequest,
+    CheckInRequest,
+    KetangPaiAPI,
+    CheckInResult,
+    is_position_error,
+    _extract_gps,
+)
 from app.core.db import get_session, get_redis_client
 from app.models import Account, CheckInLog
 from app.core.security import decrypt_credential
@@ -45,7 +53,9 @@ class SessionPool:
         now = time.time()
         async with self.lock:
             expired_ids = [
-                aid for aid, (_, ts) in list(self.clients.items()) if now - ts > SESSION_TTL
+                aid
+                for aid, (_, ts) in list(self.clients.items())
+                if now - ts > SESSION_TTL
             ]
             expired_clients = []
             for aid in expired_ids:
@@ -238,7 +248,8 @@ class SessionPool:
         return result[account_ids] if single else result
 
     async def get_course_list(
-        self, account_ids: int | list[int],
+        self,
+        account_ids: int | list[int],
         semester: str = "",
         term: str = "",
         search: str = "",
@@ -262,7 +273,9 @@ class SessionPool:
                 continue
             try:
                 items = await client.get_course_list(
-                    semester=semester, term=term, search=search,
+                    semester=semester,
+                    term=term,
+                    search=search,
                 )
                 result[aid] = [item.model_dump() for item in items]
             except Exception as e:
@@ -699,7 +712,9 @@ class SessionPool:
                         logger.info(
                             "Cached invalid_key from _checkin_one_ensure: "
                             "course=%s ticket=%s code=%s",
-                            data.courseid, data.ticketid, result.code,
+                            data.courseid,
+                            data.ticketid,
+                            result.code,
                         )
                     except Exception:
                         pass
@@ -801,15 +816,20 @@ class SessionPool:
             except Exception:
                 pass
             if cached:
-                import json
                 try:
-                    parsed = json.loads(cached if isinstance(cached, str) else cached.decode())
+                    parsed = json.loads(
+                        cached if isinstance(cached, str) else cached.decode()
+                    )
                     if isinstance(parsed, dict):
                         center_lat = parsed.get("lat", "") or parsed.get("latitude", "")
-                        center_lng = parsed.get("lng", "") or parsed.get("longitude", "")
+                        center_lng = parsed.get("lng", "") or parsed.get(
+                            "longitude", ""
+                        )
                         logger.info(
                             "Using cached GPS coords for attendance %s: %s, %s",
-                            data.id, center_lat, center_lng,
+                            data.id,
+                            center_lat,
+                            center_lng,
                         )
                 except Exception:
                     pass
@@ -836,7 +856,6 @@ class SessionPool:
                     # 写入 Redis 缓存
                     if center_lat and center_lng:
                         try:
-                            import json
                             get_redis_client().set(
                                 f"gps_coords:{data.id}",
                                 json.dumps({"lat": center_lat, "lng": center_lng}),
@@ -844,7 +863,8 @@ class SessionPool:
                             )
                             logger.info(
                                 "Cached GPS coords for attendance %s (TTL=%ss)",
-                                data.id, GPS_COORDS_CACHE_TTL,
+                                data.id,
+                                GPS_COORDS_CACHE_TTL,
                             )
                         except Exception:
                             pass
@@ -869,7 +889,9 @@ class SessionPool:
                             center_lng = cloc.longitude
                             logger.info(
                                 "Using CourseLocation for attendance %s: %s, %s",
-                                data.id, center_lat, center_lng,
+                                data.id,
+                                center_lat,
+                                center_lng,
                             )
                 except Exception as e:
                     logger.warning("Failed to query CourseLocation: %s", e)
@@ -883,7 +905,10 @@ class SessionPool:
                 ended_key = f"gps_ended:{data.id}"
                 try:
                     if r and r.get(ended_key):
-                        logger.info("Attendance %s is cached as ended — skipping all accounts", data.id)
+                        logger.info(
+                            "Attendance %s is cached as ended — skipping all accounts",
+                            data.id,
+                        )
                         skip_results = {}
                         for aid in account_ids:
                             email = self._resolve_client_email(snapshot, aid)
@@ -937,7 +962,9 @@ class SessionPool:
                     except Exception as e:
                         logger.error("Failed to commit: %s", e)
                         db.rollback()
-                    succeeded = sum(1 for r in results.values() if r is not None and r.success)
+                    succeeded = sum(
+                        1 for r in results.values() if r is not None and r.success
+                    )
                     logger.info(
                         "GPS check-in completed for user=%s: %s/%s succeeded",
                         user_id,
@@ -951,9 +978,15 @@ class SessionPool:
                 if canary is None:
                     # 快照中无可用会话，逐个按需创建
                     gps_results = await self._gps_checkin_all_ensure(
-                        snapshot, db, r, user_id, dedup_filtered, data,
+                        snapshot,
+                        db,
+                        r,
+                        user_id,
+                        dedup_filtered,
+                        data,
                         client_ip=client_ip,
-                        center_lat=center_lat, center_lng=center_lng,
+                        center_lat=center_lat,
+                        center_lng=center_lng,
                         fence_radius=fence_radius,
                     )
                     results.update(gps_results)
@@ -962,7 +995,9 @@ class SessionPool:
                     except Exception as e:
                         logger.error("Failed to commit: %s", e)
                         db.rollback()
-                    succeeded = sum(1 for r in results.values() if r is not None and r.success)
+                    succeeded = sum(
+                        1 for r in results.values() if r is not None and r.success
+                    )
                     logger.info(
                         "GPS check-in completed for user=%s: %s/%s succeeded",
                         user_id,
@@ -1017,7 +1052,15 @@ class SessionPool:
                     except Exception:
                         pass
 
-                self._record(db, r, user_id, canary_aid, data.courseid, canary_client, canary_result)
+                self._record(
+                    db,
+                    r,
+                    user_id,
+                    canary_aid,
+                    data.courseid,
+                    canary_client,
+                    canary_result,
+                )
                 await self._touch(canary_aid)
                 results[canary_aid] = canary_result
 
@@ -1033,7 +1076,10 @@ class SessionPool:
                     if canary_result.code == 30322:
                         try:
                             r.set(f"gps_ended:{data.id}", "1", 3600)
-                            logger.info("Cached ended state for attendance %s (TTL=3600s)", data.id)
+                            logger.info(
+                                "Cached ended state for attendance %s (TTL=3600s)",
+                                data.id,
+                            )
                         except Exception:
                             pass
 
@@ -1047,7 +1093,9 @@ class SessionPool:
                             success=False,
                             message=f"已跳过（{canary_result.message}）",
                         )
-                        self._record(db, r, user_id, aid, data.courseid, skip_email, results[aid])
+                        self._record(
+                            db, r, user_id, aid, data.courseid, skip_email, results[aid]
+                        )
 
                     try:
                         db.commit()
@@ -1061,7 +1109,9 @@ class SessionPool:
                         0,
                         len(dedup_filtered) - 1,
                     )
-                    succeeded = sum(1 for r in results.values() if r is not None and r.success)
+                    succeeded = sum(
+                        1 for r in results.values() if r is not None and r.success
+                    )
                     logger.info(
                         "GPS check-in completed for user=%s: %s/%s succeeded",
                         user_id,
@@ -1076,8 +1126,15 @@ class SessionPool:
                     tasks = [
                         asyncio.create_task(
                             self._gps_checkin_one(
-                                snapshot, db, r, user_id, aid, data, client_ip=client_ip,
-                                center_lat=center_lat, center_lng=center_lng,
+                                snapshot,
+                                db,
+                                r,
+                                user_id,
+                                aid,
+                                data,
+                                client_ip=client_ip,
+                                center_lat=center_lat,
+                                center_lng=center_lng,
                                 fence_radius=fence_radius,
                             )
                         )
@@ -1123,8 +1180,15 @@ class SessionPool:
         tasks = [
             asyncio.create_task(
                 self._gps_checkin_one(
-                    snapshot, db, r, user_id, aid, data, client_ip=client_ip,
-                    center_lat=center_lat, center_lng=center_lng,
+                    snapshot,
+                    db,
+                    r,
+                    user_id,
+                    aid,
+                    data,
+                    client_ip=client_ip,
+                    center_lat=center_lat,
+                    center_lng=center_lng,
                     fence_radius=fence_radius,
                 )
             )
@@ -1224,7 +1288,8 @@ class SessionPool:
                 if r and r.get(f"gps_ended:{data.id}"):
                     logger.info(
                         "Attendance %s ended while queuing — skipping account %s",
-                        data.id, account_id,
+                        data.id,
+                        account_id,
                     )
                     return (
                         account_id,
@@ -1276,7 +1341,9 @@ class SessionPool:
             if not result.success and result.code == 30322:
                 try:
                     r.set(f"gps_ended:{data.id}", "1", 3600)
-                    logger.info("Cached ended state for attendance %s (TTL=3600s)", data.id)
+                    logger.info(
+                        "Cached ended state for attendance %s (TTL=3600s)", data.id
+                    )
                 except Exception:
                     pass
 
@@ -1370,18 +1437,9 @@ import math
 import random
 
 
-def _extract_radius(resp: dict, default: int = 100) -> int:
-    """从考勤位置 API 响应（已解包的 data 层）中提取围栏半径（米）。"""
-    for key in ("radius", "range", "scope", "distance"):
-        if key in resp:
-            try:
-                return int(resp[key])
-            except (ValueError, TypeError):
-                pass
-    return default
-
-
-def _jitter_coordinates(lat: float, lng: float, radius_meters: int) -> tuple[float, float]:
+def _jitter_coordinates(
+    lat: float, lng: float, radius_meters: int
+) -> tuple[float, float]:
     """在围栏范围内随机抖动，最大偏移为中心到围栏边界的 60%。
 
     多个账号使用相同中心点时，每个账号得到独立抖动的坐标，

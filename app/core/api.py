@@ -219,7 +219,6 @@ class KetangPaiAPI:
     :function gps_check_in: GPS / 数字码签到接口
     :function check_in_with_url: 通过 URL 解析参数执行 QR 签到
     :function get_attence_building_gps: 获取考勤建筑 GPS 坐标
-    :function get_attence_location: 获取考勤位置配置
     :function get_not_finish_attence_student: 获取课程未完成签到列表
     :function get_digit_attence: 获取数字考勤码
     """
@@ -326,23 +325,6 @@ class KetangPaiAPI:
             logger.warning("Failed to get building GPS for %s: %s", attenceid, e)
             return {}
 
-    async def get_attence_location(self, attenceid: str) -> dict:
-        """获取考勤位置配置。"""
-        try:
-            resp = await self._client.post(
-                f"{API_BASE}/AttenceApi/getLocation",
-                json={"attenceid": attenceid},
-            )
-            resp.raise_for_status()
-            j = resp.json()
-            if j.get("status") == 1:
-                return j.get("data", {})
-            logger.warning("getLocation status!=1 for %s: %s", attenceid, j.get("message"))
-            return {}
-        except httpx.HTTPError as e:
-            logger.warning("Failed to get location for %s: %s", attenceid, e)
-            return {}
-
     async def get_not_finish_attence_student(self, courseid: str) -> list[dict]:
         """获取课程未完成的签到列表。"""
         try:
@@ -435,27 +417,16 @@ class KetangPaiAPI:
 
     async def gps_check_in(self, data: CheckInRequest, client_ip: str = "") -> CheckInResult:
         """GPS / 数字码签到接口（异步）。
-
-        当 latitude / longitude 为空时，自动获取建筑 GPS 坐标填充。
         """
         latitude = data.latitude
         longitude = data.longitude
 
         if not latitude or not longitude:
-            gps_resp = await self.get_attence_building_gps(data.id)
-            lat, lng = _extract_gps(gps_resp)
-            if lat is not None:
-                latitude = lat
-            if lng is not None:
-                longitude = lng
-
-            if not latitude or not longitude:
-                loc_resp = await self.get_attence_location(data.id)
-                loc_lat, loc_lng = _extract_gps(loc_resp)
-                if loc_lat is not None:
-                    latitude = latitude or loc_lat
-                if loc_lng is not None:
-                    longitude = longitude or loc_lng
+            return CheckInResult(
+                email=self.email,
+                success=False,
+                message="GPS 坐标为空",
+            )
 
         body = {
             "id": data.id,

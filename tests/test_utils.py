@@ -11,7 +11,6 @@ from starlette.exceptions import HTTPException
 from app.core.sessions import (
     SessionPool,
     _jitter_coordinates,
-    _extract_radius,
 )
 from app.core.watcher import _in_time_windows
 from app.utils import RateLimiter, get_client_ip, paginate
@@ -163,42 +162,6 @@ class TestPaginate:
         """page < 1 gets coerced to 1, page_size < 1 gets DEFAULT_PAGE_SIZE."""
         # These are integration-level tests that require a real session+engine
         pass
-
-
-# ===========================================================================
-# _extract_radius
-# ===========================================================================
-
-
-class TestExtractRadius:
-    def test_radius_key(self):
-        assert _extract_radius({"radius": "200"}) == 200
-
-    def test_range_key(self):
-        assert _extract_radius({"range": "150"}) == 150
-
-    def test_scope_key(self):
-        assert _extract_radius({"scope": "300"}) == 300
-
-    def test_distance_key(self):
-        assert _extract_radius({"distance": "50"}) == 50
-
-    def test_key_order_priority(self):
-        """radius has top priority."""
-        assert _extract_radius({"radius": "100", "range": "200"}) == 100
-
-    def test_missing_returns_default(self):
-        assert _extract_radius({"other": "value"}) == 100
-
-    def test_invalid_value_returns_default(self):
-        assert _extract_radius({"radius": "not-a-number"}) == 100
-
-    def test_int_value(self):
-        assert _extract_radius({"radius": 250}) == 250
-
-    def test_custom_default(self):
-        assert _extract_radius({}, default=500) == 500
-
 
 # ===========================================================================
 # _jitter_coordinates

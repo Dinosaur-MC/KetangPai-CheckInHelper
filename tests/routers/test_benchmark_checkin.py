@@ -199,7 +199,6 @@ def _mock_ketangpai_api(monkeypatch: pytest.MonkeyPatch):
     monkeypatch.setattr(api_module.KetangPaiAPI, "get_not_finish_attence_student", AsyncMock(return_value=[]))
     monkeypatch.setattr(api_module.KetangPaiAPI, "get_digit_attence", AsyncMock(return_value=""))
     monkeypatch.setattr(api_module.KetangPaiAPI, "get_attence_building_gps", AsyncMock(return_value={}))
-    monkeypatch.setattr(api_module.KetangPaiAPI, "get_attence_location", AsyncMock(return_value={}))
 
     yield
 
