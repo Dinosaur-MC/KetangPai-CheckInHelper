@@ -36,6 +36,9 @@ class Settings(BaseSettings):
     db_backup_dir: str = "./backups"
     db_backup_retention_days: int = 30
 
+    # ── Auto check-in ──
+    auto_checkin_max_window_span: int = 3
+
     # ── Log cleanup ──
     log_retention_days: int = 90
     log_max_per_account: int = 500

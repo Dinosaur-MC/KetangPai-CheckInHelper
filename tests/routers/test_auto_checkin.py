@@ -54,7 +54,7 @@ class TestPutAutoCheckinConfig:
     def test_enable(self, client: TestClient, user_token):
         resp = client.put(
             self.URL,
-            json={"enabled": True, "checkin_types": "1", "time_windows": [{"start": 8, "end": 22}]},
+            json={"enabled": True, "checkin_types": "1", "time_windows": [{"start": 8, "end": 11}]},
             headers=_h(user_token),
         )
         assert resp.status_code == 200
@@ -66,7 +66,7 @@ class TestPutAutoCheckinConfig:
         # 先启用
         client.put(
             self.URL,
-            json={"enabled": True, "checkin_types": "1,2", "time_windows": [{"start": 8, "end": 22}]},
+            json={"enabled": True, "checkin_types": "1,2", "time_windows": [{"start": 8, "end": 11}]},
             headers=_h(user_token),
         )
         # 再禁用
@@ -79,7 +79,7 @@ class TestPutAutoCheckinConfig:
         assert resp.json()["data"]["enabled"] is False
 
     def test_multiple_time_windows(self, client: TestClient, user_token):
-        windows = [{"start": 8, "end": 12}, {"start": 14, "end": 18}]
+        windows = [{"start": 8, "end": 11}, {"start": 14, "end": 17}]
         resp = client.put(
             self.URL,
             json={"enabled": True, "checkin_types": "1,2", "time_windows": windows},
@@ -95,7 +95,7 @@ class TestPutAutoCheckinConfig:
             json={
                 "enabled": True,
                 "checkin_types": "1,2",
-                "time_windows": [{"start": 8, "end": 12}, {"start": 8, "end": 12}],
+                "time_windows": [{"start": 8, "end": 11}, {"start": 8, "end": 11}],
             },
             headers=_h(user_token),
         )
@@ -106,7 +106,7 @@ class TestPutAutoCheckinConfig:
         """无效签到类型应拒绝。"""
         resp = client.put(
             self.URL,
-            json={"enabled": True, "checkin_types": "3", "time_windows": [{"start": 8, "end": 22}]},
+            json={"enabled": True, "checkin_types": "3", "time_windows": [{"start": 8, "end": 11}]},
             headers=_h(user_token),
         )
         assert resp.status_code == 422
@@ -134,7 +134,7 @@ class TestPutAutoCheckinConfig:
         """签到类型去重排序。"""
         resp = client.put(
             self.URL,
-            json={"enabled": True, "checkin_types": "2,1,2", "time_windows": [{"start": 8, "end": 22}]},
+            json={"enabled": True, "checkin_types": "2,1,2", "time_windows": [{"start": 8, "end": 11}]},
             headers=_h(user_token),
         )
         assert resp.status_code == 200
@@ -144,7 +144,7 @@ class TestPutAutoCheckinConfig:
         """配置修改后在 GET 中保持一致。"""
         client.put(
             self.URL,
-            json={"enabled": True, "checkin_types": "1", "time_windows": [{"start": 9, "end": 17}]},
+            json={"enabled": True, "checkin_types": "1", "time_windows": [{"start": 9, "end": 11}]},
             headers=_h(user_token),
         )
         resp = client.get(self.URL, headers=_h(user_token))
@@ -152,15 +152,51 @@ class TestPutAutoCheckinConfig:
         d = resp.json()["data"]
         assert d["enabled"] is True
         assert d["checkin_types"] == "1"
-        assert d["time_windows"] == [{"start": 9, "end": 17}]
+        assert d["time_windows"] == [{"start": 9, "end": 11}]
 
     def test_requires_auth(self, client: TestClient):
         client.cookies.clear()
         resp = client.put(
             self.URL,
-            json={"enabled": True, "checkin_types": "1", "time_windows": [{"start": 8, "end": 22}]},
+            json={"enabled": True, "checkin_types": "1", "time_windows": [{"start": 8, "end": 11}]},
         )
         assert resp.status_code == 401
+
+    def test_window_span_exceeds_default_limit(self, client: TestClient, user_token):
+        """超过默认最大跨度（3h）应拒绝。"""
+        resp = client.put(
+            self.URL,
+            json={"enabled": True, "checkin_types": "1", "time_windows": [{"start": 8, "end": 12}]},
+            headers=_h(user_token),
+        )
+        assert resp.status_code == 422
+
+    def test_window_span_within_limit(self, client: TestClient, user_token):
+        """3h 跨度为合法边界。"""
+        resp = client.put(
+            self.URL,
+            json={"enabled": True, "checkin_types": "1", "time_windows": [{"start": 8, "end": 11}]},
+            headers=_h(user_token),
+        )
+        assert resp.status_code == 200
+
+    def test_window_span_exactly_3h(self, client: TestClient, user_token):
+        """恰好 3 小时应合法。"""
+        resp = client.put(
+            self.URL,
+            json={"enabled": True, "checkin_types": "1", "time_windows": [{"start": 9, "end": 12}]},
+            headers=_h(user_token),
+        )
+        assert resp.status_code == 200
+
+    def test_window_span_1h(self, client: TestClient, user_token):
+        """1 小时窗口应合法。"""
+        resp = client.put(
+            self.URL,
+            json={"enabled": True, "checkin_types": "1", "time_windows": [{"start": 10, "end": 11}]},
+            headers=_h(user_token),
+        )
+        assert resp.status_code == 200
 
 
 # ===========================================================================
@@ -191,7 +227,7 @@ class TestAutoCheckinStatus:
         """启用 + 配置时段 → user_active=True。"""
         client.put(
             "/api/auto-checkin/config",
-            json={"enabled": True, "checkin_types": "1", "time_windows": [{"start": 0, "end": 23}]},
+            json={"enabled": True, "checkin_types": "1", "time_windows": [{"start": 0, "end": 3}]},
             headers=_h(user_token),
         )
         resp = client.get(self.URL, headers=_h(user_token))
@@ -216,7 +252,7 @@ class TestAutoCheckinTrigger:
         """启用后触发应返回成功。"""
         client.put(
             "/api/auto-checkin/config",
-            json={"enabled": True, "checkin_types": "1", "time_windows": [{"start": 0, "end": 23}]},
+            json={"enabled": True, "checkin_types": "1", "time_windows": [{"start": 0, "end": 3}]},
             headers=_h(user_token),
         )
         resp = client.post(self.URL, headers=_h(user_token))

@@ -3,6 +3,7 @@ from fastapi import APIRouter, Depends, Request
 from sqlmodel import select
 
 from app.core.api import QRCheckInRequest, CheckInRequest, CheckInResult
+from app.core.settings import settings
 from app.deps import get_current_user
 from app.core.db import Session, get_session_with
 from app.models import BaseResponse, User, Account, UserAccount, Course, CourseBinding, AutoCheckinConfig
@@ -176,6 +177,9 @@ class TimeWindow(BaseModel):
     def start_before_end(self):
         if self.start >= self.end:
             raise ValueError("start 必须小于 end")
+        max_span = settings.auto_checkin_max_window_span
+        if max_span > 0 and self.end - self.start > max_span:
+            raise ValueError(f"每个时段跨度不能超过 {max_span} 小时")
         return self
 
 
