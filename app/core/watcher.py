@@ -194,7 +194,7 @@ class AutoCheckinWatcher:
                 break
 
             # 根据所有用户的 time_windows 智能计算下次唤醒时间
-            sleep_seconds = await self._calculate_next_sleep()
+            sleep_seconds = self._calculate_next_sleep()
             logger.debug("Next tick in %ds", sleep_seconds)
 
             # 等待超时或被 notify_config_change 唤醒
@@ -213,7 +213,7 @@ class AutoCheckinWatcher:
     # 智能睡眠计算
     # ------------------------------------------------------------------
 
-    async def _calculate_next_sleep(self) -> int:
+    def _calculate_next_sleep(self) -> int:
         """根据所有启用用户的 time_windows 计算距下一有效时段开始时间的秒数。
 
         若当前处于任一有效时段返回 POLL_INTERVAL（短轮询）；

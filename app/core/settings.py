@@ -15,6 +15,7 @@ from dotenv import load_dotenv
 load_dotenv()
 
 from pydantic_settings import BaseSettings, SettingsConfigDict
+from pydantic import field_validator
 
 
 class Settings(BaseSettings):
@@ -38,6 +39,13 @@ class Settings(BaseSettings):
 
     # ── Auto check-in ──
     auto_checkin_max_window_span: int = 3
+
+    @field_validator("auto_checkin_max_window_span")
+    @classmethod
+    def validate_max_span(cls, v: int) -> int:
+        if v < 0:
+            raise ValueError("auto_checkin_max_window_span 不能为负数")
+        return v
 
     # ── Log cleanup ──
     log_retention_days: int = 90
