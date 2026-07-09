@@ -64,8 +64,9 @@ main.py                     # Entry point — loads .env, starts uvicorn
 │   │   ├── user.py         # user CRUD + change-password
 │   │   ├── account.py      # account CRUD + verify + cascade delete
 │   │   ├── course.py       # course CRUD + course-binding CRUD
-│   │   ├── checkin.py      # batch check-in execution
+│   │   ├── checkin.py      # batch check-in execution + GPS / 数字码签到
 │   │   ├── invite_code.py  # invite code CRUD
+│   │   ├── location.py     # CourseLocation CRUD（课程签到位置管理）
 │   │   ├── log.py          # check-in log list/detail/delete
 │   │   └── settings.py     # system settings (invite-required toggle)
 │   ├── index.html          # Vue 3 SPA template（已登录）
@@ -121,6 +122,7 @@ main.py                     # Entry point — loads .env, starts uvicorn
 ```
 User ─── UserAccount ─── Account ─── CourseBinding ─── Course
                           Account ─── CheckInLog
+                          Account ─── CourseLocation ─── Course
 InviteCode
 SystemSetting
 ```

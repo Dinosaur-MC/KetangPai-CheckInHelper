@@ -101,6 +101,7 @@
 - 灵活的多对多绑定关系：一个账号可绑定多个课程，一个课程可分配给多个账号
 - 按课程启用/禁用签到开关，精细化控制
 - 解绑时自动清理无引用的课程记录
+- **课程位置管理**：为每个课程+账号组合预设 GPS 坐标，通过高德地图可视化选点，支持设备定位和手动输入
 
 ### 🚀 批量签到
 
@@ -108,6 +109,7 @@
 - 签到结果区分成功、重复签到（视同成功）、二维码过期、考勤已结束
 - 全局失败缓存：二维码过期/考勤结束后跳过所有账号，避免无效请求
 - **Redis 签到去重**：同一 ticketid 下已签到成功的账号自动跳过，防止重复调用 API
+- **GPS 坐标多级预取**：① 前端设备 GPS → ② Redis 缓存 → ③ 建筑 GPS → ④ CourseLocation 预设坐标 → ⑤ 空坐标提交（API 接受空坐标）
 - 签到结果实时显示，支持失败原因查看
 - **客户端 IP 透传**：签到请求经过后端时自动提取客户端真实 IP，以 `X-Forward-For` 请求头传递至课堂派 API，避免所有签到请求显示为同一服务器 IP
 
@@ -170,7 +172,7 @@
     </tr>
     <tr><th colspan="2" align="center">⚡ FastAPI 后端</th></tr>
     <tr><td colspan="2"><strong>🛡️ 中间件</strong><br/>JWT 认证 (Access + Refresh Rotation) · Redis 滑动窗口限流 · CORS · 全局异常处理</td></tr>
-    <tr><td colspan="2"><strong>🧭 路由层 · 8 领域模块</strong><br/>auth / account / course / checkin / log / user / invite_code / settings</td></tr>
+    <tr><td colspan="2"><strong>🧭 路由层 · 9 领域模块</strong><br/>auth / account / course / checkin / log / user / invite_code / settings</td></tr>
     <tr><td colspan="2"><strong>⚙️ 业务逻辑层</strong><br/>SessionPool 会话池 · KetangPaiAPI · AutoCheckinWatcher · LogCleanup 日志清理 · Canary 引擎 · Fernet/AES 加密 · Argon2 哈希 · 缓存策略</td></tr>
     <tr><td colspan="2"><strong>💾 数据层</strong></td></tr>
     <tr>
@@ -187,7 +189,7 @@
 | ---------------- | ----------------------------------------------------------------------------------------------------------------- |
 | **前端 SPA**     | Vue 3 响应式 UI，MDUI 2 Material Design 组件，Hash 路由，扫码引擎 (WeChat QR + ZXing)                             |
 | **安全与中间件** | JWT 认证（Access + Refresh Token Rotation）、Redis 滑动窗口限流、全局异常处理、CORS                               |
-| **路由层**       | 8 个领域路由模块（auth/account/course/checkin/log/user/invite_code/settings），依赖注入                           |
+| **路由层**       | 9 个领域路由模块（auth/account/course/checkin/log/user/invite_code/settings），依赖注入                           |
 | **业务逻辑层**   | SessionPool 会话池、KetangPaiAPI 封装、AutoCheckinWatcher 自动签到、LogCleanup 日志清理、Canary 签到引擎、Fernet/Argon2 加密、缓存策略 |
 | **数据层**       | SQLModel ORM（MySQL 8）持久化 + Redis 8 缓存/限流/断路器                                                          |
 | **外部依赖**     | 课堂派 OpenAPI + 签到页面接口                                                                                     |
@@ -206,12 +208,14 @@
 | 样式       | **common.css + login.css + index.css**       | 分层 CSS：公共 / 登录页 / 主应用                      |
 | 图标       | **Material Icons**                           | 图标系统                                              |
 | 扫码(主)   | **OpenCV.js (WeChat QR)**                    | C++ WASM 解码引擎，抗畸变倾斜，识别率更高             |
+| 地图选点   | **AMap (高德 JS API v2)**                     | 课程位置可视化选择
+| 逆地理编码 | **OpenStreetMap Nominatim**                | 坐标→地址转换
 | 扫码(备)   | **ZXing WASM**                               | WASM 备用 QR 解码引擎                                 |
 | **安全**   | **Passlib (Argon2)**                         | 密码哈希                                              |
 |            | **PyJWT**                                    | JWT 签发与验证（httponly cookie 承载）                |
 |            | **Cryptography (Fernet)**                    | 凭据加密                                              |
 |            | **Rate Limiter**                             | Redis 滑动窗口限流                                    |
-| **测试**   | **pytest** + **httpx** (TestClient)           | 366+ 个单元 + 集成 + 基准测试 |
+| **测试**   | **pytest** + **httpx** (TestClient)           | 360+ 个单元 + 集成 + 基准测试 |
 | **包管理** | **uv**                                       | Python 依赖管理                                       |
 | **部署**   | **Docker** + **docker compose**              | 容器化一站式部署                                      |
 
@@ -268,7 +272,7 @@ uv run python main.py
 
 ### 运行测试
 
-项目包含 **366 个测试**（119 个 SchemaSync 测试 + 单元测试 + 集成测试 + 延迟基准测试），覆盖安全模块、数据模型、工具函数、数据库层、SchemaSync（含历史阶段迁移路径、笛卡尔积排列测试、未来变更预测、默认值对齐、BOOLEAN/TINYINT 类型规范化）、账号模块（含 CRUD、并发竞态、级联删除、课程同步）、课程模块（含外键约束校验）、自动签到模块、签到日志清理模块和认证路由：
+项目包含 **360 个测试**（119 个 SchemaSync 测试 + 单元测试 + 集成测试 + 延迟基准测试），覆盖安全模块、数据模型、工具函数、数据库层、SchemaSync（含历史阶段迁移路径、笛卡尔积排列测试、未来变更预测、默认值对齐、BOOLEAN/TINYINT 类型规范化）、账号模块（含 CRUD、并发竞态、级联删除、课程同步）、课程模块（含外键约束校验）、自动签到模块、签到日志清理模块和认证路由：
 
 ```bash
 # 运行全部测试
@@ -626,8 +630,9 @@ CheckInHelper/
 │   │   ├── user.py         # 用户 CRUD + 修改密码
 │   │   ├── account.py      # 课堂派账号 CRUD + 验证 + 级联删除
 │   │   ├── course.py       # 课程 CRUD + 课程绑定 CRUD
-│   │   ├── checkin.py      # 批量签到执行
+│   │   ├── checkin.py      # 批量签到执行 + GPS签到 + 待签考勤查询
 │   │   ├── invite_code.py  # 邀请码 CRUD
+│   │   ├── location.py     # 课程位置管理（CourseLocation CRUD）
 │   │   ├── log.py          # 签到日志列表 / 详情 / 删除
 │   │   └── settings.py     # 系统设置（邀请码开关）
 │   └── index.html          # 前端 SPA 模板
@@ -652,7 +657,7 @@ CheckInHelper/
 │   ├── zxing.min.js        # ZXing WASM 备用 QR 解码
 │   └── test.html           # QR 解码测试页
 │
-├── tests/                  # ✅ 测试（366 个，覆盖核心模块 + 路由 + 基准测试）
+├── tests/                  # ✅ 测试（360+ 个，覆盖核心模块 + 路由 + 基准测试）
 │   ├── conftest.py         # 共享 Fixtures + benchmark 收集器
 │   ├── test_security.py    # 密码哈希 · JWT · Fernet 加密 · 令牌黑名单
 │   ├── test_models.py      # Pydantic/SQLModel 模型 · _extract_gps · is_position_error

@@ -207,7 +207,10 @@ POST /AttenceV2Api/getAttenceBuildingGps
 [ { "lat": "23.129163", "lng": "113.264435" } ]
 ```
 
-### 3.6 获取考勤位置配置
+### 3.6 获取考勤位置配置（已弃用）
+
+> **⚠️ 已弃用：** 学生账号调用此接口会返回权限错误，代码中已移除对该 API 的调用。
+> 签到坐标通过设备 GPS、建筑 GPS、CourseLocation 表或直接空坐标提交获取。
 
 ```
 POST /AttenceApi/getLocation
