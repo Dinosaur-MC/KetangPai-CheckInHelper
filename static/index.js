@@ -48,6 +48,18 @@ async function _refreshToken() {
 }
 
 async function api(method, path, body) {
+    function _extractErrorMessage(data) {
+        if (data.message) return data.message;
+        if (data.detail) {
+            if (Array.isArray(data.detail)) {
+                const msgs = data.detail.map(d => d.msg).filter(Boolean);
+                if (msgs.length) return msgs.join("；");
+            }
+            return String(data.detail);
+        }
+        return "";
+    }
+
     const headers = { "Content-Type": "application/json" };
     const opts = { method, headers };
     if (body !== undefined) opts.body = JSON.stringify(body);
@@ -66,13 +78,13 @@ async function api(method, path, body) {
         const retry = await fetch(`${API_BASE}${path}`, { method, headers, body: opts.body });
         if (!retry.ok) {
             const errData = await retry.json().catch(() => ({}));
-            throw new Error(errData.message || `请求失败 (${retry.status})`);
+            throw new Error(_extractErrorMessage(errData) || `请求失败 (${retry.status})`);
         }
         return await retry.json();
     }
 
     const data = await res.json().catch(() => ({}));
-    throw new Error(data.message || `请求失败 (${res.status})`);
+    throw new Error(_extractErrorMessage(data) || `请求失败 (${res.status})`);
 }
 
 // ---- Vue 应用 ----
