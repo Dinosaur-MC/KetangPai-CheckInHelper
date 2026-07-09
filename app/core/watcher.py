@@ -2,6 +2,11 @@
 
 后台轮询启用了自动签到的用户的所有绑定课程，
 发现未完成的 GPS / 数字考勤后自动执行签到。
+
+调度策略：
+  - 当前处于有效时段 → 每 POLL_INTERVAL 秒短轮询
+  - 不在有效时段     → 睡到最近的下一个时段开始（上限 MAX_IDLE_SLEEP）
+  - notify_config_change() 可在等待期间唤醒并触发重计算
 """
 
 import asyncio
@@ -13,7 +18,7 @@ from datetime import datetime, timezone
 
 from sqlmodel import select
 
-from app.core.db import get_session, get_redis_client
+from app.core.db import get_session
 from pydantic import BaseModel
 from app.core.api import CheckInRequest
 from app.models import AutoCheckinConfig, User, Account, UserAccount, CourseBinding
@@ -21,7 +26,12 @@ from app.core.sessions import session_pool
 
 logger = logging.getLogger(__name__)
 
-POLL_INTERVAL = 60       # 轮询间隔（秒）
+# 进入有效窗口后的轮询间隔（秒）
+POLL_INTERVAL = 60
+# 配置变更防抖间隔（秒）—— 多次连续变更合并为一次重计算
+DEBOUNCE_DELAY = 3
+# 没有任何有效窗口时的最大睡眠间隔（秒）
+MAX_IDLE_SLEEP = 3600
 MIN_DELAY = 2            # 执行前最小随机延迟（秒）
 MAX_DELAY = 8            # 执行前最大随机延迟（秒）
 DEDUP_TTL = 86400        # 去重标记 TTL（24h）
@@ -54,6 +64,21 @@ def _in_time_windows(time_windows_str: str, now_hour: int) -> bool:
     return False
 
 
+def _parse_windows(time_windows_str: str) -> list[tuple[int, int]]:
+    """解析 time_windows JSON 为 (start, end) 列表，跳过零宽度时段。"""
+    windows: list[tuple[int, int]] = []
+    try:
+        raw = json.loads(time_windows_str)
+        for w in raw:
+            start = int(w.get("start", 7))
+            end = int(w.get("end", 22))
+            if start != end:
+                windows.append((start, end))
+    except Exception as e:
+        logger.warning("解析 time_windows JSON 失败: %s, raw=%r", e, time_windows_str)
+    return windows
+
+
 class UserCheckinPlan(BaseModel):
     """单个用户的自动签到计划"""
     user_id: int
@@ -67,6 +92,10 @@ class AutoCheckinWatcher:
     def __init__(self):
         self._task: asyncio.Task | None = None
         self._running = False
+        # 以下异步原语在 start() 中惰性创建，避免模块导入时绑定事件循环
+        self._tick_lock: asyncio.Lock | None = None
+        self._wake_event: asyncio.Event | None = None
+        self._debounce_task: asyncio.Task | None = None  # 配置变更防抖
 
         # 公开状态（前端可查）
         self.is_running = False
@@ -80,6 +109,9 @@ class AutoCheckinWatcher:
     async def start(self):
         if self._running:
             return
+        # 惰性创建异步原语，避免模块导入时绑定事件循环
+        self._tick_lock = asyncio.Lock()
+        self._wake_event = asyncio.Event()
         self._running = True
         self.is_running = True
         self._task = asyncio.create_task(self._loop(), name="auto-checkin-watcher")
@@ -88,6 +120,9 @@ class AutoCheckinWatcher:
     async def stop(self):
         self._running = False
         self.is_running = False
+        self._cancel_debounce()  # 清理待处理防抖
+        if self._wake_event is not None:
+            self._wake_event.set()  # 让 _loop 尽快退出
         if self._task:
             self._task.cancel()
             try:
@@ -96,6 +131,35 @@ class AutoCheckinWatcher:
                 pass
             self._task = None
         logger.info("Auto-checkin watcher stopped")
+
+    def _cancel_debounce(self):
+        """取消等待中的防抖任务。"""
+        if self._debounce_task and not self._debounce_task.done():
+            self._debounce_task.cancel()
+            self._debounce_task = None
+
+    async def notify_config_change(self):
+        """通知观察器自动签到配置已变更。
+
+        带防抖合并：连续多次变更会在最后一次变更后 DEBOUNCE_DELAY 秒
+        才触发重计算，避免密集更新导致频繁唤醒。
+
+        若观察器未启动则静默忽略。
+        """
+        if self._wake_event is None:
+            return
+        self._cancel_debounce()
+        self._debounce_task = asyncio.create_task(self._debounce_wake())
+        logger.debug("Config change notified, debounce %ds", DEBOUNCE_DELAY)
+
+    async def _debounce_wake(self):
+        """防抖到期后设置 wake_event，触发 _loop 重计算。"""
+        try:
+            await asyncio.sleep(DEBOUNCE_DELAY)
+            self._wake_event.set()
+            logger.debug("Debounce complete, wake event set")
+        except asyncio.CancelledError:
+            pass  # 被新的通知取消，静默退出
 
     async def trigger(self):
         """手动触发一次扫描，忽略轮询间隔。"""
@@ -125,141 +189,224 @@ class AutoCheckinWatcher:
                 break
             except Exception as e:
                 logger.exception("Auto-checkin tick failed: %s", e)
-            await asyncio.sleep(POLL_INTERVAL)
+
+            if not self._running:
+                break
+
+            # 根据所有用户的 time_windows 智能计算下次唤醒时间
+            sleep_seconds = await self._calculate_next_sleep()
+            logger.debug("Next tick in %ds", sleep_seconds)
+
+            # 等待超时或被 notify_config_change 唤醒
+            try:
+                await asyncio.wait_for(
+                    self._wake_event.wait(),
+                    timeout=sleep_seconds,
+                )
+            except asyncio.TimeoutError:
+                pass
+
+            if self._wake_event.is_set():
+                self._wake_event.clear()
+
+    # ------------------------------------------------------------------
+    # 智能睡眠计算
+    # ------------------------------------------------------------------
+
+    async def _calculate_next_sleep(self) -> int:
+        """根据所有启用用户的 time_windows 计算距下一有效时段开始时间的秒数。
+
+        若当前处于任一有效时段返回 POLL_INTERVAL（短轮询）；
+        否则返回距最近时段开始的秒数（上限 MAX_IDLE_SLEEP）。
+        """
+        now = datetime.now()
+        now_total_minutes = now.hour * 60 + now.minute
+
+        with get_session() as db:
+            configs = db.exec(
+                select(AutoCheckinConfig).where(AutoCheckinConfig.enabled == True)
+            ).all()
+
+        if not configs:
+            return MAX_IDLE_SLEEP
+
+        # 收集所有不重复的时段
+        all_windows: set[tuple[int, int]] = set()
+        for cfg in configs:
+            for start, end in _parse_windows(cfg.time_windows):
+                all_windows.add((start, end))
+
+        if not all_windows:
+            return MAX_IDLE_SLEEP
+
+        now_hour = now.hour
+
+        # 检查当前是否处于某个时段内
+        for start, end in all_windows:
+            if start < end:
+                if start <= now_hour < end:
+                    return POLL_INTERVAL
+            else:
+                # 跨午夜：如 22~06
+                if now_hour >= start or now_hour < end:
+                    return POLL_INTERVAL
+
+        # 不在任何时段内 → 找最近的下一个时段开始
+        nearest = MAX_IDLE_SLEEP
+        for start_hour, _ in all_windows:
+            start_minutes = start_hour * 60
+            if start_minutes > now_total_minutes:
+                diff_minutes = start_minutes - now_total_minutes
+            else:
+                # 在明天
+                diff_minutes = (24 * 60 - now_total_minutes) + start_minutes
+            diff_seconds = diff_minutes * 60
+            if diff_seconds < nearest:
+                nearest = diff_seconds
+
+        return min(nearest, MAX_IDLE_SLEEP)
+
+    # ------------------------------------------------------------------
+    # Tick — 单次扫描执行
+    # ------------------------------------------------------------------
 
     async def _tick(self):
         """单次扫描：查所有启用自动签到的用户，处理其绑定课程的未完成签到。"""
-        logger.debug("Auto-checkin tick start")
+        async with self._tick_lock:
+            logger.debug("Auto-checkin tick start")
 
-        checked = 0
-        succeeded = 0
+            checked = 0
+            succeeded = 0
 
-        with get_session() as db:
-            now_hour = datetime.now().hour
+            with get_session() as db:
+                now_hour = datetime.now().hour
 
-            # 1. 查询配置 + 用户，过滤时间范围后再查绑定和创建会话
-            all_rows = db.exec(
-                select(AutoCheckinConfig, User)
-                .join(User, AutoCheckinConfig.user_id == User.id)
-                .where(
-                    AutoCheckinConfig.enabled == True,
-                    User.is_active == True,
-                )
-            ).all()
+                # 1. 查询配置 + 用户，过滤时间范围后再查绑定和创建会话
+                all_rows = db.exec(
+                    select(AutoCheckinConfig, User)
+                    .join(User, AutoCheckinConfig.user_id == User.id)
+                    .where(
+                        AutoCheckinConfig.enabled == True,
+                        User.is_active == True,
+                    )
+                ).all()
 
-            plans: list[UserCheckinPlan] = []
-            for config, user in all_rows:
-                if _in_time_windows(config.time_windows, now_hour):
-                    plans.append(UserCheckinPlan(
-                        user_id=user.id,
-                        allowed_types=set(config.checkin_types.split(",")),
-                        courses={},
-                    ))
+                plans: list[UserCheckinPlan] = []
+                for config, user in all_rows:
+                    if _in_time_windows(config.time_windows, now_hour):
+                        plans.append(UserCheckinPlan(
+                            user_id=user.id,
+                            allowed_types=set(config.checkin_types.split(",")),
+                            courses={},
+                        ))
 
-            if not plans:
-                logger.debug("No active auto-checkin plans in current time window")
-                self.last_tick_time = time.time()
-                self.last_result = {"checked": 0, "succeeded": 0}
-                return
+                if not plans:
+                    logger.debug("No active auto-checkin plans in current time window")
+                    self.last_tick_time = time.time()
+                    self.last_result = {"checked": 0, "succeeded": 0}
+                    return
 
-            # 2. 只查询活跃用户的绑定 + 账号
-            active_ids = [p.user_id for p in plans]
-            bindings = db.exec(
-                select(CourseBinding, Account, UserAccount)
-                .join(Account, CourseBinding.account_id == Account.id)
-                .join(UserAccount, Account.id == UserAccount.account_id)
-                .where(
-                    CourseBinding.is_active == True,
-                    UserAccount.user_id.in_(active_ids),
-                )
-            ).all()
+                # 2. 只查询活跃用户的绑定 + 账号
+                active_ids = [p.user_id for p in plans]
+                bindings = db.exec(
+                    select(CourseBinding, Account, UserAccount)
+                    .join(Account, CourseBinding.account_id == Account.id)
+                    .join(UserAccount, Account.id == UserAccount.account_id)
+                    .where(
+                        CourseBinding.is_active == True,
+                        UserAccount.user_id.in_(active_ids),
+                    )
+                ).all()
 
-            all_accounts: list[Account] = []
-            seen_ids = set()
-            for binding, account, ua in bindings:
+                all_accounts: list[Account] = []
+                seen_ids = set()
+                for binding, account, ua in bindings:
+                    for plan in plans:
+                        if plan.user_id == ua.user_id:
+                            plan.courses.setdefault(binding.course_id, []).append(account.id)
+                            break
+                    if account.id not in seen_ids:
+                        seen_ids.add(account.id)
+                        all_accounts.append(account)
+
+                if all_accounts:
+                    await session_pool.create(all_accounts)
+
+                # 3. 执行签到
                 for plan in plans:
-                    if plan.user_id == ua.user_id:
-                        plan.courses.setdefault(binding.course_id, []).append(account.id)
-                        break
-                if account.id not in seen_ids:
-                    seen_ids.add(account.id)
-                    all_accounts.append(account)
-
-            if all_accounts:
-                await session_pool.create(all_accounts)
-
-            # 3. 执行签到
-            for plan in plans:
-                if not plan.courses:
-                    continue
-
-                for course_id, account_ids in plan.courses.items():
-                    if not account_ids:
+                    if not plan.courses:
                         continue
 
-                    # 尝试多个账号查询考勤列表，任一可用即可
-                    attence_list = []
-                    first_client = None
-                    for aid in account_ids:
-                        try:
-                            client = await session_pool.ensure_client(aid)
-                            if client is None:
-                                continue
-                            attence_list = await client.get_not_finish_attence_student(course_id)
-                            first_client = client
-                            if attence_list:
-                                break
-                        except Exception as e:
-                            logger.warning(
-                                "Failed to query attence for course %s via account %s: %s",
-                                course_id, aid, e,
-                            )
-                            continue
-                    else:
-                        # 所有账号均失败
-                        continue
-
-                    for att in attence_list:
-                        att_type = att.get("type", "")
-                        att_id = att.get("id", "")
-                        if not att_id or att_type not in plan.allowed_types:
+                    for course_id, account_ids in plan.courses.items():
+                        if not account_ids:
                             continue
 
-                        checked += 1
-                        delay = random.uniform(MIN_DELAY, MAX_DELAY)
-                        logger.info(
-                            "Auto check-in: type=%s attendance=%s course=%s user=%s delay=%.1fs accounts=%s",
-                            att_type, att_id, course_id, plan.user_id, delay, account_ids,
-                        )
-                        await asyncio.sleep(delay)
-
-                        try:
-                            checkin_data = CheckInRequest(id=att_id, courseid=course_id)
-                            if att_type == "1" and first_client is not None:
-                                code = await first_client.get_digit_attence(att_id)
-                                if not code:
-                                    logger.warning("Empty digit code for attendance %s, skipping", att_id)
+                        # 尝试多个账号查询考勤列表，任一可用即可
+                        attence_list = []
+                        first_client = None
+                        for aid in account_ids:
+                            try:
+                                client = await session_pool.ensure_client(aid)
+                                if client is None:
                                     continue
-                                checkin_data.code = code
+                                attence_list = await client.get_not_finish_attence_student(course_id)
+                                first_client = client
+                                if attence_list:
+                                    break
+                            except Exception as e:
+                                logger.warning(
+                                    "Failed to query attence for course %s via account %s: %s",
+                                    course_id, aid, e,
+                                )
+                                continue
+                        else:
+                            # 所有账号均失败
+                            continue
 
-                            result = await session_pool.execute_gps_checkin(
-                                user_id=plan.user_id,
-                                account_ids=account_ids,
-                                data=checkin_data,
-                                client_ip="",
-                            )
-                            success_count = sum(1 for r in result.values() if r is not None and r.success)
-                            succeeded += success_count
+                        for att in attence_list:
+                            att_type = att.get("type", "")
+                            att_id = att.get("id", "")
+                            if not att_id or att_type not in plan.allowed_types:
+                                continue
+
+                            checked += 1
+                            delay = random.uniform(MIN_DELAY, MAX_DELAY)
                             logger.info(
-                                "Auto check-in result: attendance=%s type=%s success=%s/%s",
-                                att_id, att_type, success_count, len(account_ids),
+                                "Auto check-in: type=%s attendance=%s course=%s user=%s delay=%.1fs accounts=%s",
+                                att_type, att_id, course_id, plan.user_id, delay, account_ids,
                             )
-                        except Exception as e:
-                            logger.exception("Auto check-in failed for attendance %s: %s", att_id, e)
+                            await asyncio.sleep(delay)
 
-        self.last_tick_time = time.time()
-        self.last_result = {"checked": checked, "succeeded": succeeded}
-        logger.info("Auto-checkin tick done: checked=%s succeeded=%s", checked, succeeded)
+                            try:
+                                checkin_data = CheckInRequest(id=att_id, courseid=course_id)
+                                if att_type == "1" and first_client is not None:
+                                    code = await first_client.get_digit_attence(att_id)
+                                    if not code:
+                                        logger.warning("Empty digit code for attendance %s, skipping", att_id)
+                                        continue
+                                    checkin_data.code = code
+
+                                result = await session_pool.execute_gps_checkin(
+                                    user_id=plan.user_id,
+                                    account_ids=account_ids,
+                                    data=checkin_data,
+                                    client_ip="",
+                                )
+                                success_count = sum(1 for r in result.values() if r is not None and r.success)
+                                succeeded += success_count
+                                logger.info(
+                                    "Auto check-in result: attendance=%s type=%s success=%s/%s",
+                                    att_id, att_type, success_count, len(account_ids),
+                                )
+                            except Exception as e:
+                                logger.exception("Auto check-in failed for attendance %s: %s", att_id, e)
+
+            self.last_tick_time = time.time()
+            self.last_result = {"checked": checked, "succeeded": succeeded}
+            if checked:
+                logger.info("Auto-checkin tick done: checked=%s succeeded=%s", checked, succeeded)
+            else:
+                logger.debug("Auto-checkin tick done: checked=%s succeeded=%s", checked, succeeded)
 
 
 # 模块级单例

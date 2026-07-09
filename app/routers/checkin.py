@@ -282,6 +282,9 @@ async def update_auto_checkin_config(
     session.commit()
     logger.info("Auto-checkin config saved user=%s enabled=%s types=%s windows=%s",
                 current_user.id, body.enabled, body.checkin_types, body.time_windows)
+    # 通知观察器重新计算调度：自动签到启用 / 时段变更后会反映到下一 tick
+    from app.core.watcher import auto_checkin_watcher
+    await auto_checkin_watcher.notify_config_change()
     return BaseResponse(
         data={
             "enabled": config.enabled,
